@@ -1,0 +1,2695 @@
+openapi: 3.0.3
+info:
+  title: Rochatto App API
+  description: |
+    API de gestão de vendas, clientes, produtos, estoque, pagamentos e dashboard.
+
+    **Autenticação**: Todos os endpoints em `/api/v1/` exigem um token Firebase Bearer válido.
+    O endpoint `GET /health` é público.
+  version: 1.0.0
+  contact:
+    name: Silvio Ubaldino
+
+servers:
+  - url: http://localhost:8080
+    description: Ambiente de desenvolvimento
+  - url: https://api.rochatto.com.br
+    description: Produção
+
+security:
+  - BearerAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Token Firebase ID Token
+
+  schemas:
+    # --- Erros ---
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          example: "registro não encontrado"
+
+    # --- Cliente ---
+    Cliente:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        nome:
+          type: string
+          example: "João Silva"
+        telefone:
+          type: string
+          nullable: true
+          example: "(11) 99999-9999"
+        email:
+          type: string
+          nullable: true
+          example: "joao@exemplo.com"
+        endereco:
+          type: string
+          nullable: true
+          example: "Rua das Flores, 123"
+        cidade:
+          type: string
+          nullable: true
+          example: "São Paulo"
+        observacoes:
+          type: string
+          nullable: true
+          example: "Cliente VIP"
+        created_at:
+          type: string
+          format: date-time
+
+    ClienteRequest:
+      type: object
+      required:
+        - nome
+      properties:
+        nome:
+          type: string
+          example: "João Silva"
+        telefone:
+          type: string
+          nullable: true
+          example: "(11) 99999-9999"
+        email:
+          type: string
+          nullable: true
+          example: "joao@exemplo.com"
+        endereco:
+          type: string
+          nullable: true
+          example: "Rua das Flores, 123"
+        cidade:
+          type: string
+          nullable: true
+          example: "São Paulo"
+        observacoes:
+          type: string
+          nullable: true
+          example: "Cliente VIP"
+
+    # --- Produto ---
+    Produto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        nome:
+          type: string
+          example: "Camiseta Básica"
+        descricao:
+          type: string
+          nullable: true
+        preco_referencia:
+          type: number
+          format: double
+          nullable: true
+          example: 49.90
+        custo_referencia:
+          type: number
+          format: double
+          nullable: true
+          example: 20.00
+        unidade:
+          type: string
+          nullable: true
+          example: "un"
+        created_at:
+          type: string
+          format: date-time
+
+    ProdutoRequest:
+      type: object
+      required:
+        - nome
+      properties:
+        nome:
+          type: string
+          example: "Camiseta Básica"
+        descricao:
+          type: string
+          nullable: true
+        preco_referencia:
+          type: number
+          format: double
+          nullable: true
+          minimum: 0
+          example: 49.90
+        custo_referencia:
+          type: number
+          format: double
+          nullable: true
+          minimum: 0
+          example: 20.00
+        unidade:
+          type: string
+          nullable: true
+          example: "un"
+
+    # --- Fornecedor ---
+    Fornecedor:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        nome:
+          type: string
+          example: "Fornecedor ABC"
+        telefone:
+          type: string
+          nullable: true
+        cidade:
+          type: string
+          nullable: true
+        observacoes:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    FornecedorRequest:
+      type: object
+      required:
+        - nome
+      properties:
+        nome:
+          type: string
+          example: "Fornecedor ABC"
+        telefone:
+          type: string
+          nullable: true
+        cidade:
+          type: string
+          nullable: true
+        observacoes:
+          type: string
+          nullable: true
+
+    # --- VendedorExterno ---
+    VendedorExterno:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        nome:
+          type: string
+          example: "Maria Vendedora"
+        telefone:
+          type: string
+          nullable: true
+        observacoes:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    VendedorExternoRequest:
+      type: object
+      required:
+        - nome
+      properties:
+        nome:
+          type: string
+          example: "Maria Vendedora"
+        telefone:
+          type: string
+          nullable: true
+        observacoes:
+          type: string
+          nullable: true
+
+    # --- Venda ---
+    VendaStatus:
+      type: string
+      enum:
+        - A_ENTREGAR
+        - A_ENTREGAR_DATA
+        - A_RETIRAR
+        - ENTREGUE_PARCIAL
+        - ENTREGUE
+      example: "A_ENTREGAR"
+
+    ItemVendaRequest:
+      type: object
+      required:
+        - produto_nome
+        - quantidade
+      properties:
+        produto_id:
+          type: string
+          format: uuid
+          nullable: true
+        produto_nome:
+          type: string
+          example: "Camiseta Básica"
+        fornecedor_id:
+          type: string
+          format: uuid
+          nullable: true
+        fornecedor_nome:
+          type: string
+          nullable: true
+        quantidade:
+          type: number
+          format: double
+          minimum: 0.001
+          example: 2
+        preco_venda_unit:
+          type: number
+          format: double
+          minimum: 0
+          example: 49.90
+        custo_unit:
+          type: number
+          format: double
+          minimum: 0
+          example: 20.00
+        pago_fornecedor:
+          type: number
+          format: double
+          minimum: 0
+          example: 0
+
+    ItemVendaResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        produto_id:
+          type: string
+          format: uuid
+          nullable: true
+        produto_nome:
+          type: string
+        fornecedor_id:
+          type: string
+          format: uuid
+          nullable: true
+        fornecedor_nome:
+          type: string
+          nullable: true
+        quantidade:
+          type: number
+          format: double
+        preco_venda_unit:
+          type: number
+          format: double
+        custo_unit:
+          type: number
+          format: double
+        pago_fornecedor:
+          type: number
+          format: double
+        total_venda:
+          type: number
+          format: double
+        total_custo:
+          type: number
+          format: double
+        a_pagar_fornecedor:
+          type: number
+          format: double
+        created_at:
+          type: string
+          format: date-time
+
+    PagamentoResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        venda_id:
+          type: string
+          format: uuid
+        valor:
+          type: number
+          format: double
+        data_pagamento:
+          type: string
+          format: date
+          nullable: true
+          description: "Data em que o pagamento foi recebido (formato: YYYY-MM-DD)"
+        data_agendada:
+          type: string
+          format: date
+          nullable: true
+          description: "Data agendada para recebimento futuro (formato: YYYY-MM-DD)"
+        status:
+          type: string
+          enum: [pendente, recebido]
+        observacoes:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    VendaListResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        cliente_id:
+          type: string
+          format: uuid
+        cliente_nome:
+          type: string
+        vendedor_externo_id:
+          type: string
+          format: uuid
+          nullable: true
+        vendedor_externo_nome:
+          type: string
+          nullable: true
+        status:
+          $ref: "#/components/schemas/VendaStatus"
+        data_venda:
+          type: string
+          format: date
+        data_entrega_prevista:
+          type: string
+          format: date
+          nullable: true
+        frete_valor:
+          type: number
+          format: double
+        frete_pago:
+          type: number
+          format: double
+        comissao_valor:
+          type: number
+          format: double
+        comissao_paga:
+          type: boolean
+        observacoes:
+          type: string
+          nullable: true
+        total_venda:
+          type: number
+          format: double
+        total_custo:
+          type: number
+          format: double
+        total_recebido:
+          type: number
+          format: double
+        a_receber:
+          type: number
+          format: double
+        lucro:
+          type: number
+          format: double
+        created_at:
+          type: string
+          format: date-time
+
+    VendaDetailResponse:
+      allOf:
+        - $ref: "#/components/schemas/VendaListResponse"
+        - type: object
+          properties:
+            a_pagar_fornecedor:
+              type: number
+              format: double
+            a_pagar_frete:
+              type: number
+              format: double
+            itens:
+              type: array
+              items:
+                $ref: "#/components/schemas/ItemVendaResponse"
+            pagamentos:
+              type: array
+              items:
+                $ref: "#/components/schemas/PagamentoResponse"
+
+    VendaCreateRequest:
+      type: object
+      required:
+        - cliente_id
+        - status
+        - data_venda
+      properties:
+        cliente_id:
+          type: string
+          format: uuid
+        vendedor_externo_id:
+          type: string
+          format: uuid
+          nullable: true
+        status:
+          $ref: "#/components/schemas/VendaStatus"
+        data_venda:
+          type: string
+          format: date
+          example: "2026-04-14"
+        data_entrega_prevista:
+          type: string
+          format: date
+          nullable: true
+          example: "2026-04-20"
+          description: "Obrigatória quando status = A_ENTREGAR_DATA"
+        frete_valor:
+          type: number
+          format: double
+          minimum: 0
+          default: 0
+        frete_pago:
+          type: number
+          format: double
+          minimum: 0
+          default: 0
+        comissao_valor:
+          type: number
+          format: double
+          minimum: 0
+          default: 0
+        comissao_paga:
+          type: boolean
+          default: false
+        observacoes:
+          type: string
+          nullable: true
+        itens:
+          type: array
+          items:
+            $ref: "#/components/schemas/ItemVendaRequest"
+
+    VendaUpdateRequest:
+      type: object
+      required:
+        - status
+      properties:
+        vendedor_externo_id:
+          type: string
+          format: uuid
+          nullable: true
+        status:
+          $ref: "#/components/schemas/VendaStatus"
+        data_entrega_prevista:
+          type: string
+          format: date
+          nullable: true
+          description: "Obrigatória quando status = A_ENTREGAR_DATA"
+        frete_valor:
+          type: number
+          format: double
+          minimum: 0
+          default: 0
+        frete_pago:
+          type: number
+          format: double
+          minimum: 0
+          default: 0
+        comissao_valor:
+          type: number
+          format: double
+          minimum: 0
+          default: 0
+        comissao_paga:
+          type: boolean
+          default: false
+        observacoes:
+          type: string
+          nullable: true
+
+    # --- Pagamentos ---
+    PagamentoCreateRequest:
+      type: object
+      required:
+        - valor
+      properties:
+        valor:
+          type: number
+          format: double
+          minimum: 0.01
+          example: 150.00
+        data_pagamento:
+          type: string
+          format: date
+          nullable: true
+          description: |
+            Data em que o pagamento foi recebido.
+            Mutuamente exclusivo com `data_agendada`.
+            Se omitido e `data_agendada` também omitido, assume data de hoje com status `recebido`.
+        data_agendada:
+          type: string
+          format: date
+          nullable: true
+          description: |
+            Data agendada para recebimento futuro.
+            Mutuamente exclusivo com `data_pagamento`.
+            Define status como `pendente`.
+        observacoes:
+          type: string
+          nullable: true
+
+    PagamentoUpdateRequest:
+      type: object
+      required:
+        - valor
+        - status
+      properties:
+        valor:
+          type: number
+          format: double
+          minimum: 0.01
+        data_pagamento:
+          type: string
+          format: date
+          nullable: true
+        data_agendada:
+          type: string
+          format: date
+          nullable: true
+        status:
+          type: string
+          enum: [pendente, recebido]
+        observacoes:
+          type: string
+          nullable: true
+
+    PagamentoConfirmarRequest:
+      type: object
+      properties:
+        data_pagamento:
+          type: string
+          format: date
+          nullable: true
+          description: "Se omitido, assume a data de hoje"
+
+    # --- Estoque ---
+    EstoqueRequest:
+      type: object
+      required:
+        - produto_nome
+        - quantidade_entrada
+        - data_entrada
+      properties:
+        produto_id:
+          type: string
+          format: uuid
+          nullable: true
+        produto_nome:
+          type: string
+          example: "Camiseta Básica"
+        fornecedor_id:
+          type: string
+          format: uuid
+          nullable: true
+        quantidade_entrada:
+          type: number
+          format: double
+          minimum: 0.001
+          example: 100
+        custo_unit:
+          type: number
+          format: double
+          minimum: 0
+          example: 20.00
+        data_entrada:
+          type: string
+          format: date
+          example: "2026-04-14"
+        observacoes:
+          type: string
+          nullable: true
+
+    EstoqueResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        produto_id:
+          type: string
+          format: uuid
+          nullable: true
+        produto_nome:
+          type: string
+        produto_catalogo_nome:
+          type: string
+          nullable: true
+          description: "Nome do produto no catálogo (join com tabela produtos)"
+        fornecedor_id:
+          type: string
+          format: uuid
+          nullable: true
+        fornecedor_nome_catalogo:
+          type: string
+          nullable: true
+          description: "Nome do fornecedor no catálogo (join com tabela fornecedores)"
+        quantidade_entrada:
+          type: number
+          format: double
+        custo_unit:
+          type: number
+          format: double
+        data_entrada:
+          type: string
+          format: date
+        observacoes:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    ResumoEstoqueItem:
+      type: object
+      properties:
+        produto_nome:
+          type: string
+        produto_id:
+          type: string
+          format: uuid
+          nullable: true
+        total_entradas:
+          type: integer
+          description: "Número de lançamentos de entrada"
+        quantidade_total:
+          type: number
+          format: double
+        custo_medio:
+          type: number
+          format: double
+        valor_total_estoque:
+          type: number
+          format: double
+        ultima_entrada:
+          type: string
+          format: date
+
+    # --- Dashboard ---
+    ResumoResponse:
+      type: object
+      properties:
+        total_a_receber:
+          type: number
+          format: double
+          description: "Total a receber de vendas não-ENTREGUE"
+        total_a_pagar_fornecedor:
+          type: number
+          format: double
+        total_comissoes_pendentes:
+          type: number
+          format: double
+        lucro_periodo:
+          type: number
+          format: double
+        total_vendido_periodo:
+          type: number
+          format: double
+        vendas_abertas:
+          type: integer
+          description: "Quantidade de vendas com status != ENTREGUE"
+        periodo:
+          type: object
+          properties:
+            inicio:
+              type: string
+              format: date
+            fim:
+              type: string
+              format: date
+
+    NotificacaoResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tipo:
+          type: string
+          example: "pagamento_vencido"
+        venda_id:
+          type: string
+          format: uuid
+          nullable: true
+        cliente_nome:
+          type: string
+        valor:
+          type: number
+          format: double
+        data_ref:
+          type: string
+          format: date
+        dias_restantes:
+          type: integer
+          nullable: true
+        lida:
+          type: boolean
+
+    NotificacoesListResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+        notificacoes:
+          type: array
+          items:
+            $ref: "#/components/schemas/NotificacaoResponse"
+
+    VendasPorMesResponse:
+      type: object
+      properties:
+        dados:
+          type: array
+          items:
+            type: object
+            properties:
+              mes:
+                type: string
+                format: date
+                description: "Primeiro dia do mês (ex: 2026-04-01)"
+              total_venda:
+                type: number
+                format: double
+              lucro:
+                type: number
+                format: double
+
+    ProdutoRankingResponse:
+      type: object
+      properties:
+        dados:
+          type: array
+          items:
+            type: object
+            properties:
+              produto_nome:
+                type: string
+              total_vendas:
+                type: integer
+              total_quantidade:
+                type: number
+                format: double
+              total_receita:
+                type: number
+                format: double
+              preco_medio:
+                type: number
+                format: double
+              custo_medio:
+                type: number
+                format: double
+              margem_media_percent:
+                type: number
+                format: double
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: "ok"
+        env:
+          type: string
+          example: "development"
+
+# ============================================================
+# PATHS
+# ============================================================
+paths:
+
+  # ============================================================
+  # Health
+  # ============================================================
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Verificação de saúde da API
+      description: Endpoint público (sem autenticação) para checar se a API está no ar.
+      security: []
+      operationId: getHealth
+      responses:
+        "200":
+          description: API funcionando normalmente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  # ============================================================
+  # Clientes
+  # ============================================================
+  /api/v1/clientes/search:
+    get:
+      tags:
+        - Clientes
+      summary: Busca clientes por nome
+      operationId: searchClientes
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: "Termo de busca (busca por nome, case-insensitive). Retorna lista vazia se vazio."
+          schema:
+            type: string
+            example: "João"
+      responses:
+        "200":
+          description: Lista de clientes encontrados (máximo 20)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Cliente"
+        "401":
+          description: Não autenticado
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/clientes:
+    get:
+      tags:
+        - Clientes
+      summary: Lista todos os clientes
+      operationId: listClientes
+      responses:
+        "200":
+          description: Lista de clientes ordenada por nome
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Cliente"
+        "401":
+          description: Não autenticado
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    post:
+      tags:
+        - Clientes
+      summary: Cria um novo cliente
+      operationId: createCliente
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClienteRequest"
+      responses:
+        "201":
+          description: Cliente criado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cliente"
+        "400":
+          description: Dados inválidos (campo `nome` obrigatório, JSON inválido)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/clientes/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: UUID do cliente
+        schema:
+          type: string
+          format: uuid
+
+    get:
+      tags:
+        - Clientes
+      summary: Busca um cliente por ID
+      operationId: getCliente
+      responses:
+        "200":
+          description: Cliente encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cliente"
+        "400":
+          description: UUID inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "404":
+          description: Cliente não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    put:
+      tags:
+        - Clientes
+      summary: Atualiza um cliente
+      operationId: updateCliente
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClienteRequest"
+      responses:
+        "200":
+          description: Cliente atualizado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cliente"
+        "400":
+          description: Dados inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "404":
+          description: Cliente não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      tags:
+        - Clientes
+      summary: Remove um cliente (soft delete)
+      operationId: deleteCliente
+      responses:
+        "204":
+          description: Cliente removido com sucesso
+        "400":
+          description: UUID inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ============================================================
+  # Produtos
+  # ============================================================
+  /api/v1/produtos/search:
+    get:
+      tags:
+        - Produtos
+      summary: Busca produtos por nome
+      operationId: searchProdutos
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: "Termo de busca (case-insensitive). Retorna lista vazia se vazio."
+          schema:
+            type: string
+            example: "Camiseta"
+      responses:
+        "200":
+          description: Lista de produtos encontrados (máximo 20)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Produto"
+        "401":
+          description: Não autenticado
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/produtos:
+    get:
+      tags:
+        - Produtos
+      summary: Lista todos os produtos
+      operationId: listProdutos
+      responses:
+        "200":
+          description: Lista de produtos ordenada por nome
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Produto"
+        "401":
+          description: Não autenticado
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    post:
+      tags:
+        - Produtos
+      summary: Cria um novo produto
+      operationId: createProduto
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProdutoRequest"
+      responses:
+        "201":
+          description: Produto criado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Produto"
+        "400":
+          description: Dados inválidos (nome obrigatório, preços devem ser >= 0)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/produtos/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: UUID do produto
+        schema:
+          type: string
+          format: uuid
+
+    get:
+      tags:
+        - Produtos
+      summary: Busca um produto por ID
+      operationId: getProduto
+      responses:
+        "200":
+          description: Produto encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Produto"
+        "400":
+          description: UUID inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "404":
+          description: Produto não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    put:
+      tags:
+        - Produtos
+      summary: Atualiza um produto
+      operationId: updateProduto
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProdutoRequest"
+      responses:
+        "200":
+          description: Produto atualizado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Produto"
+        "400":
+          description: Dados inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "404":
+          description: Produto não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      tags:
+        - Produtos
+      summary: Remove um produto (soft delete)
+      operationId: deleteProduto
+      responses:
+        "204":
+          description: Produto removido com sucesso
+        "400":
+          description: UUID inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ============================================================
+  # Fornecedores
+  # ============================================================
+  /api/v1/fornecedores:
+    get:
+      tags:
+        - Fornecedores
+      summary: Lista todos os fornecedores
+      operationId: listFornecedores
+      responses:
+        "200":
+          description: Lista de fornecedores ordenada por nome
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Fornecedor"
+        "401":
+          description: Não autenticado
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    post:
+      tags:
+        - Fornecedores
+      summary: Cria um novo fornecedor
+      operationId: createFornecedor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FornecedorRequest"
+      responses:
+        "201":
+          description: Fornecedor criado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Fornecedor"
+        "400":
+          description: Dados inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/fornecedores/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: UUID do fornecedor
+        schema:
+          type: string
+          format: uuid
+
+    get:
+      tags:
+        - Fornecedores
+      summary: Busca um fornecedor por ID
+      operationId: getFornecedor
+      responses:
+        "200":
+          description: Fornecedor encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Fornecedor"
+        "400":
+          description: UUID inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "404":
+          description: Fornecedor não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    put:
+      tags:
+        - Fornecedores
+      summary: Atualiza um fornecedor
+      operationId: updateFornecedor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FornecedorRequest"
+      responses:
+        "200":
+          description: Fornecedor atualizado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Fornecedor"
+        "400":
+          description: Dados inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "404":
+          description: Fornecedor não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      tags:
+        - Fornecedores
+      summary: Remove um fornecedor (soft delete)
+      operationId: deleteFornecedor
+      responses:
+        "204":
+          description: Fornecedor removido com sucesso
+        "400":
+          description: UUID inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ============================================================
+  # Vendedores Externos
+  # ============================================================
+  /api/v1/vendedores-externos:
+    get:
+      tags:
+        - Vendedores Externos
+      summary: Lista todos os vendedores externos
+      operationId: listVendedoresExternos
+      responses:
+        "200":
+          description: Lista de vendedores externos ordenada por nome
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/VendedorExterno"
+        "401":
+          description: Não autenticado
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    post:
+      tags:
+        - Vendedores Externos
+      summary: Cria um novo vendedor externo
+      operationId: createVendedorExterno
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VendedorExternoRequest"
+      responses:
+        "201":
+          description: Vendedor externo criado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VendedorExterno"
+        "400":
+          description: Dados inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/vendedores-externos/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: UUID do vendedor externo
+        schema:
+          type: string
+          format: uuid
+
+    get:
+      tags:
+        - Vendedores Externos
+      summary: Busca um vendedor externo por ID
+      operationId: getVendedorExterno
+      responses:
+        "200":
+          description: Vendedor externo encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VendedorExterno"
+        "400":
+          description: UUID inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "404":
+          description: Vendedor externo não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    put:
+      tags:
+        - Vendedores Externos
+      summary: Atualiza um vendedor externo
+      operationId: updateVendedorExterno
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VendedorExternoRequest"
+      responses:
+        "200":
+          description: Vendedor externo atualizado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VendedorExterno"
+        "400":
+          description: Dados inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "404":
+          description: Vendedor externo não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      tags:
+        - Vendedores Externos
+      summary: Remove um vendedor externo (soft delete)
+      operationId: deleteVendedorExterno
+      responses:
+        "204":
+          description: Vendedor externo removido com sucesso
+        "400":
+          description: UUID inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ============================================================
+  # Vendas
+  # ============================================================
+  /api/v1/vendas:
+    get:
+      tags:
+        - Vendas
+      summary: Lista vendas com totais calculados
+      description: |
+        Retorna vendas a partir da view `vw_vendas_resumo` com totais já calculados.
+        Suporta múltiplos filtros opcionais.
+      operationId: listVendas
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/VendaStatus"
+          description: Filtra por status exato
+        - name: data_inicio
+          in: query
+          schema:
+            type: string
+            format: date
+          description: "Data inicial da venda (formato: YYYY-MM-DD)"
+        - name: data_fim
+          in: query
+          schema:
+            type: string
+            format: date
+          description: "Data final da venda (formato: YYYY-MM-DD)"
+        - name: cliente_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: Filtra por cliente
+        - name: pendente
+          in: query
+          schema:
+            type: boolean
+          description: "Se `true`, retorna apenas vendas com saldo a receber"
+      responses:
+        "200":
+          description: Lista de vendas ordenada por data_venda DESC
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/VendaListResponse"
+        "400":
+          description: Parâmetro inválido (ex: cliente_id não é UUID)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    post:
+      tags:
+        - Vendas
+      summary: Cria uma nova venda (com itens opcionais)
+      operationId: createVenda
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VendaCreateRequest"
+      responses:
+        "201":
+          description: Venda criada com sucesso (retorna detalhe completo)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VendaDetailResponse"
+        "400":
+          description: |
+            Dados inválidos. Possíveis erros:
+            - `cliente_id` obrigatório ou não encontrado
+            - `status` inválido
+            - `data_entrega_prevista` obrigatória para A_ENTREGAR_DATA
+            - `data_venda` obrigatória (formato YYYY-MM-DD)
+            - Valores monetários negativos
+            - Erros de validação dos itens (produto_nome, quantidade, preços)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/vendas/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: UUID da venda
+        schema:
+          type: string
+          format: uuid
+
+    get:
+      tags:
+        - Vendas
+      summary: Busca uma venda por ID com itens e pagamentos
+      operationId: getVenda
+      responses:
+        "200":
+          description: Detalhe completo da venda
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VendaDetailResponse"
+        "400":
+          description: UUID inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "404":
+          description: Venda não encontrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    put:
+      tags:
+        - Vendas
+      summary: Atualiza uma venda
+      description: |
+        Atualiza campos editáveis da venda.
+        **Campos imutáveis**: `cliente_id` e `data_venda`.
+      operationId: updateVenda
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VendaUpdateRequest"
+      responses:
+        "200":
+          description: Venda atualizada (retorna detalhe completo)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VendaDetailResponse"
+        "400":
+          description: Dados inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "404":
+          description: Venda não encontrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      tags:
+        - Vendas
+      summary: Remove uma venda (soft delete)
+      operationId: deleteVenda
+      responses:
+        "204":
+          description: Venda removida com sucesso
+        "400":
+          description: UUID inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # --- Itens de Venda ---
+  /api/v1/vendas/{id}/itens:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: UUID da venda
+        schema:
+          type: string
+          format: uuid
+
+    get:
+      tags:
+        - Vendas / Itens
+      summary: Lista os itens de uma venda
+      operationId: listItensVenda
+      responses:
+        "200":
+          description: Lista de itens da venda
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ItemVendaResponse"
+        "400":
+          description: UUID inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "404":
+          description: Venda não encontrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    post:
+      tags:
+        - Vendas / Itens
+      summary: Adiciona um item a uma venda
+      operationId: createItemVenda
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ItemVendaRequest"
+      responses:
+        "201":
+          description: Item criado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ItemVendaResponse"
+        "400":
+          description: Dados inválidos (produto_nome, quantidade > 0, preços >= 0)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "404":
+          description: Venda não encontrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/vendas/{id}/itens/{itemId}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: UUID da venda
+        schema:
+          type: string
+          format: uuid
+      - name: itemId
+        in: path
+        required: true
+        description: UUID do item
+        schema:
+          type: string
+          format: uuid
+
+    put:
+      tags:
+        - Vendas / Itens
+      summary: Atualiza um item de venda
+      operationId: updateItemVenda
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ItemVendaRequest"
+      responses:
+        "200":
+          description: Item atualizado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ItemVendaResponse"
+        "400":
+          description: Dados inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "404":
+          description: Item ou venda não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      tags:
+        - Vendas / Itens
+      summary: Remove um item de venda
+      description: |
+        Remove um item da venda.
+        **Regra:** A venda deve manter ao menos 1 item.
+        Retorna 400 se a venda tiver somente 1 item.
+      operationId: deleteItemVenda
+      responses:
+        "204":
+          description: Item removido com sucesso
+        "400":
+          description: UUID inválido ou tentativa de remover o último item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "404":
+          description: Item não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ============================================================
+  # Pagamentos
+  # ============================================================
+  /api/v1/vendas/{id}/pagamentos:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: UUID da venda
+        schema:
+          type: string
+          format: uuid
+
+    get:
+      tags:
+        - Pagamentos
+      summary: Lista pagamentos de uma venda
+      description: "Retorna pagamentos ordenados: pendentes primeiro, depois por data."
+      operationId: listPagamentos
+      responses:
+        "200":
+          description: Lista de pagamentos
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PagamentoResponse"
+        "400":
+          description: UUID inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "404":
+          description: Venda não encontrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    post:
+      tags:
+        - Pagamentos
+      summary: Registra um pagamento para uma venda
+      description: |
+        Lógica de status automático:
+        - `data_agendada` fornecida → `status = pendente`
+        - `data_pagamento` fornecida → `status = recebido`
+        - Nenhuma data fornecida → `status = recebido`, `data_pagamento = hoje`
+        
+        **Regra:** `data_pagamento` e `data_agendada` são mutuamente exclusivos.
+      operationId: createPagamento
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PagamentoCreateRequest"
+      responses:
+        "201":
+          description: Pagamento registrado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagamentoResponse"
+        "400":
+          description: |
+            Dados inválidos:
+            - `valor` deve ser > 0
+            - Não é permitido informar `data_pagamento` e `data_agendada` ao mesmo tempo
+            - Formato de data inválido (esperado YYYY-MM-DD)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "404":
+          description: Venda não encontrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/vendas/{id}/pagamentos/{pagId}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: UUID da venda
+        schema:
+          type: string
+          format: uuid
+      - name: pagId
+        in: path
+        required: true
+        description: UUID do pagamento
+        schema:
+          type: string
+          format: uuid
+
+    put:
+      tags:
+        - Pagamentos
+      summary: Atualiza um pagamento
+      operationId: updatePagamento
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PagamentoUpdateRequest"
+      responses:
+        "200":
+          description: Pagamento atualizado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagamentoResponse"
+        "400":
+          description: Dados inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "404":
+          description: Pagamento não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      tags:
+        - Pagamentos
+      summary: Remove um pagamento
+      operationId: deletePagamento
+      responses:
+        "204":
+          description: Pagamento removido com sucesso
+        "400":
+          description: UUID inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "404":
+          description: Pagamento não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/vendas/{id}/pagamentos/{pagId}/confirmar:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: UUID da venda
+        schema:
+          type: string
+          format: uuid
+      - name: pagId
+        in: path
+        required: true
+        description: UUID do pagamento
+        schema:
+          type: string
+          format: uuid
+
+    post:
+      tags:
+        - Pagamentos
+      summary: Confirma o recebimento de um pagamento pendente
+      description: |
+        Altera o status do pagamento de `pendente` para `recebido`.
+        Se `data_pagamento` não for fornecida no body, assume a data de hoje.
+        Retorna 400 se o pagamento já estiver `recebido`.
+      operationId: confirmarPagamento
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PagamentoConfirmarRequest"
+      responses:
+        "200":
+          description: Pagamento confirmado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagamentoResponse"
+        "400":
+          description: Pagamento já confirmado ou data inválida
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "404":
+          description: Pagamento não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ============================================================
+  # Estoque
+  # ============================================================
+  /api/v1/estoque/resumo:
+    get:
+      tags:
+        - Estoque
+      summary: Resumo do estoque agrupado por produto
+      operationId: getResumoEstoque
+      parameters:
+        - name: produto_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: Filtra por produto específico
+      responses:
+        "200":
+          description: Resumo do estoque ordenado por quantidade_total DESC
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResumoEstoqueItem"
+        "400":
+          description: produto_id inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/estoque:
+    get:
+      tags:
+        - Estoque
+      summary: Lista lançamentos de entrada de estoque
+      operationId: listEstoque
+      parameters:
+        - name: produto_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: Filtra por produto
+        - name: data_inicio
+          in: query
+          schema:
+            type: string
+            format: date
+          description: "Filtra por data_entrada >= (formato: YYYY-MM-DD)"
+        - name: data_fim
+          in: query
+          schema:
+            type: string
+            format: date
+          description: "Filtra por data_entrada <= (formato: YYYY-MM-DD)"
+      responses:
+        "200":
+          description: Lista de lançamentos ordenada por data_entrada DESC
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/EstoqueResponse"
+        "400":
+          description: produto_id inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    post:
+      tags:
+        - Estoque
+      summary: Registra uma entrada de estoque
+      operationId: createEstoque
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EstoqueRequest"
+      responses:
+        "201":
+          description: Entrada de estoque registrada com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EstoqueResponse"
+        "400":
+          description: |
+            Dados inválidos:
+            - `produto_nome` obrigatório
+            - `quantidade_entrada` deve ser > 0
+            - `custo_unit` não pode ser negativo
+            - `data_entrada` obrigatória (formato: YYYY-MM-DD)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/estoque/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: UUID do lançamento de estoque
+        schema:
+          type: string
+          format: uuid
+
+    get:
+      tags:
+        - Estoque
+      summary: Busca um lançamento de estoque por ID
+      operationId: getEstoque
+      responses:
+        "200":
+          description: Lançamento de estoque encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EstoqueResponse"
+        "400":
+          description: UUID inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "404":
+          description: Registro não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    put:
+      tags:
+        - Estoque
+      summary: Atualiza um lançamento de estoque
+      operationId: updateEstoque
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EstoqueRequest"
+      responses:
+        "200":
+          description: Lançamento atualizado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EstoqueResponse"
+        "400":
+          description: Dados inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "404":
+          description: Registro não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      tags:
+        - Estoque
+      summary: Remove um lançamento de estoque (hard delete)
+      description: "⚠️ Diferente dos outros recursos, este é um **hard delete** (remoção física)."
+      operationId: deleteEstoque
+      responses:
+        "204":
+          description: Lançamento removido com sucesso
+        "400":
+          description: UUID inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ============================================================
+  # Dashboard
+  # ============================================================
+  /api/v1/dashboard/resumo:
+    get:
+      tags:
+        - Dashboard
+      summary: Resumo financeiro do período
+      description: |
+        Retorna indicadores financeiros consolidados.
+        Por padrão, o período é o mês corrente.
+        `total_a_receber` e `vendas_abertas` ignoram o filtro de período (refletem o total global de não-ENTREGUE).
+      operationId: getDashboardResumo
+      parameters:
+        - name: data_inicio
+          in: query
+          schema:
+            type: string
+            format: date
+          description: "Início do período (padrão: primeiro dia do mês atual)"
+        - name: data_fim
+          in: query
+          schema:
+            type: string
+            format: date
+          description: "Fim do período (padrão: hoje)"
+      responses:
+        "200":
+          description: Resumo financeiro
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResumoResponse"
+        "400":
+          description: Data inválida
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/dashboard/notificacoes:
+    get:
+      tags:
+        - Dashboard
+      summary: Lista notificações não lidas
+      description: "Retorna até 50 notificações não lidas. Pagamentos vencidos aparecem primeiro."
+      operationId: getNotificacoes
+      responses:
+        "200":
+          description: Lista de notificações
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificacoesListResponse"
+        "401":
+          description: Não autenticado
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/dashboard/notificacoes/{id}/lida:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: UUID da notificação
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags:
+        - Dashboard
+      summary: Marca uma notificação como lida
+      operationId: marcarNotificacaoLida
+      responses:
+        "204":
+          description: Notificação marcada como lida
+        "400":
+          description: UUID inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "404":
+          description: Notificação não encontrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/dashboard/notificacoes/marcar-todas-lidas:
+    post:
+      tags:
+        - Dashboard
+      summary: Marca todas as notificações como lidas
+      operationId: marcarTodasNotificacoesLidas
+      responses:
+        "204":
+          description: Todas as notificações marcadas como lidas
+        "401":
+          description: Não autenticado
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/dashboard/gerar-notificacoes:
+    post:
+      tags:
+        - Dashboard
+      summary: Dispara a geração de notificações de pagamentos
+      description: |
+        Executa a função PostgreSQL `gerar_notificacoes_pagamentos()`.
+        Normalmente executada automaticamente via `pg_cron`.
+      operationId: gerarNotificacoes
+      responses:
+        "204":
+          description: Notificações geradas com sucesso
+        "401":
+          description: Não autenticado
+        "500":
+          description: Erro ao executar função
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ============================================================
+  # Relatórios
+  # ============================================================
+  /api/v1/relatorios/vendas:
+    get:
+      tags:
+        - Relatórios
+      summary: Vendas e lucro por mês
+      description: "Retorna dados agrupados por mês dos últimos N meses (padrão: 12, máx: 60)."
+      operationId: getVendasPorMes
+      parameters:
+        - name: meses
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 60
+            default: 12
+          description: "Número de meses retrospectivos (1-60)"
+      responses:
+        "200":
+          description: Dados de vendas por mês
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VendasPorMesResponse"
+        "400":
+          description: Parâmetro `meses` inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/relatorios/produtos:
+    get:
+      tags:
+        - Relatórios
+      summary: Ranking dos produtos mais vendidos
+      description: "Retorna os 20 produtos com maior receita no período. Sem filtro de data, considera todas as vendas."
+      operationId: getProdutosMaisVendidos
+      parameters:
+        - name: data_inicio
+          in: query
+          schema:
+            type: string
+            format: date
+          description: "Início do período (formato: YYYY-MM-DD)"
+        - name: data_fim
+          in: query
+          schema:
+            type: string
+            format: date
+          description: "Fim do período (formato: YYYY-MM-DD)"
+      responses:
+        "200":
+          description: Ranking de produtos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProdutoRankingResponse"
+        "400":
+          description: Data inválida
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+tags:
+  - name: Health
+    description: Verificação de disponibilidade da API (público)
+  - name: Clientes
+    description: Gerenciamento de clientes
+  - name: Produtos
+    description: Catálogo de produtos
+  - name: Fornecedores
+    description: Gerenciamento de fornecedores
+  - name: Vendedores Externos
+    description: Gerenciamento de vendedores externos (comissionados)
+  - name: Vendas
+    description: Gestão completa de vendas
+  - name: Vendas / Itens
+    description: Itens de uma venda
+  - name: Pagamentos
+    description: Pagamentos de clientes por venda
+  - name: Estoque
+    description: Controle de entradas de estoque
+  - name: Dashboard
+    description: Indicadores financeiros e notificações
+  - name: Relatórios
+    description: Relatórios analíticos de vendas e produtos

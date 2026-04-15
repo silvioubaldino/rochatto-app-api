@@ -1,0 +1,11 @@
+DROP VIEW IF EXISTS vw_vendas_resumo;
+DROP TABLE IF EXISTS estoque;
+DROP TABLE IF EXISTS pagamentos_cliente;
+DROP TABLE IF EXISTS itens_venda;
+DROP TABLE IF EXISTS vendas;
+DROP TABLE IF EXISTS vendedores_externos;
+DROP TABLE IF EXISTS fornecedores;
+DROP TABLE IF EXISTS produtos;
+DROP TABLE IF EXISTS clientes;
+DROP TYPE IF EXISTS status_pagamento;
+DROP TYPE IF EXISTS status_venda;
