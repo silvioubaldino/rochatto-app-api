@@ -136,13 +136,13 @@ live in the linked files — this is just the essentials.
 
 - **READ-ONLY context:** run `docs/scripts/sync-context.sh` to populate `docs/shared/`
   (a **gitignored** mirror of the context repo — **do not edit here**). Map and rules:
-  @docs/shared/manifest.md · @docs/shared/requirements.md (requirements **and glossary** —
-  ALWAYS use these terms) · @docs/shared/conventions.md (IDs, frontmatter, `ID@repo` refs).
+  @docs/shared/CLAUDE.md (IDs, frontmatter, lifecycle, `ID@repo` refs) ·
+  @docs/shared/requirements.md (requirements **and glossary** — ALWAYS use these terms).
 - **What lives in this repo:** `docs/specs/` (SPEC — already includes the implementation
   plan: approach, steps, tests, checklist), `docs/technical_decisions/` (local TDR),
   `docs/conventions.md` (CONV), `docs/changelog.md`.
 - **Contracts only change in the context** (AYD/ADR). If this API diverges from the AYD,
-  **flag it** — do not adapt locally (see `conventions.md` §5).
+  **flag it** — do not adapt locally (see `docs/shared/CLAUDE.md`, "Core rule").
 - **Feature flow:** read the AYD in `docs/shared/design/` → create/update the SPEC
   (`parents: [AYD-NNN@context]`, covers what + how) and implement → contract changed? go
   back to the AYD in the context repo before proceeding.

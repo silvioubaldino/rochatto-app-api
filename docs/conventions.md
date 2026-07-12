@@ -10,7 +10,7 @@ updated: 2025-01-01
 
 > Padrão de engenharia (vivo). Decisão pontual que muda a abordagem → vira TDR.
 > Convenções de **documentação** (IDs, frontmatter, ciclo de vida, `ID@repo`) ficam no
-> repo de contexto: `docs/shared/conventions.md`.
+> repo de contexto: `docs/shared/CLAUDE.md`.
 
 ## Estilo de código
 - **Linguagem / versão:** _<preencher>_.

@@ -2,7 +2,7 @@
 id: SPEC-NNN
 type: spec
 title: 
-status: draft                # draft → review → approved → done (ver docs/shared/conventions.md §6)
+status: draft                # draft → review → approved → done (ver docs/shared/CLAUDE.md, Lifecycle)
 updated: 2025-01-01
 parents: [AYD-NNN@context]   # obrigatório: o AYD que originou esta spec
 related: [GLO]                # ADR/TDR relevantes
