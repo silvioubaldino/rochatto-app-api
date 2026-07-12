@@ -120,3 +120,29 @@ go run cmd/server/main.go
 - Render detecta automaticamente e builda o binário Go
 - Variáveis de ambiente configuradas no painel do Render
 - ⚠️ Free tier: servidor hiberna após 15min de inatividade (cold start ~30s)
+
+## This repo's role (docs framework)
+
+Owner of the API contracts. I implement what the AYD defines; a contract change is a PR in
+the context repo (`rochatto-app-context`), never local.
+
+## Engineering conventions (local)
+@docs/conventions.md
+
+## Docs framework (summary)
+
+How this repo connects to the shared context (`rochatto-app-context`). The **full rules**
+live in the linked files — this is just the essentials.
+
+- **READ-ONLY context:** run `docs/scripts/sync-context.sh` to populate `docs/shared/`
+  (a **gitignored** mirror of the context repo — **do not edit here**). Map and rules:
+  @docs/shared/CLAUDE.md (IDs, frontmatter, lifecycle, `ID@repo` refs) ·
+  @docs/shared/requirements.md (requirements **and glossary** — ALWAYS use these terms).
+- **What lives in this repo:** `docs/specs/` (SPEC — already includes the implementation
+  plan: approach, steps, tests, checklist), `docs/technical_decisions/` (local TDR),
+  `docs/conventions.md` (CONV), `docs/changelog.md`.
+- **Contracts only change in the context** (AYD/ADR). If this API diverges from the AYD,
+  **flag it** — do not adapt locally (see `docs/shared/CLAUDE.md`, "Core rule").
+- **Feature flow:** read the AYD in `docs/shared/design/` → create/update the SPEC
+  (`parents: [AYD-NNN@context]`, covers what + how) and implement → contract changed? go
+  back to the AYD in the context repo before proceeding.
