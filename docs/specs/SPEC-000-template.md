@@ -2,20 +2,16 @@
 id: SPEC-NNN
 type: spec
 title: 
-status: draft
-created: 2025-01-01
+status: draft                # draft → review → approved → done (ver docs/shared/conventions.md §6)
 updated: 2025-01-01
-owner: <nome>
 parents: [AYD-NNN@context]   # obrigatório: o AYD que originou esta spec
-children: []                # PLAN correspondente
-related: [GLO]              # ADR/TDR relevantes
-tags: []
-superseded_by: null
+related: [GLO]                # ADR/TDR relevantes
 ---
 
 # Spec: <feature> (parte deste repo)
 
-> Detalha O QUÊ este repo faz para cumprir o AYD. Congela ao virar `approved`.
+> O QUÊ e COMO este repo cumpre o AYD. `approved` = contrato local congelado;
+> `done` = implementado (este documento vira o registro histórico da entrega).
 
 ## Objetivo
 _O papel deste repo nesta feature (conforme o AYD)._
@@ -31,9 +27,23 @@ Cenário: <nome>
 ## Contratos consumidos/expostos
 _Referencie os contratos do AYD. Este repo NÃO os redefine._
 
-## Modelo de dados / componentes afetados
+## Abordagem (como)
+_Resumo da estratégia técnica._
+
+## Passos de implementação
+1. 
+2. 
+
+## Arquivos / módulos afetados
 - 
+
+## Testes (ver docs/conventions.md)
+- **Aceite (mapeia os critérios acima):**
+- **Unit/integração:**
 
 ## Casos de borda & fora de escopo
 - Borda:
 - Fora:
+
+## Checklist de entrega
+- [ ] 

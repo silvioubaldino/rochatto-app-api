@@ -4,7 +4,6 @@ type: changelog
 title: This service's changelog
 status: approved
 updated: 2025-01-01
-owner: <nome>
 ---
 
 # Changelog — <serviço>
@@ -22,8 +21,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (SemVer) and a new empty `## Unreleased` is opened above it.
 - **One line per PR:** each PR adds a **single line** describing summarized what it delivers — general,
   no implementation or docs-framework detail; reference the PR (e.g. `[PR#02](url)`). The
-  line **may omit SPEC/PLAN additions** (tracked by their own files/git): if a PR only adds a
-  SPEC/PLAN, summarize the feature they open.
+  line **may omit SPEC additions** (tracked by their own files/git): if a PR only adds a
+  SPEC, summarize the feature they open.
 
 ## Unreleased
 

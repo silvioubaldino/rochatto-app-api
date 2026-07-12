@@ -127,9 +127,7 @@ Owner of the API contracts. I implement what the AYD defines; a contract change 
 the context repo (`rochatto-app-context`), never local.
 
 ## Engineering conventions (local)
-@docs/conventions/testing.md
-@docs/conventions/code-style.md
-@docs/conventions/git.md
+@docs/conventions.md
 
 ## Docs framework (summary)
 
@@ -138,12 +136,13 @@ live in the linked files — this is just the essentials.
 
 - **READ-ONLY context:** run `docs/scripts/sync-context.sh` to populate `docs/shared/`
   (a **gitignored** mirror of the context repo — **do not edit here**). Map and rules:
-  @docs/shared/manifest.md · @docs/shared/_meta/glossary.md (ALWAYS use these terms) ·
-  @docs/shared/_meta/conventions.md (IDs, frontmatter, `ID@repo` refs).
-- **What lives in this repo:** `docs/specs/` (SPEC), `docs/plans/` (PLAN),
-  `docs/technical_decisions/` (local TDR), `docs/conventions/` (CONV), `docs/changelog.md`.
+  @docs/shared/manifest.md · @docs/shared/requirements.md (requirements **and glossary** —
+  ALWAYS use these terms) · @docs/shared/conventions.md (IDs, frontmatter, `ID@repo` refs).
+- **What lives in this repo:** `docs/specs/` (SPEC — already includes the implementation
+  plan: approach, steps, tests, checklist), `docs/technical_decisions/` (local TDR),
+  `docs/conventions.md` (CONV), `docs/changelog.md`.
 - **Contracts only change in the context** (AYD/ADR). If this API diverges from the AYD,
   **flag it** — do not adapt locally (see `conventions.md` §5).
 - **Feature flow:** read the AYD in `docs/shared/design/` → create/update the SPEC
-  (`parents: [AYD-NNN@context]`) → write the PLAN and implement → contract changed? go back
-  to the AYD in the context repo before proceeding.
+  (`parents: [AYD-NNN@context]`, covers what + how) and implement → contract changed? go
+  back to the AYD in the context repo before proceeding.

@@ -3,12 +3,9 @@ id: TDR-NNN
 type: tdr
 title: 
 status: draft               # proposed → accepted → superseded
-created: 2025-01-01
 updated: 2025-01-01
-owner: <nome>
 parents: []
 related: []
-tags: []
 superseded_by: null
 ---
 
