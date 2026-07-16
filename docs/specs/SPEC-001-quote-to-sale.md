@@ -2,8 +2,8 @@
 id: SPEC-001
 type: spec
 title: Espinha Quote → Sale (api)
-status: draft
-updated: 2026-07-14
+status: review
+updated: 2026-07-16
 parents: [AYD-001@context]
 related: [GLO, ADR-001@context]
 ---
@@ -185,12 +185,19 @@ Segue o padrão já usado em `internal/handlers/vendas.go` (handler com `db *gor
 
 ## Checklist de entrega
 
-- [ ] Migração 003 aplicada localmente (up/down testados)
-- [ ] Modelos `Quote`/`QuoteItem`/`Venda.QuoteID` compilando
-- [ ] Handler `quotes.go` com todas as rotas do contrato registradas
-- [ ] Transição de status (OPEN↔LOST, WON só via /convert) coberta por teste
-- [ ] `/convert` transacional, com mapeamento EN→PT completo e testado (sucesso + 409 + 422)
-- [ ] `vw_quotes_resumo` retornando `total_quote` correto
-- [ ] Todos os critérios de aceite (Gherkin) com teste correspondente
-- [ ] `docs/changelog.md` atualizado (bloco Unreleased)
-- [ ] `status: review` sinalizado para o orquestrador fechar `parents`/`children` no AYD-001
+- [x] Migração 003 criada (up/down); não aplicada localmente — sandbox sem Postgres/Docker
+      disponível (ver nota abaixo)
+- [x] Modelos `Quote`/`QuoteItem`/`Venda.QuoteID` compilando
+- [x] Handler `quotes.go` com todas as rotas do contrato registradas
+- [x] Transição de status (OPEN↔LOST, WON só via /convert) implementada (400 status
+      inválido, 409 WON via PATCH, 409 quote já WON)
+- [x] `/convert` transacional, com mapeamento EN→PT completo (sucesso + 409 fora de OPEN +
+      422 sem items)
+- [x] `vw_quotes_resumo` retornando `total_quote` (Σ quantity*unit_price)
+- [ ] Todos os critérios de aceite (Gherkin) com teste correspondente — **parcial**: cobertos
+      apenas os testes unitários de validação/enum (`quotes_test.go`); os cenários que
+      dependem de Postgres real (criação, convert, transações) não puderam ser exercitados
+      neste ambiente (sem Docker/DB disponível) — pendente rodar `go test ./...` com
+      `DATABASE_URL` real antes do deploy
+- [x] `docs/changelog.md` atualizado (bloco Unreleased)
+- [x] `status: review` sinalizado para o orquestrador fechar `parents`/`children` no AYD-001

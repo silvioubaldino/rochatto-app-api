@@ -60,6 +60,7 @@ type Venda struct {
 	Base
 	ClienteID           uuid.UUID  `gorm:"type:uuid;not null"                             json:"cliente_id"`
 	VendedorExternoID   *uuid.UUID `gorm:"type:uuid"                                      json:"vendedor_externo_id"`
+	QuoteID             *uuid.UUID `gorm:"type:uuid;uniqueIndex"                          json:"quote_id"`
 	Status              string     `gorm:"type:status_venda;not null;default:'A_ENTREGAR'" json:"status"`
 	DataVenda           time.Time  `gorm:"type:date;not null"                              json:"data_venda"`
 	DataEntregaPrevista *time.Time `gorm:"type:date"                                       json:"data_entrega_prevista"`
@@ -88,6 +89,35 @@ type ItemVenda struct {
 
 func (ItemVenda) TableName() string { return "itens_venda" }
 
+// Quote e QuoteItem usam nomenclatura canônica em inglês (ADR-001) — entidades novas,
+// distintas do legado PT (Venda/ItemVenda).
+type Quote struct {
+	Base
+	CustomerID uuid.UUID  `gorm:"column:customer_id;type:uuid;not null"        json:"customer_id"`
+	ReferrerID *uuid.UUID `gorm:"column:referrer_id;type:uuid"                 json:"referrer_id"`
+	Status     string     `gorm:"column:status;type:quote_status;not null;default:'OPEN'" json:"status"`
+	LostReason *string    `gorm:"column:lost_reason"                           json:"lost_reason"`
+	QuoteDate  time.Time  `gorm:"column:quote_date;type:date;not null"         json:"quote_date"`
+	Notes      *string    `gorm:"column:notes"                                 json:"notes"`
+}
+
+func (Quote) TableName() string { return "quotes" }
+
+type QuoteItem struct {
+	ID           uuid.UUID  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	QuoteID      uuid.UUID  `gorm:"column:quote_id;type:uuid;not null"              json:"quote_id"`
+	ProductID    *uuid.UUID `gorm:"column:product_id;type:uuid"                     json:"product_id"`
+	ProductName  string     `gorm:"column:product_name;not null"                    json:"product_name"`
+	SupplierID   *uuid.UUID `gorm:"column:supplier_id;type:uuid"                    json:"supplier_id"`
+	SupplierName *string    `gorm:"column:supplier_name"                            json:"supplier_name"`
+	Quantity     float64    `gorm:"column:quantity;type:decimal(12,3);not null"     json:"quantity"`
+	UnitPrice    float64    `gorm:"column:unit_price;type:decimal(12,2);not null"   json:"unit_price"`
+	UnitCost     float64    `gorm:"column:unit_cost;type:decimal(12,2);not null"    json:"unit_cost"`
+	CreatedAt    time.Time  `                                                        json:"created_at"`
+}
+
+func (QuoteItem) TableName() string { return "quote_items" }
+
 type PagamentoCliente struct {
 	ID            uuid.UUID  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
 	VendaID       uuid.UUID  `gorm:"type:uuid;not null"                             json:"venda_id"`
@@ -102,16 +132,16 @@ type PagamentoCliente struct {
 func (PagamentoCliente) TableName() string { return "pagamentos_cliente" }
 
 type Notificacao struct {
-	ID             uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
-	Tipo           string    `gorm:"not null"           json:"tipo"`
-	VendaID        *uuid.UUID `gorm:"type:uuid"         json:"venda_id"`
-	PagamentoID    *uuid.UUID `gorm:"type:uuid;uniqueIndex" json:"pagamento_id"`
-	ClienteNome    string    `gorm:"not null"           json:"cliente_nome"`
-	Valor          float64   `gorm:"type:decimal(12,2);not null" json:"valor"`
-	DataRef        time.Time `gorm:"type:date;not null" json:"data_ref"`
-	DiasRestantes  *int      `                          json:"dias_restantes"`
-	Lida           bool      `gorm:"not null;default:false" json:"lida"`
-	CreatedAt      time.Time `                          json:"created_at"`
+	ID            uuid.UUID  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	Tipo          string     `gorm:"not null"           json:"tipo"`
+	VendaID       *uuid.UUID `gorm:"type:uuid"         json:"venda_id"`
+	PagamentoID   *uuid.UUID `gorm:"type:uuid;uniqueIndex" json:"pagamento_id"`
+	ClienteNome   string     `gorm:"not null"           json:"cliente_nome"`
+	Valor         float64    `gorm:"type:decimal(12,2);not null" json:"valor"`
+	DataRef       time.Time  `gorm:"type:date;not null" json:"data_ref"`
+	DiasRestantes *int       `                          json:"dias_restantes"`
+	Lida          bool       `gorm:"not null;default:false" json:"lida"`
+	CreatedAt     time.Time  `                          json:"created_at"`
 }
 
 func (Notificacao) TableName() string { return "notificacoes" }
