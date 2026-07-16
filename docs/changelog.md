@@ -26,4 +26,5 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+- Add SPEC-001: Quote entity (CRUD + items), status transitions and `/quotes/{id}/convert` into Sale.
 - Repo initialized from the scaffold.
