@@ -104,16 +104,14 @@ type Quote struct {
 func (Quote) TableName() string { return "quotes" }
 
 type QuoteItem struct {
-	ID           uuid.UUID  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
-	QuoteID      uuid.UUID  `gorm:"column:quote_id;type:uuid;not null"              json:"quote_id"`
-	ProductID    *uuid.UUID `gorm:"column:product_id;type:uuid"                     json:"product_id"`
-	ProductName  string     `gorm:"column:product_name;not null"                    json:"product_name"`
-	SupplierID   *uuid.UUID `gorm:"column:supplier_id;type:uuid"                    json:"supplier_id"`
-	SupplierName *string    `gorm:"column:supplier_name"                            json:"supplier_name"`
-	Quantity     float64    `gorm:"column:quantity;type:decimal(12,3);not null"     json:"quantity"`
-	UnitPrice    float64    `gorm:"column:unit_price;type:decimal(12,2);not null"   json:"unit_price"`
-	UnitCost     float64    `gorm:"column:unit_cost;type:decimal(12,2);not null"    json:"unit_cost"`
-	CreatedAt    time.Time  `                                                        json:"created_at"`
+	ID          uuid.UUID  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	QuoteID     uuid.UUID  `gorm:"column:quote_id;type:uuid;not null"              json:"quote_id"`
+	ProductID   *uuid.UUID `gorm:"column:product_id;type:uuid"                     json:"product_id"`
+	ProductName string     `gorm:"column:product_name;not null"                    json:"product_name"`
+	Quantity    float64    `gorm:"column:quantity;type:decimal(12,3);not null"     json:"quantity"`
+	UnitPrice   float64    `gorm:"column:unit_price;type:decimal(12,2);not null"   json:"unit_price"`
+	UnitCost    float64    `gorm:"column:unit_cost;type:decimal(12,2);not null"    json:"unit_cost"`
+	CreatedAt   time.Time  `                                                        json:"created_at"`
 }
 
 func (QuoteItem) TableName() string { return "quote_items" }

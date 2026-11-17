@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/silvioubaldino/sales-backend/internal/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // --- Valid quote_status values (AYD-001) ---
@@ -47,18 +48,17 @@ func (h *QuotesHandler) Register(mux *http.ServeMux) {
 
 	mux.HandleFunc("PATCH /quotes/{id}/status", h.updateStatus)
 	mux.HandleFunc("POST /quotes/{id}/convert", h.convert)
+	mux.HandleFunc("POST /quotes/quick-sale", h.quickSale)
 }
 
 // --- Request types ---
 
 type quoteItemRequest struct {
-	ProductID    *uuid.UUID `json:"product_id"`
-	ProductName  string     `json:"product_name"`
-	SupplierID   *uuid.UUID `json:"supplier_id"`
-	SupplierName *string    `json:"supplier_name"`
-	Quantity     float64    `json:"quantity"`
-	UnitPrice    float64    `json:"unit_price"`
-	UnitCost     float64    `json:"unit_cost"`
+	ProductID   *uuid.UUID `json:"product_id"`
+	ProductName string     `json:"product_name"`
+	Quantity    float64    `json:"quantity"`
+	UnitPrice   float64    `json:"unit_price"`
+	UnitCost    float64    `json:"unit_cost"`
 }
 
 type quoteCreateRequest struct {
@@ -101,16 +101,14 @@ type quoteDetailResponse struct {
 }
 
 type quoteItemResponse struct {
-	ID           uuid.UUID  `json:"id"`
-	ProductID    *uuid.UUID `json:"product_id"`
-	ProductName  string     `json:"product_name"`
-	SupplierID   *uuid.UUID `json:"supplier_id"`
-	SupplierName *string    `json:"supplier_name"`
-	Quantity     float64    `json:"quantity"`
-	UnitPrice    float64    `json:"unit_price"`
-	UnitCost     float64    `json:"unit_cost"`
-	TotalPrice   float64    `json:"total_price"`
-	CreatedAt    time.Time  `json:"created_at"`
+	ID          uuid.UUID  `json:"id"`
+	ProductID   *uuid.UUID `json:"product_id"`
+	ProductName string     `json:"product_name"`
+	Quantity    float64    `json:"quantity"`
+	UnitPrice   float64    `json:"unit_price"`
+	UnitCost    float64    `json:"unit_cost"`
+	TotalPrice  float64    `json:"total_price"`
+	CreatedAt   time.Time  `json:"created_at"`
 }
 
 type convertResponse struct {
@@ -152,16 +150,14 @@ func (row quoteResumoRow) toListResponse() quoteListResponse {
 
 func quoteItemToResponse(item models.QuoteItem) quoteItemResponse {
 	return quoteItemResponse{
-		ID:           item.ID,
-		ProductID:    item.ProductID,
-		ProductName:  item.ProductName,
-		SupplierID:   item.SupplierID,
-		SupplierName: item.SupplierName,
-		Quantity:     item.Quantity,
-		UnitPrice:    item.UnitPrice,
-		UnitCost:     item.UnitCost,
-		TotalPrice:   item.Quantity * item.UnitPrice,
-		CreatedAt:    item.CreatedAt,
+		ID:          item.ID,
+		ProductID:   item.ProductID,
+		ProductName: item.ProductName,
+		Quantity:    item.Quantity,
+		UnitPrice:   item.UnitPrice,
+		UnitCost:    item.UnitCost,
+		TotalPrice:  item.Quantity * item.UnitPrice,
+		CreatedAt:   item.CreatedAt,
 	}
 }
 
@@ -272,9 +268,17 @@ func (h *QuotesHandler) list(w http.ResponseWriter, r *http.Request) {
 		query = query.Where("qr.status = ?", status)
 	}
 	if from := r.URL.Query().Get("from"); from != "" {
+		if _, err := parseDate(from); err != nil {
+			models.WriteError(w, http.StatusBadRequest, "from inválida (formato: YYYY-MM-DD)")
+			return
+		}
 		query = query.Where("qr.quote_date >= ?", from)
 	}
 	if to := r.URL.Query().Get("to"); to != "" {
+		if _, err := parseDate(to); err != nil {
+			models.WriteError(w, http.StatusBadRequest, "to inválida (formato: YYYY-MM-DD)")
+			return
+		}
 		query = query.Where("qr.quote_date <= ?", to)
 	}
 	if customerID := r.URL.Query().Get("customer_id"); customerID != "" {
@@ -305,34 +309,42 @@ func (h *QuotesHandler) list(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, quotes)
 }
 
-func (h *QuotesHandler) create(w http.ResponseWriter, r *http.Request) {
-	var req quoteCreateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		models.WriteError(w, http.StatusBadRequest, "JSON inválido")
-		return
-	}
-
+// validateQuoteRequest valida o payload de criação (compartilhado por create e quick-sale).
+// Escreve a resposta de erro e devolve ok=false quando inválido.
+func (h *QuotesHandler) validateQuoteRequest(w http.ResponseWriter, ctx context.Context, req quoteCreateRequest) (time.Time, bool) {
 	if req.CustomerID == uuid.Nil {
 		models.WriteError(w, http.StatusBadRequest, "campo 'customer_id' é obrigatório")
-		return
+		return time.Time{}, false
 	}
 	var cliente models.Cliente
-	if err := h.db.WithContext(r.Context()).First(&cliente, "id = ?", req.CustomerID).Error; err != nil {
+	if err := h.db.WithContext(ctx).First(&cliente, "id = ?", req.CustomerID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			models.WriteError(w, http.StatusBadRequest, "customer não encontrado")
-			return
+			return time.Time{}, false
 		}
-		log.Printf("ERROR CreateQuote check customer: %v", err)
+		log.Printf("ERROR validateQuoteRequest check customer: %v", err)
 		models.WriteError(w, http.StatusInternalServerError, "erro interno")
-		return
+		return time.Time{}, false
+	}
+	if req.ReferrerID != nil {
+		var partner models.VendedorExterno
+		if err := h.db.WithContext(ctx).First(&partner, "id = ?", *req.ReferrerID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				models.WriteError(w, http.StatusBadRequest, "referrer não encontrado")
+				return time.Time{}, false
+			}
+			log.Printf("ERROR validateQuoteRequest check referrer: %v", err)
+			models.WriteError(w, http.StatusInternalServerError, "erro interno")
+			return time.Time{}, false
+		}
 	}
 
-	quoteDate := time.Now()
+	quoteDate := today()
 	if strings.TrimSpace(req.QuoteDate) != "" {
 		t, err := parseDate(req.QuoteDate)
 		if err != nil {
 			models.WriteError(w, http.StatusBadRequest, "quote_date inválida (formato: YYYY-MM-DD)")
-			return
+			return time.Time{}, false
 		}
 		quoteDate = t
 	}
@@ -340,13 +352,14 @@ func (h *QuotesHandler) create(w http.ResponseWriter, r *http.Request) {
 	for i, itemReq := range req.Items {
 		if errMsg := validateQuoteItemFields(itemReq); errMsg != "" {
 			models.WriteError(w, http.StatusBadRequest, fmt.Sprintf("items[%d]: %s", i, errMsg))
-			return
+			return time.Time{}, false
 		}
 	}
+	return quoteDate, true
+}
 
-	tx := h.db.WithContext(r.Context()).Begin()
-	defer tx.Rollback()
-
+// insertQuote grava o Quote e seus Items dentro da transação recebida.
+func insertQuote(tx *gorm.DB, req quoteCreateRequest, quoteDate time.Time) (*models.Quote, error) {
 	quote := models.Quote{
 		CustomerID: req.CustomerID,
 		ReferrerID: req.ReferrerID,
@@ -354,31 +367,45 @@ func (h *QuotesHandler) create(w http.ResponseWriter, r *http.Request) {
 		QuoteDate:  quoteDate,
 		Notes:      req.Notes,
 	}
-
 	if err := tx.Create(&quote).Error; err != nil {
-		log.Printf("ERROR CreateQuote insert: %v", err)
-		models.WriteError(w, http.StatusInternalServerError, "erro interno")
+		return nil, fmt.Errorf("insert quote: %w", err)
+	}
+	for _, itemReq := range req.Items {
+		item := models.QuoteItem{
+			QuoteID:     quote.ID,
+			ProductID:   itemReq.ProductID,
+			ProductName: strings.TrimSpace(itemReq.ProductName),
+			Quantity:    itemReq.Quantity,
+			UnitPrice:   itemReq.UnitPrice,
+			UnitCost:    itemReq.UnitCost,
+		}
+		if err := tx.Create(&item).Error; err != nil {
+			return nil, fmt.Errorf("insert quote item: %w", err)
+		}
+	}
+	return &quote, nil
+}
+
+func (h *QuotesHandler) create(w http.ResponseWriter, r *http.Request) {
+	var req quoteCreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.WriteError(w, http.StatusBadRequest, "JSON inválido")
+		return
+	}
+	quoteDate, ok := h.validateQuoteRequest(w, r.Context(), req)
+	if !ok {
 		return
 	}
 
-	for _, itemReq := range req.Items {
-		item := models.QuoteItem{
-			QuoteID:      quote.ID,
-			ProductID:    itemReq.ProductID,
-			ProductName:  strings.TrimSpace(itemReq.ProductName),
-			SupplierID:   itemReq.SupplierID,
-			SupplierName: itemReq.SupplierName,
-			Quantity:     itemReq.Quantity,
-			UnitPrice:    itemReq.UnitPrice,
-			UnitCost:     itemReq.UnitCost,
-		}
-		if err := tx.Create(&item).Error; err != nil {
-			log.Printf("ERROR CreateQuote insert item: %v", err)
-			models.WriteError(w, http.StatusInternalServerError, "erro interno")
-			return
-		}
-	}
+	tx := h.db.WithContext(r.Context()).Begin()
+	defer tx.Rollback()
 
+	quote, err := insertQuote(tx, req, quoteDate)
+	if err != nil {
+		log.Printf("ERROR CreateQuote: %v", err)
+		models.WriteError(w, http.StatusInternalServerError, "erro interno")
+		return
+	}
 	if err := tx.Commit().Error; err != nil {
 		log.Printf("ERROR CreateQuote commit: %v", err)
 		models.WriteError(w, http.StatusInternalServerError, "erro interno")
@@ -457,7 +484,23 @@ func (h *QuotesHandler) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.db.WithContext(r.Context()).Delete(&models.Quote{}, "id = ?", id).Error; err != nil {
+	var quote models.Quote
+	if err := h.db.WithContext(r.Context()).First(&quote, "id = ?", id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			models.WriteError(w, http.StatusNotFound, "quote não encontrado")
+			return
+		}
+		log.Printf("ERROR SoftDeleteQuote find: %v", err)
+		models.WriteError(w, http.StatusInternalServerError, "erro interno")
+		return
+	}
+	// RN-01: a Sale mantém referência ao Quote de origem — Quote convertido não se apaga.
+	if quote.Status == "WON" {
+		models.WriteError(w, http.StatusConflict, "quote convertido em Sale não pode ser excluído")
+		return
+	}
+
+	if err := h.db.WithContext(r.Context()).Delete(&quote).Error; err != nil {
 		log.Printf("ERROR SoftDeleteQuote: %v", err)
 		models.WriteError(w, http.StatusInternalServerError, "erro interno")
 		return
@@ -524,14 +567,12 @@ func (h *QuotesHandler) createItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	item := models.QuoteItem{
-		QuoteID:      quoteID,
-		ProductID:    req.ProductID,
-		ProductName:  strings.TrimSpace(req.ProductName),
-		SupplierID:   req.SupplierID,
-		SupplierName: req.SupplierName,
-		Quantity:     req.Quantity,
-		UnitPrice:    req.UnitPrice,
-		UnitCost:     req.UnitCost,
+		QuoteID:     quoteID,
+		ProductID:   req.ProductID,
+		ProductName: strings.TrimSpace(req.ProductName),
+		Quantity:    req.Quantity,
+		UnitPrice:   req.UnitPrice,
+		UnitCost:    req.UnitCost,
 	}
 
 	if err := h.db.WithContext(r.Context()).Create(&item).Error; err != nil {
@@ -583,8 +624,6 @@ func (h *QuotesHandler) updateItem(w http.ResponseWriter, r *http.Request) {
 
 	item.ProductID = req.ProductID
 	item.ProductName = strings.TrimSpace(req.ProductName)
-	item.SupplierID = req.SupplierID
-	item.SupplierName = req.SupplierName
 	item.Quantity = req.Quantity
 	item.UnitPrice = req.UnitPrice
 	item.UnitCost = req.UnitCost
@@ -698,6 +737,81 @@ func (h *QuotesHandler) updateStatus(w http.ResponseWriter, r *http.Request) {
 // Convert: Quote OPEN -> Sale (transacional, RF-07 / RN-01)
 // ============================================================
 
+// convertError carrega o status HTTP de uma falha de regra de negócio na conversão.
+type convertError struct {
+	status int
+	msg    string
+}
+
+func (e *convertError) Error() string { return e.msg }
+
+// convertQuote converte o Quote em Sale dentro da transação recebida. O Quote é lido com
+// lock de linha (FOR UPDATE): conversões concorrentes do mesmo Quote são serializadas e as
+// seguintes recebem 409 em vez de falhar na constraint UNIQUE de vendas.quote_id.
+func convertQuote(tx *gorm.DB, id uuid.UUID) (*models.Quote, *models.Venda, error) {
+	var quote models.Quote
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&quote, "id = ?", id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil, &convertError{http.StatusNotFound, "quote não encontrado"}
+		}
+		return nil, nil, err
+	}
+	if quote.Status != "OPEN" {
+		return nil, nil, &convertError{http.StatusConflict, "apenas quotes 'OPEN' podem ser convertidos"}
+	}
+
+	var items []models.QuoteItem
+	if err := tx.Where("quote_id = ?", id).Find(&items).Error; err != nil {
+		return nil, nil, err
+	}
+	if len(items) == 0 {
+		return nil, nil, &convertError{http.StatusUnprocessableEntity, "quote sem items não pode ser convertido"}
+	}
+
+	quoteID := quote.ID
+	venda := models.Venda{
+		ClienteID:         quote.CustomerID,
+		VendedorExternoID: quote.ReferrerID,
+		QuoteID:           &quoteID,
+		Status:            "A_ENTREGAR",
+		DataVenda:         today(),
+		Observacoes:       quote.Notes,
+	}
+	if err := tx.Create(&venda).Error; err != nil {
+		return nil, nil, err
+	}
+	// Supplier e origem do Item são definidos na Sale (PDR-001 / AYD-002), não no Quote.
+	for _, quoteItem := range items {
+		item := models.ItemVenda{
+			VendaID:        venda.ID,
+			ProdutoID:      quoteItem.ProductID,
+			ProdutoNome:    quoteItem.ProductName,
+			Quantidade:     quoteItem.Quantity,
+			PrecoVendaUnit: quoteItem.UnitPrice,
+			CustoUnit:      quoteItem.UnitCost,
+		}
+		if err := tx.Create(&item).Error; err != nil {
+			return nil, nil, err
+		}
+	}
+
+	quote.Status = "WON"
+	if err := tx.Save(&quote).Error; err != nil {
+		return nil, nil, err
+	}
+	return &quote, &venda, nil
+}
+
+func writeConvertError(w http.ResponseWriter, op string, err error) {
+	var ce *convertError
+	if errors.As(err, &ce) {
+		models.WriteError(w, ce.status, ce.msg)
+		return
+	}
+	log.Printf("ERROR %s: %v", op, err)
+	models.WriteError(w, http.StatusInternalServerError, "erro interno")
+}
+
 func (h *QuotesHandler) convert(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
@@ -708,79 +822,53 @@ func (h *QuotesHandler) convert(w http.ResponseWriter, r *http.Request) {
 	tx := h.db.WithContext(r.Context()).Begin()
 	defer tx.Rollback()
 
-	var quote models.Quote
-	if err := tx.First(&quote, "id = ?", id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			models.WriteError(w, http.StatusNotFound, "quote não encontrado")
-			return
-		}
-		log.Printf("ERROR ConvertQuote find: %v", err)
-		models.WriteError(w, http.StatusInternalServerError, "erro interno")
+	quote, venda, err := convertQuote(tx, id)
+	if err != nil {
+		writeConvertError(w, "ConvertQuote", err)
 		return
 	}
-	if quote.Status != "OPEN" {
-		models.WriteError(w, http.StatusConflict, "apenas quotes 'OPEN' podem ser convertidos")
-		return
-	}
-
-	var items []models.QuoteItem
-	if err := tx.Where("quote_id = ?", id).Find(&items).Error; err != nil {
-		log.Printf("ERROR ConvertQuote fetch items: %v", err)
-		models.WriteError(w, http.StatusInternalServerError, "erro interno")
-		return
-	}
-	if len(items) == 0 {
-		models.WriteError(w, http.StatusUnprocessableEntity, "quote sem items não pode ser convertido")
-		return
-	}
-
-	quoteID := quote.ID
-	venda := models.Venda{
-		ClienteID:         quote.CustomerID,
-		VendedorExternoID: quote.ReferrerID,
-		QuoteID:           &quoteID,
-		Status:            "A_ENTREGAR",
-		DataVenda:         time.Now(),
-		Observacoes:       quote.Notes,
-	}
-
-	if err := tx.Create(&venda).Error; err != nil {
-		log.Printf("ERROR ConvertQuote create venda: %v", err)
-		models.WriteError(w, http.StatusInternalServerError, "erro interno")
-		return
-	}
-
-	for _, quoteItem := range items {
-		item := models.ItemVenda{
-			VendaID:        venda.ID,
-			ProdutoID:      quoteItem.ProductID,
-			ProdutoNome:    quoteItem.ProductName,
-			FornecedorID:   quoteItem.SupplierID,
-			FornecedorNome: quoteItem.SupplierName,
-			Quantidade:     quoteItem.Quantity,
-			PrecoVendaUnit: quoteItem.UnitPrice,
-			CustoUnit:      quoteItem.UnitCost,
-			PagoFornecedor: 0,
-		}
-		if err := tx.Create(&item).Error; err != nil {
-			log.Printf("ERROR ConvertQuote create item: %v", err)
-			models.WriteError(w, http.StatusInternalServerError, "erro interno")
-			return
-		}
-	}
-
-	quote.Status = "WON"
-	if err := tx.Save(&quote).Error; err != nil {
-		log.Printf("ERROR ConvertQuote update quote status: %v", err)
-		models.WriteError(w, http.StatusInternalServerError, "erro interno")
-		return
-	}
-
 	if err := tx.Commit().Error; err != nil {
 		log.Printf("ERROR ConvertQuote commit: %v", err)
 		models.WriteError(w, http.StatusInternalServerError, "erro interno")
 		return
 	}
+	writeJSON(w, http.StatusCreated, convertResponse{SaleID: venda.ID, QuoteID: quote.ID})
+}
 
+// quickSale cria o Quote e o converte em Sale na mesma transação (venda rápida — AYD-001).
+func (h *QuotesHandler) quickSale(w http.ResponseWriter, r *http.Request) {
+	var req quoteCreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.WriteError(w, http.StatusBadRequest, "JSON inválido")
+		return
+	}
+	if len(req.Items) == 0 {
+		models.WriteError(w, http.StatusUnprocessableEntity, "venda rápida exige ao menos 1 item")
+		return
+	}
+	quoteDate, ok := h.validateQuoteRequest(w, r.Context(), req)
+	if !ok {
+		return
+	}
+
+	tx := h.db.WithContext(r.Context()).Begin()
+	defer tx.Rollback()
+
+	created, err := insertQuote(tx, req, quoteDate)
+	if err != nil {
+		log.Printf("ERROR QuickSale: %v", err)
+		models.WriteError(w, http.StatusInternalServerError, "erro interno")
+		return
+	}
+	quote, venda, err := convertQuote(tx, created.ID)
+	if err != nil {
+		writeConvertError(w, "QuickSale convert", err)
+		return
+	}
+	if err := tx.Commit().Error; err != nil {
+		log.Printf("ERROR QuickSale commit: %v", err)
+		models.WriteError(w, http.StatusInternalServerError, "erro interno")
+		return
+	}
 	writeJSON(w, http.StatusCreated, convertResponse{SaleID: venda.ID, QuoteID: quote.ID})
 }

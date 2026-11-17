@@ -194,10 +194,11 @@ Segue o padrão já usado em `internal/handlers/vendas.go` (handler com `db *gor
 - [x] `/convert` transacional, com mapeamento EN→PT completo (sucesso + 409 fora de OPEN +
       422 sem items)
 - [x] `vw_quotes_resumo` retornando `total_quote` (Σ quantity*unit_price)
-- [ ] Todos os critérios de aceite (Gherkin) com teste correspondente — **parcial**: cobertos
-      apenas os testes unitários de validação/enum (`quotes_test.go`); os cenários que
-      dependem de Postgres real (criação, convert, transações) não puderam ser exercitados
-      neste ambiente (sem Docker/DB disponível) — pendente rodar `go test ./...` com
-      `DATABASE_URL` real antes do deploy
+- [x] Todos os critérios de aceite com teste correspondente — testes de integração em
+      `internal/handlers/quotes_integration_test.go` (rodam com `TEST_DATABASE_URL`; migrations
+      001–003 aplicadas, incluindo down/up). Cobrem ciclo de status, conversão (201/409/422),
+      conversão concorrente (1 Sale), venda rápida, edição de item e validações.
+- [x] Revisão PDR-001: Quote sem Supplier, `POST /quotes/quick-sale`, `quote_id` exposto na Sale,
+      delete só de Quote OPEN/LOST, CORS com PATCH, datas no fuso America/Sao_Paulo.
 - [x] `docs/changelog.md` atualizado (bloco Unreleased)
 - [x] `status: review` sinalizado para o orquestrador fechar `parents`/`children` no AYD-001

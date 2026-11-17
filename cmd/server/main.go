@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	_ "time/tzdata" // fuso America/Sao_Paulo mesmo em imagem sem tzdata
 
 	"github.com/joho/godotenv"
 	"github.com/silvioubaldino/sales-backend/internal/auth"

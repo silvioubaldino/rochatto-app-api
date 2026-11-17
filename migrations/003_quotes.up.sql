@@ -20,8 +20,6 @@ CREATE TABLE quote_items (
   quote_id       UUID          NOT NULL REFERENCES quotes(id) ON DELETE CASCADE,
   product_id     UUID          REFERENCES produtos(id),
   product_name   TEXT          NOT NULL,
-  supplier_id    UUID          REFERENCES fornecedores(id),
-  supplier_name  TEXT,
   quantity       DECIMAL(12,3) NOT NULL,
   unit_price     DECIMAL(12,2) NOT NULL,
   unit_cost      DECIMAL(12,2) NOT NULL,

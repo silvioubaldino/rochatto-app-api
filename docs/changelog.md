@@ -26,6 +26,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+- Quote → Sale hardening: quote without supplier, quick sale, Sale exposes its origin Quote, safer delete/convert, PATCH allowed by CORS, business-timezone dates, integration tests.
 - Implement SPEC-001: Quote entity (CRUD + items), status transitions (OPEN/WON/LOST) and transactional `POST /quotes/{id}/convert` into Sale; wire `cmd/server/main.go` bootstrap.
 - Add SPEC-001: Quote entity (CRUD + items), status transitions and `/quotes/{id}/convert` into Sale. [PR#2](https://github.com/silvioubaldino/rochatto-app-api/pull/2)
 - Repo initialized from the scaffold.
