@@ -2,13 +2,21 @@
 id: SPEC-001
 type: spec
 title: Espinha Quote → Sale (api)
-status: draft
-updated: 2026-07-14
+status: review
+updated: 2026-11-17
 parents: [AYD-001@context]
-related: [GLO, ADR-001@context]
+related: [GLO, ADR-001@context, PDR-001@context, AYD-002@context]
 ---
 
 # Spec: Espinha Quote → Sale (parte deste repo — api)
+
+> **⚠ Revisão pendente (2026-11-17)** — o AYD-001@context mudou por causa do PDR-001@context:
+> 1. Items do Quote **sem Supplier** (`supplier_id`/`supplier_name` saem do contrato); `unit_cost` passa a ser **estimado**.
+> 2. Novo endpoint **`POST /quotes/quick-sale`** (cria o Quote e converte na mesma transação).
+> 3. A conversão grava `itens_venda.fornecedor_* = null`, `origin = MADE_TO_ORDER` e a Sale nasce com `delivery_status = TO_DELIVER` (AYD-002@context).
+> 4. Criação direta de Sale (`POST /vendas`) deixa de existir (RN-01).
+>
+> Atualize esta SPEC (e o PR de implementação em aberto) antes de seguir.
 
 > O QUÊ e COMO este repo cumpre o **AYD-001**. `approved` = contrato local congelado;
 > `done` = implementado (este documento vira o registro histórico da entrega).
