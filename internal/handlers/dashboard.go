@@ -52,14 +52,14 @@ type resumoResponse struct {
 }
 
 type notificacaoResponse struct {
-	ID            uuid.UUID `json:"id"`
-	Tipo          string    `json:"tipo"`
+	ID            uuid.UUID  `json:"id"`
+	Tipo          string     `json:"tipo"`
 	VendaID       *uuid.UUID `json:"venda_id"`
-	ClienteNome   string    `json:"cliente_nome"`
-	Valor         float64   `json:"valor"`
-	DataRef       string    `json:"data_ref"`
-	DiasRestantes *int      `json:"dias_restantes"`
-	Lida          bool      `json:"lida"`
+	ClienteNome   string     `json:"cliente_nome"`
+	Valor         float64    `json:"valor"`
+	DataRef       string     `json:"data_ref"`
+	DiasRestantes *int       `json:"dias_restantes"`
+	Lida          bool       `json:"lida"`
 }
 
 type notificacoesListResponse struct {
@@ -78,13 +78,14 @@ type vendasPorMesResponse struct {
 }
 
 type produtoRankingItem struct {
-	ProdutoNome        string  `json:"produto_nome"`
-	TotalVendas        int64   `json:"total_vendas"`
-	TotalQuantidade    float64 `json:"total_quantidade"`
-	TotalReceita       float64 `json:"total_receita"`
-	PrecoMedio         float64 `json:"preco_medio"`
-	CustoMedio         float64 `json:"custo_medio"`
-	MargemMediaPercent float64 `json:"margem_media_percent"`
+	ProdutoID          *uuid.UUID `json:"produto_id"` // null para Items legados sem Product
+	ProdutoNome        string     `json:"produto_nome"`
+	TotalVendas        int64      `json:"total_vendas"`
+	TotalQuantidade    float64    `json:"total_quantidade"`
+	TotalReceita       float64    `json:"total_receita"`
+	PrecoMedio         float64    `json:"preco_medio"`
+	CustoMedio         float64    `json:"custo_medio"`
+	MargemMediaPercent float64    `json:"margem_media_percent"`
 }
 
 type produtosRankingResponse struct {
@@ -124,19 +125,14 @@ func (h *DashboardHandler) getResumo(w http.ResponseWriter, r *http.Request) {
 		Fim:    dataFim.Format("2006-01-02"),
 	}
 
-	// 1. Total a receber (vendas não entregues: total_venda - total_recebido)
+	// Totais por Sale vêm de vw_vendas_resumo (itens e recebimentos pré-agregados por Sale —
+	// sem fan-out; a view já exclui Sales com deleted_at).
+
+	// 1. Total a receber (vendas não entregues: total_venda - total_recebido, RN-05)
 	err := h.db.WithContext(ctx).Raw(`
-		SELECT COALESCE(SUM(sub.a_receber), 0)
-		FROM (
-			SELECT
-				COALESCE(SUM(iv.quantidade * iv.preco_venda_unit), 0)
-				- COALESCE(SUM(pc.valor) FILTER (WHERE pc.status = 'recebido'), 0) AS a_receber
-			FROM vendas v
-			LEFT JOIN itens_venda iv ON iv.venda_id = v.id
-			LEFT JOIN pagamentos_cliente pc ON pc.venda_id = v.id
-			WHERE v.deleted_at IS NULL AND v.status != 'ENTREGUE'
-			GROUP BY v.id
-		) sub
+		SELECT COALESCE(SUM(vr.total_venda - vr.total_recebido), 0)
+		FROM vw_vendas_resumo vr
+		WHERE vr.status != 'ENTREGUE'
 	`).Scan(&resp.TotalAReceber).Error
 	if err != nil {
 		log.Printf("ERROR Dashboard total_a_receber: %v", err)
@@ -157,22 +153,12 @@ func (h *DashboardHandler) getResumo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Lucro do periodo
+	// 3. Lucro do periodo (RN-04: receita − custo − frete − comissão, uma vez por Sale)
 	err = h.db.WithContext(ctx).Raw(`
-		SELECT COALESCE(SUM(sub.lucro), 0)
-		FROM (
-			SELECT
-				COALESCE(SUM(iv.quantidade * iv.preco_venda_unit), 0)
-				- COALESCE(SUM(iv.quantidade * iv.custo_unit), 0)
-				- v.frete_valor
-				- v.comissao_valor AS lucro
-			FROM vendas v
-			LEFT JOIN itens_venda iv ON iv.venda_id = v.id
-			WHERE v.deleted_at IS NULL
-				AND v.data_venda >= ?
-				AND v.data_venda <= ?
-			GROUP BY v.id, v.frete_valor, v.comissao_valor
-		) sub
+		SELECT COALESCE(SUM(vr.lucro), 0)
+		FROM vw_vendas_resumo vr
+		WHERE vr.data_venda >= ?
+			AND vr.data_venda <= ?
 	`, dataInicio, dataFim).Scan(&resp.LucroPeriodo).Error
 	if err != nil {
 		log.Printf("ERROR Dashboard lucro_periodo: %v", err)
@@ -182,12 +168,10 @@ func (h *DashboardHandler) getResumo(w http.ResponseWriter, r *http.Request) {
 
 	// 4. Total vendido no periodo
 	err = h.db.WithContext(ctx).Raw(`
-		SELECT COALESCE(SUM(iv.quantidade * iv.preco_venda_unit), 0)
-		FROM vendas v
-		JOIN itens_venda iv ON iv.venda_id = v.id
-		WHERE v.deleted_at IS NULL
-			AND v.data_venda >= ?
-			AND v.data_venda <= ?
+		SELECT COALESCE(SUM(vr.total_venda), 0)
+		FROM vw_vendas_resumo vr
+		WHERE vr.data_venda >= ?
+			AND vr.data_venda <= ?
 	`, dataInicio, dataFim).Scan(&resp.TotalVendidoPeriodo).Error
 	if err != nil {
 		log.Printf("ERROR Dashboard total_vendido_periodo: %v", err)
@@ -316,22 +300,17 @@ func (h *DashboardHandler) getVendasPorMes(w http.ResponseWriter, r *http.Reques
 		Lucro      float64   `gorm:"column:lucro"`
 	}
 
+	// Uma linha por Sale (vw_vendas_resumo): frete e comissão entram uma vez por Sale,
+	// não uma vez por Item.
 	var rows []row
 	err := h.db.WithContext(r.Context()).Raw(`
 		SELECT
-			DATE_TRUNC('month', v.data_venda)::date AS mes,
-			COALESCE(SUM(iv.quantidade * iv.preco_venda_unit), 0) AS total_venda,
-			COALESCE(
-				SUM(iv.quantidade * iv.preco_venda_unit)
-				- SUM(iv.quantidade * iv.custo_unit)
-				- SUM(v.frete_valor)
-				- SUM(v.comissao_valor), 0
-			) AS lucro
-		FROM vendas v
-		JOIN itens_venda iv ON iv.venda_id = v.id
-		WHERE v.deleted_at IS NULL
-			AND v.data_venda >= DATE_TRUNC('month', CURRENT_DATE) - MAKE_INTERVAL(months => ?)
-		GROUP BY DATE_TRUNC('month', v.data_venda)
+			DATE_TRUNC('month', vr.data_venda)::date AS mes,
+			COALESCE(SUM(vr.total_venda), 0)         AS total_venda,
+			COALESCE(SUM(vr.lucro), 0)               AS lucro
+		FROM vw_vendas_resumo vr
+		WHERE vr.data_venda >= DATE_TRUNC('month', CURRENT_DATE) - MAKE_INTERVAL(months => ?)
+		GROUP BY DATE_TRUNC('month', vr.data_venda)
 		ORDER BY mes ASC
 	`, meses).Scan(&rows).Error
 	if err != nil {
@@ -373,29 +352,36 @@ func (h *DashboardHandler) getProdutosMaisVendidos(w http.ResponseWriter, r *htt
 	}
 
 	type row struct {
-		ProdutoNome        string  `gorm:"column:produto_nome"`
-		TotalVendas        int64   `gorm:"column:total_vendas"`
-		TotalQuantidade    float64 `gorm:"column:total_quantidade"`
-		TotalReceita       float64 `gorm:"column:total_receita"`
-		PrecoMedio         float64 `gorm:"column:preco_medio"`
-		CustoMedio         float64 `gorm:"column:custo_medio"`
-		MargemMediaPercent float64 `gorm:"column:margem_media_percent"`
+		ProdutoID          *uuid.UUID `gorm:"column:produto_id"`
+		ProdutoNome        string     `gorm:"column:produto_nome"`
+		TotalVendas        int64      `gorm:"column:total_vendas"`
+		TotalQuantidade    float64    `gorm:"column:total_quantidade"`
+		TotalReceita       float64    `gorm:"column:total_receita"`
+		PrecoMedio         float64    `gorm:"column:preco_medio"`
+		CustoMedio         float64    `gorm:"column:custo_medio"`
+		MargemMediaPercent float64    `gorm:"column:margem_media_percent"`
 	}
 
+	// Agrupa por Product (produto_id); Items legados sem produto_id caem no agrupamento por
+	// nome. Médias ponderadas pela quantidade (Σ qtd·preço / Σ qtd) e margem sobre os totais
+	// ((receita − custo) / receita), não média simples por linha de Item.
 	// Build query dynamically to avoid passing untyped NULL parameters to PostgreSQL.
 	baseQuery := `
 		SELECT
-			i.produto_nome,
-			COUNT(DISTINCT v.id)                       AS total_vendas,
-			SUM(i.quantidade)                          AS total_quantidade,
-			SUM(i.quantidade * i.preco_venda_unit)     AS total_receita,
-			AVG(i.preco_venda_unit)                    AS preco_medio,
-			AVG(i.custo_unit)                          AS custo_medio,
-			AVG(
-				(i.preco_venda_unit - i.custo_unit) / NULLIF(i.preco_venda_unit, 0) * 100
+			i.produto_id,
+			COALESCE(MAX(p.nome), MAX(i.produto_nome))                     AS produto_nome,
+			COUNT(DISTINCT v.id)                                           AS total_vendas,
+			SUM(i.quantidade)                                              AS total_quantidade,
+			SUM(i.quantidade * i.preco_venda_unit)                         AS total_receita,
+			COALESCE(SUM(i.quantidade * i.preco_venda_unit) / NULLIF(SUM(i.quantidade), 0), 0) AS preco_medio,
+			COALESCE(SUM(i.quantidade * i.custo_unit) / NULLIF(SUM(i.quantidade), 0), 0)       AS custo_medio,
+			COALESCE(
+				(SUM(i.quantidade * i.preco_venda_unit) - SUM(i.quantidade * i.custo_unit))
+				/ NULLIF(SUM(i.quantidade * i.preco_venda_unit), 0) * 100, 0
 			) AS margem_media_percent
 		FROM itens_venda i
 		JOIN vendas v ON v.id = i.venda_id
+		LEFT JOIN produtos p ON p.id = i.produto_id
 		WHERE v.deleted_at IS NULL`
 
 	args := []any{}
@@ -408,7 +394,7 @@ func (h *DashboardHandler) getProdutosMaisVendidos(w http.ResponseWriter, r *htt
 		args = append(args, *dataFim)
 	}
 	baseQuery += `
-		GROUP BY i.produto_nome
+		GROUP BY i.produto_id, CASE WHEN i.produto_id IS NULL THEN i.produto_nome END
 		ORDER BY total_receita DESC
 		LIMIT 20`
 
@@ -423,6 +409,7 @@ func (h *DashboardHandler) getProdutosMaisVendidos(w http.ResponseWriter, r *htt
 	dados := make([]produtoRankingItem, 0, len(rows))
 	for _, r := range rows {
 		dados = append(dados, produtoRankingItem{
+			ProdutoID:          r.ProdutoID,
 			ProdutoNome:        r.ProdutoNome,
 			TotalVendas:        r.TotalVendas,
 			TotalQuantidade:    r.TotalQuantidade,
