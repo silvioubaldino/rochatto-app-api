@@ -1,0 +1,2527 @@
+{
+  "catalog_version": "1.0.0-rc.1",
+  "tools": [
+    {
+      "name": "search_products",
+      "title": "Buscar produtos",
+      "description": "Busca Products (produtos/pedras) por trecho do nome, com filtro opcional de categoria. Devolve unidade e os preços/custos de referência, que são só sugestões editáveis. Use para obter o product_id e sugerir preço e custo ao montar um orçamento ou conferir estoque. Lista paginada, ordenada por nome. Não cria nem altera produtos.",
+      "scope": "read",
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "dedupe": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "trecho do nome do produto (sem diferenciar acentos nem maiúsculas)"
+          },
+          "category_id": {
+            "type": "string",
+            "description": "id da categoria de produto",
+            "format": "uuid"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "itens por página (padrão 20, máximo 100)",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "offset": {
+            "type": "integer",
+            "description": "quantos itens pular (padrão 0)",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "category_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "category_name": {
+                  "type": "string"
+                },
+                "unit": {
+                  "type": "string"
+                },
+                "reference_price": {
+                  "type": "number"
+                },
+                "reference_cost": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "id",
+                "name"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "offset",
+          "has_more"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "search_suppliers",
+      "title": "Buscar fornecedores",
+      "description": "Busca Suppliers (fornecedores) por trecho do nome, sem diferenciar acentos nem maiúsculas. Use para obter o supplier_id ao criar uma Purchase (compra) ou filtrar compras e itens a comprar por fornecedor; se houver mais de um candidato, pergunte ao dono. Lista paginada, ordenada por nome. Não cria nem altera fornecedores.",
+      "scope": "read",
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "dedupe": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "trecho do nome do fornecedor (sem diferenciar acentos nem maiúsculas)"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "itens por página (padrão 20, máximo 100)",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "offset": {
+            "type": "integer",
+            "description": "quantos itens pular (padrão 0)",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "phone": {
+                  "type": "string"
+                },
+                "city": {
+                  "type": "string"
+                },
+                "notes": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "offset",
+          "has_more"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "search_customers",
+      "title": "Buscar clientes",
+      "description": "Busca Customers (clientes) por trecho do nome, sem diferenciar acentos nem maiúsculas, com filtros opcionais de origem (lead_source) e de Partner (parceiro) indicador (referrer_id). Use para descobrir o customer_id antes de consultar ou lançar algo para um cliente; se houver mais de um candidato, pergunte ao dono qual é. Devolve a lista paginada, ordenada por nome. Não cria nem altera clientes.",
+      "scope": "read",
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "dedupe": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "trecho do nome do cliente (sem diferenciar acentos nem maiúsculas)"
+          },
+          "lead_source": {
+            "type": "string",
+            "description": "origem do cliente",
+            "enum": [
+              "REFERRAL",
+              "INSTAGRAM",
+              "PARTNER",
+              "OTHER"
+            ]
+          },
+          "referrer_id": {
+            "type": "string",
+            "description": "id do Partner que indicou o cliente",
+            "format": "uuid"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "itens por página (padrão 20, máximo 100)",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "offset": {
+            "type": "integer",
+            "description": "quantos itens pular (padrão 0)",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "phone": {
+                  "type": "string"
+                },
+                "email": {
+                  "type": "string"
+                },
+                "city": {
+                  "type": "string"
+                },
+                "address": {
+                  "type": "string"
+                },
+                "lead_source": {
+                  "type": "string",
+                  "enum": [
+                    "REFERRAL",
+                    "INSTAGRAM",
+                    "PARTNER",
+                    "OTHER"
+                  ]
+                },
+                "referrer_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "referrer_name": {
+                  "type": "string"
+                },
+                "notes": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "offset",
+          "has_more"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_customer",
+      "title": "Ver cliente",
+      "description": "Mostra os dados de um Customer (cliente) e as 10 Sales (vendas) mais recentes dele, com totais, a receber (receivable) e status. Use quando o dono perguntar sobre um cliente específico ou antes de lançar um recebimento para ele. Pré-requisito: obtenha o customer_id com search_customers. Não altera dados.",
+      "scope": "read",
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "dedupe": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "description": "id do cliente (obtenha com search_customers)",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "customer_id"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "customer": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "name": {
+                "type": "string"
+              },
+              "phone": {
+                "type": "string"
+              },
+              "email": {
+                "type": "string"
+              },
+              "city": {
+                "type": "string"
+              },
+              "address": {
+                "type": "string"
+              },
+              "lead_source": {
+                "type": "string",
+                "enum": [
+                  "REFERRAL",
+                  "INSTAGRAM",
+                  "PARTNER",
+                  "OTHER"
+                ]
+              },
+              "referrer_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "referrer_name": {
+                "type": "string"
+              },
+              "notes": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ],
+            "additionalProperties": false
+          },
+          "recent_sales": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "quote_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "customer_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "customer_name": {
+                  "type": "string"
+                },
+                "referrer_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "referrer_name": {
+                  "type": "string"
+                },
+                "sale_date": {
+                  "type": "string",
+                  "description": "YYYY-MM-DD",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "expected_delivery_date": {
+                  "type": "string",
+                  "description": "YYYY-MM-DD",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "delivery_status": {
+                  "type": "string",
+                  "enum": [
+                    "TO_DELIVER",
+                    "DELIVERED",
+                    "CANCELED"
+                  ]
+                },
+                "payment_status": {
+                  "type": "string",
+                  "enum": [
+                    "PENDING",
+                    "PARTIAL",
+                    "PAID"
+                  ]
+                },
+                "total": {
+                  "type": "number"
+                },
+                "total_cost": {
+                  "type": "number"
+                },
+                "total_received": {
+                  "type": "number"
+                },
+                "receivable": {
+                  "type": "number"
+                },
+                "profit": {
+                  "type": "number"
+                },
+                "freight_amount": {
+                  "type": "number"
+                },
+                "freight_paid": {
+                  "type": "number"
+                },
+                "freight_payable": {
+                  "type": "number"
+                },
+                "commission_amount": {
+                  "type": "number"
+                },
+                "commission_paid": {
+                  "type": "boolean"
+                },
+                "notes": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "customer_id",
+                "customer_name",
+                "sale_date",
+                "delivery_status",
+                "payment_status",
+                "total",
+                "total_cost",
+                "total_received",
+                "receivable",
+                "profit",
+                "freight_amount",
+                "freight_paid",
+                "freight_payable",
+                "commission_amount",
+                "commission_paid"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "customer",
+          "recent_sales"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "search_partners",
+      "title": "Buscar parceiros",
+      "description": "Busca Partners (parceiros/indicadores: arquiteto, engenheiro, construtora) por trecho do nome, com filtro opcional de tipo. Use para obter o referrer_id ao criar um orçamento ou filtrar clientes indicados por um parceiro. Devolve a lista paginada, ordenada por nome. Não cria nem altera parceiros.",
+      "scope": "read",
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "dedupe": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "trecho do nome do parceiro"
+          },
+          "type": {
+            "type": "string",
+            "description": "tipo do parceiro",
+            "enum": [
+              "ARCHITECT",
+              "ENGINEER",
+              "BUILDER",
+              "OTHER"
+            ]
+          },
+          "limit": {
+            "type": "integer",
+            "description": "itens por página (padrão 20, máximo 100)",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "offset": {
+            "type": "integer",
+            "description": "quantos itens pular (padrão 0)",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "ARCHITECT",
+                    "ENGINEER",
+                    "BUILDER",
+                    "OTHER"
+                  ]
+                },
+                "phone": {
+                  "type": "string"
+                },
+                "notes": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "type"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "offset",
+          "has_more"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_quotes",
+      "title": "Listar orçamentos",
+      "description": "Lista Quotes (orçamentos) com filtros opcionais de status (OPEN aberto, WON ganho, LOST perdido), cliente, texto e período da data do orçamento. Use para ver orçamentos em aberto ou o histórico de um cliente. Devolve o resumo com total, sem os itens (use get_quote para os itens), ordenado do mais recente ao mais antigo. Não cria nem altera orçamentos.",
+      "scope": "read",
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "dedupe": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "status do orçamento",
+            "enum": [
+              "OPEN",
+              "WON",
+              "LOST"
+            ]
+          },
+          "customer_id": {
+            "type": "string",
+            "description": "id do cliente",
+            "format": "uuid"
+          },
+          "query": {
+            "type": "string",
+            "description": "trecho do nome do cliente ou das observações"
+          },
+          "from": {
+            "type": "string",
+            "description": "data do orçamento a partir de (inclusive)",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "to": {
+            "type": "string",
+            "description": "data do orçamento até (inclusive)",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "itens por página (padrão 20, máximo 100)",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "offset": {
+            "type": "integer",
+            "description": "quantos itens pular (padrão 0)",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "OPEN",
+                    "WON",
+                    "LOST"
+                  ]
+                },
+                "customer_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "customer_name": {
+                  "type": "string"
+                },
+                "referrer_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "referrer_name": {
+                  "type": "string"
+                },
+                "quote_date": {
+                  "type": "string",
+                  "description": "YYYY-MM-DD",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "notes": {
+                  "type": "string"
+                },
+                "lost_reason": {
+                  "type": "string"
+                },
+                "quick_sale": {
+                  "type": "boolean"
+                },
+                "total_quote": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "id",
+                "status",
+                "customer_id",
+                "customer_name",
+                "quote_date",
+                "quick_sale",
+                "total_quote"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "offset",
+          "has_more"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_quote",
+      "title": "Ver orçamento",
+      "description": "Mostra um Quote (orçamento) completo: cliente, status, motivo da perda, total e os itens (produto, quantidade, preço e custo unitários). Use para conferir o conteúdo antes de converter em Sale (venda) ou marcar como perdido. Pré-requisito: obtenha o quote_id com list_quotes. Não altera dados.",
+      "scope": "read",
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "dedupe": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "quote_id": {
+            "type": "string",
+            "description": "id do orçamento (obtenha com list_quotes)",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "quote_id"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "quote": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "OPEN",
+                  "WON",
+                  "LOST"
+                ]
+              },
+              "customer_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "customer_name": {
+                "type": "string"
+              },
+              "referrer_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "referrer_name": {
+                "type": "string"
+              },
+              "quote_date": {
+                "type": "string",
+                "description": "YYYY-MM-DD",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "notes": {
+                "type": "string"
+              },
+              "lost_reason": {
+                "type": "string"
+              },
+              "quick_sale": {
+                "type": "boolean"
+              },
+              "total_quote": {
+                "type": "number"
+              },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "product_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "product_name": {
+                      "type": "string"
+                    },
+                    "quantity": {
+                      "type": "number"
+                    },
+                    "unit_price": {
+                      "type": "number"
+                    },
+                    "unit_cost": {
+                      "type": "number"
+                    },
+                    "total_price": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "product_name",
+                    "quantity",
+                    "unit_price",
+                    "unit_cost",
+                    "total_price"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "id",
+              "status",
+              "customer_id",
+              "customer_name",
+              "quote_date",
+              "quick_sale",
+              "total_quote",
+              "items"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "quote"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_sales",
+      "title": "Listar vendas",
+      "description": "Lista Sales (vendas) com filtros opcionais de cliente, status de entrega (TO_DELIVER a entregar, DELIVERED entregue, CANCELED cancelada), status de pagamento (PENDING, PARTIAL, PAID), período da data da venda e pendências de frete ou comissão. Cada venda traz total, recebido, a receber (receivable) e lucro (profit), calculados pela API. Use para achar o sale_id antes de lançar recebimentos ou para ver o que falta receber ou entregar. Ordem: data da venda, mais recente primeiro. Não altera dados.",
+      "scope": "read",
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "dedupe": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "description": "id do cliente",
+            "format": "uuid"
+          },
+          "delivery_status": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "TO_DELIVER",
+                "DELIVERED",
+                "CANCELED"
+              ]
+            },
+            "description": "status de entrega (um ou mais)"
+          },
+          "payment_status": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "PENDING",
+                "PARTIAL",
+                "PAID"
+              ]
+            },
+            "description": "status de pagamento (um ou mais)"
+          },
+          "from": {
+            "type": "string",
+            "description": "data da venda a partir de (inclusive)",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "to": {
+            "type": "string",
+            "description": "data da venda até (inclusive)",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "freight_pending": {
+            "type": "boolean",
+            "description": "só vendas com frete a pagar"
+          },
+          "commission_pending": {
+            "type": "boolean",
+            "description": "só vendas com comissão a pagar"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "itens por página (padrão 20, máximo 100)",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "offset": {
+            "type": "integer",
+            "description": "quantos itens pular (padrão 0)",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "quote_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "customer_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "customer_name": {
+                  "type": "string"
+                },
+                "referrer_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "referrer_name": {
+                  "type": "string"
+                },
+                "sale_date": {
+                  "type": "string",
+                  "description": "YYYY-MM-DD",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "expected_delivery_date": {
+                  "type": "string",
+                  "description": "YYYY-MM-DD",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "delivery_status": {
+                  "type": "string",
+                  "enum": [
+                    "TO_DELIVER",
+                    "DELIVERED",
+                    "CANCELED"
+                  ]
+                },
+                "payment_status": {
+                  "type": "string",
+                  "enum": [
+                    "PENDING",
+                    "PARTIAL",
+                    "PAID"
+                  ]
+                },
+                "total": {
+                  "type": "number"
+                },
+                "total_cost": {
+                  "type": "number"
+                },
+                "total_received": {
+                  "type": "number"
+                },
+                "receivable": {
+                  "type": "number"
+                },
+                "profit": {
+                  "type": "number"
+                },
+                "freight_amount": {
+                  "type": "number"
+                },
+                "freight_paid": {
+                  "type": "number"
+                },
+                "freight_payable": {
+                  "type": "number"
+                },
+                "commission_amount": {
+                  "type": "number"
+                },
+                "commission_paid": {
+                  "type": "boolean"
+                },
+                "notes": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "customer_id",
+                "customer_name",
+                "sale_date",
+                "delivery_status",
+                "payment_status",
+                "total",
+                "total_cost",
+                "total_received",
+                "receivable",
+                "profit",
+                "freight_amount",
+                "freight_paid",
+                "freight_payable",
+                "commission_amount",
+                "commission_paid"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "offset",
+          "has_more"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_sale",
+      "title": "Ver venda",
+      "description": "Mostra uma Sale (venda) completa: cliente, status de entrega e de pagamento, totais, frete, comissão, os itens (produto, origem MADE_TO_ORDER sob encomenda ou FROM_STOCK de estoque, fornecedor, compra) e os Receipts (recebimentos) com forma de pagamento. Use para conferir uma venda antes de lançar recebimento ou ajuste. Pré-requisito: obtenha o sale_id com list_sales. Não altera dados.",
+      "scope": "read",
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "dedupe": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "sale_id": {
+            "type": "string",
+            "description": "id da venda (obtenha com list_sales)",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "sale_id"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "sale": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "quote_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "customer_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "customer_name": {
+                "type": "string"
+              },
+              "referrer_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "referrer_name": {
+                "type": "string"
+              },
+              "sale_date": {
+                "type": "string",
+                "description": "YYYY-MM-DD",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "expected_delivery_date": {
+                "type": "string",
+                "description": "YYYY-MM-DD",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "delivery_status": {
+                "type": "string",
+                "enum": [
+                  "TO_DELIVER",
+                  "DELIVERED",
+                  "CANCELED"
+                ]
+              },
+              "payment_status": {
+                "type": "string",
+                "enum": [
+                  "PENDING",
+                  "PARTIAL",
+                  "PAID"
+                ]
+              },
+              "total": {
+                "type": "number"
+              },
+              "total_cost": {
+                "type": "number"
+              },
+              "total_received": {
+                "type": "number"
+              },
+              "receivable": {
+                "type": "number"
+              },
+              "profit": {
+                "type": "number"
+              },
+              "freight_amount": {
+                "type": "number"
+              },
+              "freight_paid": {
+                "type": "number"
+              },
+              "freight_payable": {
+                "type": "number"
+              },
+              "commission_amount": {
+                "type": "number"
+              },
+              "commission_paid": {
+                "type": "boolean"
+              },
+              "notes": {
+                "type": "string"
+              },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "product_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "product_name": {
+                      "type": "string"
+                    },
+                    "supplier_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "supplier_name": {
+                      "type": "string"
+                    },
+                    "origin": {
+                      "type": "string",
+                      "enum": [
+                        "MADE_TO_ORDER",
+                        "FROM_STOCK"
+                      ]
+                    },
+                    "purchase_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "quantity": {
+                      "type": "number"
+                    },
+                    "unit_price": {
+                      "type": "number"
+                    },
+                    "unit_cost": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "product_name",
+                    "origin",
+                    "quantity",
+                    "unit_price",
+                    "unit_cost"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "receipts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "amount": {
+                      "type": "number"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "PENDING",
+                        "RECEIVED"
+                      ]
+                    },
+                    "scheduled_date": {
+                      "type": "string",
+                      "description": "YYYY-MM-DD",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "paid_at": {
+                      "type": "string",
+                      "description": "YYYY-MM-DD",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "payment_method": {
+                      "type": "string",
+                      "enum": [
+                        "PIX",
+                        "CASH",
+                        "CARD",
+                        "BOLETO",
+                        "TRANSFER"
+                      ]
+                    },
+                    "notes": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "amount",
+                    "status"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "id",
+              "customer_id",
+              "customer_name",
+              "sale_date",
+              "delivery_status",
+              "payment_status",
+              "total",
+              "total_cost",
+              "total_received",
+              "receivable",
+              "profit",
+              "freight_amount",
+              "freight_paid",
+              "freight_payable",
+              "commission_amount",
+              "commission_paid",
+              "items",
+              "receipts"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "sale"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_pending_purchase_items",
+      "title": "Itens a comprar",
+      "description": "Lista a fila de compra: itens de Sale (venda) MADE_TO_ORDER (sob encomenda) ainda não incluídos em nenhuma Purchase (compra), agrupados por Supplier (fornecedor); itens sem fornecedor definido vêm num grupo sem supplier_id. Use para saber o que falta comprar ou para obter os sale_item_ids de uma compra. Opcionalmente filtra por fornecedor. Sem paginação (fila operacional). Não cria compras.",
+      "scope": "read",
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "dedupe": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "supplier_id": {
+            "type": "string",
+            "description": "só os itens deste fornecedor",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "supplier_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "supplier_name": {
+                  "type": "string"
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "description": "id do item de venda (sale_item_id)",
+                        "format": "uuid"
+                      },
+                      "sale_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "customer_name": {
+                        "type": "string"
+                      },
+                      "product_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "product_name": {
+                        "type": "string"
+                      },
+                      "quantity": {
+                        "type": "number"
+                      },
+                      "unit_cost": {
+                        "type": "number"
+                      },
+                      "sale_date": {
+                        "type": "string",
+                        "description": "YYYY-MM-DD",
+                        "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "sale_id",
+                      "customer_name",
+                      "product_name",
+                      "quantity",
+                      "unit_cost",
+                      "sale_date"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "items"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "groups"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_purchases",
+      "title": "Listar compras",
+      "description": "Lista Purchases (compras ao fornecedor) com filtros opcionais de status (OPEN aberta, ORDERED pedida, RECEIVED recebida), pagamento ao fornecedor (PENDING ou PAID), tipo (MADE_TO_ORDER sob encomenda ou STOCK_REPLENISHMENT reposição de estoque), fornecedor e período de criação. Traz custo total, valor a pagar (to_pay) e datas, sem as linhas (use get_purchase). Ordem: mais recente primeiro. Não cria nem altera compras.",
+      "scope": "read",
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "dedupe": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "OPEN",
+                "ORDERED",
+                "RECEIVED"
+              ]
+            },
+            "description": "status da compra (um ou mais)"
+          },
+          "payment_status": {
+            "type": "string",
+            "description": "status do pagamento ao fornecedor",
+            "enum": [
+              "PENDING",
+              "PAID"
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "description": "tipo da compra",
+            "enum": [
+              "MADE_TO_ORDER",
+              "STOCK_REPLENISHMENT"
+            ]
+          },
+          "supplier_id": {
+            "type": "string",
+            "description": "id do fornecedor",
+            "format": "uuid"
+          },
+          "from": {
+            "type": "string",
+            "description": "criada a partir de (inclusive)",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "to": {
+            "type": "string",
+            "description": "criada até (inclusive)",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "itens por página (padrão 20, máximo 100)",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "offset": {
+            "type": "integer",
+            "description": "quantos itens pular (padrão 0)",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "MADE_TO_ORDER",
+                    "STOCK_REPLENISHMENT"
+                  ]
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "OPEN",
+                    "ORDERED",
+                    "RECEIVED"
+                  ]
+                },
+                "supplier_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "supplier_name": {
+                  "type": "string"
+                },
+                "expected_date": {
+                  "type": "string",
+                  "description": "YYYY-MM-DD",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "notes": {
+                  "type": "string"
+                },
+                "ordered_at": {
+                  "type": "string",
+                  "description": "YYYY-MM-DD",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "received_at": {
+                  "type": "string",
+                  "description": "YYYY-MM-DD",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "payment_status": {
+                  "type": "string",
+                  "enum": [
+                    "PENDING",
+                    "PAID"
+                  ]
+                },
+                "paid_amount": {
+                  "type": "number"
+                },
+                "paid_at": {
+                  "type": "string",
+                  "description": "YYYY-MM-DD",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "total_cost": {
+                  "type": "number"
+                },
+                "to_pay": {
+                  "type": "number"
+                },
+                "line_count": {
+                  "type": "integer"
+                },
+                "created_at": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "status",
+                "supplier_id",
+                "supplier_name",
+                "payment_status",
+                "total_cost",
+                "to_pay",
+                "line_count",
+                "created_at"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "offset",
+          "has_more"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_purchase",
+      "title": "Ver compra",
+      "description": "Mostra uma Purchase (compra) completa: fornecedor, status, datas, pagamento ao fornecedor, custo total, valor a pagar (to_pay), os itens de venda atendidos (sale_items, no caso de compra sob encomenda) e as linhas de reposição (items, no caso de reposição de estoque). Pré-requisito: obtenha o purchase_id com list_purchases. Não altera dados.",
+      "scope": "read",
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "dedupe": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "purchase_id": {
+            "type": "string",
+            "description": "id da compra (obtenha com list_purchases)",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "purchase_id"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "purchase": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "MADE_TO_ORDER",
+                  "STOCK_REPLENISHMENT"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "OPEN",
+                  "ORDERED",
+                  "RECEIVED"
+                ]
+              },
+              "supplier_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "supplier_name": {
+                "type": "string"
+              },
+              "expected_date": {
+                "type": "string",
+                "description": "YYYY-MM-DD",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "notes": {
+                "type": "string"
+              },
+              "ordered_at": {
+                "type": "string",
+                "description": "YYYY-MM-DD",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "received_at": {
+                "type": "string",
+                "description": "YYYY-MM-DD",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "payment_status": {
+                "type": "string",
+                "enum": [
+                  "PENDING",
+                  "PAID"
+                ]
+              },
+              "paid_amount": {
+                "type": "number"
+              },
+              "paid_at": {
+                "type": "string",
+                "description": "YYYY-MM-DD",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "total_cost": {
+                "type": "number"
+              },
+              "to_pay": {
+                "type": "number"
+              },
+              "line_count": {
+                "type": "integer"
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "sale_items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "sale_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "customer_name": {
+                      "type": "string"
+                    },
+                    "produto_nome": {
+                      "type": "string"
+                    },
+                    "quantidade": {
+                      "type": "number"
+                    },
+                    "custo_unit": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "sale_id",
+                    "customer_name",
+                    "produto_nome",
+                    "quantidade",
+                    "custo_unit"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "product_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "product_name": {
+                      "type": "string"
+                    },
+                    "quantity": {
+                      "type": "number"
+                    },
+                    "unit_cost": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "product_id",
+                    "product_name",
+                    "quantity",
+                    "unit_cost"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "id",
+              "kind",
+              "status",
+              "supplier_id",
+              "supplier_name",
+              "payment_status",
+              "total_cost",
+              "to_pay",
+              "line_count",
+              "created_at",
+              "sale_items",
+              "items"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "purchase"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_stock_balance",
+      "title": "Ver saldo de estoque",
+      "description": "Mostra o Balance (saldo) de Stock (estoque) por Product (produto): entradas, saídas, ajustes e saldo atual, com o custo e a data da última entrada. Sem product_id, lista os produtos (paginado), com filtros opcionais por nome e só saldos negativos. Com product_id, devolve o saldo daquele produto e o extrato de movimentos (INFLOW entrada, OUTFLOW saída, ADJUSTMENT ajuste). Itens sob encomenda não movimentam o estoque. Não altera dados.",
+      "scope": "read",
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "dedupe": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "product_id": {
+            "type": "string",
+            "description": "id do produto: devolve o saldo dele com o extrato de movimentos",
+            "format": "uuid"
+          },
+          "query": {
+            "type": "string",
+            "description": "trecho do nome do produto"
+          },
+          "only_negative": {
+            "type": "boolean",
+            "description": "só produtos com saldo negativo"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "itens por página (padrão 20, máximo 100)",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "offset": {
+            "type": "integer",
+            "description": "quantos itens pular (padrão 0)",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "product_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "product_name": {
+                  "type": "string"
+                },
+                "unit": {
+                  "type": "string"
+                },
+                "inflow_qty": {
+                  "type": "number"
+                },
+                "outflow_qty": {
+                  "type": "number"
+                },
+                "adjustment_qty": {
+                  "type": "number"
+                },
+                "balance": {
+                  "type": "number"
+                },
+                "last_inflow_cost": {
+                  "type": "number"
+                },
+                "last_inflow_date": {
+                  "type": "string",
+                  "description": "YYYY-MM-DD",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                }
+              },
+              "required": [
+                "product_id",
+                "product_name",
+                "inflow_qty",
+                "outflow_qty",
+                "adjustment_qty",
+                "balance"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "balance": {
+            "type": "object",
+            "properties": {
+              "product_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "product_name": {
+                "type": "string"
+              },
+              "unit": {
+                "type": "string"
+              },
+              "inflow_qty": {
+                "type": "number"
+              },
+              "outflow_qty": {
+                "type": "number"
+              },
+              "adjustment_qty": {
+                "type": "number"
+              },
+              "balance": {
+                "type": "number"
+              },
+              "last_inflow_cost": {
+                "type": "number"
+              },
+              "last_inflow_date": {
+                "type": "string",
+                "description": "YYYY-MM-DD",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "movements": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "INFLOW",
+                        "OUTFLOW",
+                        "ADJUSTMENT"
+                      ]
+                    },
+                    "date": {
+                      "type": "string",
+                      "description": "YYYY-MM-DD",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "quantity": {
+                      "type": "number"
+                    },
+                    "unit_cost": {
+                      "type": "number"
+                    },
+                    "reference_id": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "date",
+                    "quantity",
+                    "reference_id",
+                    "description"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "product_id",
+              "product_name",
+              "inflow_qty",
+              "outflow_qty",
+              "adjustment_qty",
+              "balance",
+              "movements"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_finance_summary",
+      "title": "Resumo financeiro",
+      "description": "Resumo financeiro entra × sai de um período: vendas (quantidade, faturamento, custo, frete, comissão, Profit/lucro, recebido, a receber), movimento de caixa (recebido por forma de pagamento e pago a fornecedores) e saldos em aberto de hoje (a receber, a pagar a fornecedores, frete e comissão a pagar). Sem datas, usa o mês corrente até hoje (fuso de São Paulo). Use para perguntas de fluxo de caixa e saldos. Não altera dados.",
+      "scope": "read",
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "dedupe": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "início do período (padrão: dia 1 do mês corrente)",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "to": {
+            "type": "string",
+            "description": "fim do período, inclusive (padrão: hoje)",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "period": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": "string",
+                "description": "YYYY-MM-DD",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "to": {
+                "type": "string",
+                "description": "YYYY-MM-DD",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              }
+            },
+            "required": [
+              "from",
+              "to"
+            ],
+            "additionalProperties": false
+          },
+          "sales": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer"
+              },
+              "revenue": {
+                "type": "number"
+              },
+              "cost": {
+                "type": "number"
+              },
+              "freight": {
+                "type": "number"
+              },
+              "commission": {
+                "type": "number"
+              },
+              "profit": {
+                "type": "number"
+              },
+              "received": {
+                "type": "number"
+              },
+              "receivable": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "count",
+              "revenue",
+              "cost",
+              "freight",
+              "commission",
+              "profit",
+              "received",
+              "receivable"
+            ],
+            "additionalProperties": false
+          },
+          "cash": {
+            "type": "object",
+            "properties": {
+              "received": {
+                "type": "number"
+              },
+              "received_by_method": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "payment_method": {
+                      "type": "string",
+                      "enum": [
+                        "PIX",
+                        "CASH",
+                        "CARD",
+                        "BOLETO",
+                        "TRANSFER"
+                      ]
+                    },
+                    "amount": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "amount"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "paid_to_suppliers": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "received",
+              "received_by_method",
+              "paid_to_suppliers"
+            ],
+            "additionalProperties": false
+          },
+          "balances": {
+            "type": "object",
+            "properties": {
+              "receivable": {
+                "type": "number"
+              },
+              "payable_to_suppliers": {
+                "type": "number"
+              },
+              "freight_payable": {
+                "type": "number"
+              },
+              "commission_payable": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "receivable",
+              "payable_to_suppliers",
+              "freight_payable",
+              "commission_payable"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "period",
+          "sales",
+          "cash",
+          "balances"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_payment_alerts",
+      "title": "Alertas de pagamento",
+      "description": "Lista os alertas de recebimento do Customer (cliente): OVERDUE (vencido) e DUE_SOON (vencendo), com cliente, valor, data de vencimento e dias restantes. Por padrão só os não lidos; passe only_unread false para incluir os já lidos. Use para cobranças e para ver o que vence em breve. Não marca alertas como lidos nem altera dados.",
+      "scope": "read",
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "dedupe": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "only_unread": {
+            "type": "boolean",
+            "description": "só alertas não lidos (padrão true)"
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "OVERDUE",
+                    "DUE_SOON"
+                  ]
+                },
+                "sale_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "receipt_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "customer_name": {
+                  "type": "string"
+                },
+                "amount": {
+                  "type": "number"
+                },
+                "due_date": {
+                  "type": "string",
+                  "description": "YYYY-MM-DD",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "days_remaining": {
+                  "type": "integer"
+                },
+                "read": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "customer_name",
+                "amount",
+                "due_date",
+                "read"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_dashboard_kpis",
+      "title": "Indicadores do período",
+      "description": "Indicadores do período: Sales (vendas: quantidade, faturamento, Profit/lucro, ticket médio), Quotes (orçamentos criados, ganhos, perdidos, abertos e taxa de conversão Quote → Sale, sem contar vendas rápidas), saldos em aberto de hoje e entregas em aberto. Sem datas, usa o mês corrente até hoje (fuso de São Paulo). Os números batem com get_finance_summary. Não altera dados.",
+      "scope": "read",
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "dedupe": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "início do período (padrão: dia 1 do mês corrente)",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "to": {
+            "type": "string",
+            "description": "fim do período, inclusive (padrão: hoje)",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "period": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": "string",
+                "description": "YYYY-MM-DD",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "to": {
+                "type": "string",
+                "description": "YYYY-MM-DD",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              }
+            },
+            "required": [
+              "from",
+              "to"
+            ],
+            "additionalProperties": false
+          },
+          "sales": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer"
+              },
+              "revenue": {
+                "type": "number"
+              },
+              "profit": {
+                "type": "number"
+              },
+              "average_ticket": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "count",
+              "revenue",
+              "profit",
+              "average_ticket"
+            ],
+            "additionalProperties": false
+          },
+          "quotes": {
+            "type": "object",
+            "properties": {
+              "created": {
+                "type": "integer"
+              },
+              "won": {
+                "type": "integer"
+              },
+              "lost": {
+                "type": "integer"
+              },
+              "open": {
+                "type": "integer"
+              },
+              "conversion_rate": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "created",
+              "won",
+              "lost",
+              "open"
+            ],
+            "additionalProperties": false
+          },
+          "balances": {
+            "type": "object",
+            "properties": {
+              "receivable": {
+                "type": "number"
+              },
+              "payable_to_suppliers": {
+                "type": "number"
+              },
+              "commission_payable": {
+                "type": "number"
+              },
+              "freight_payable": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "receivable",
+              "payable_to_suppliers",
+              "commission_payable",
+              "freight_payable"
+            ],
+            "additionalProperties": false
+          },
+          "open_deliveries": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "period",
+          "sales",
+          "quotes",
+          "balances",
+          "open_deliveries"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_top_products",
+      "title": "Produtos mais vendidos",
+      "description": "Ranking dos 20 Products (produtos) que mais faturaram no período, com quantidade vendida, receita, preço médio e custo médio ponderados pela quantidade e margem média em %. Sem datas, considera todo o histórico. Use para responder o que mais vende e a que preço médio. Vendas canceladas não entram. Não altera dados.",
+      "scope": "read",
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "dedupe": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "início do período (padrão: dia 1 do mês corrente)",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "to": {
+            "type": "string",
+            "description": "fim do período, inclusive (padrão: hoje)",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "product_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "product_name": {
+                  "type": "string"
+                },
+                "unit": {
+                  "type": "string"
+                },
+                "sales_count": {
+                  "type": "integer"
+                },
+                "quantity": {
+                  "type": "number"
+                },
+                "revenue": {
+                  "type": "number"
+                },
+                "average_price": {
+                  "type": "number"
+                },
+                "average_cost": {
+                  "type": "number"
+                },
+                "average_margin_percent": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "product_name",
+                "sales_count",
+                "quantity",
+                "revenue",
+                "average_price",
+                "average_cost",
+                "average_margin_percent"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_monthly_sales",
+      "title": "Vendas por mês",
+      "description": "Série mensal de faturamento (revenue), Profit (lucro) e número de Sales (vendas) dos últimos N meses, incluindo o mês corrente (padrão 12, máximo 60), em ordem crescente; meses sem vendas vêm zerados. Vendas canceladas não entram. Use para ver a evolução das vendas. Não altera dados.",
+      "scope": "read",
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "dedupe": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "months": {
+            "type": "integer",
+            "description": "quantidade de meses (1 a 60; padrão 12)",
+            "minimum": 1,
+            "maximum": 60
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "month": {
+                  "type": "string",
+                  "description": "mês no formato YYYY-MM"
+                },
+                "revenue": {
+                  "type": "number"
+                },
+                "profit": {
+                  "type": "number"
+                },
+                "sales_count": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "month",
+                "revenue",
+                "profit",
+                "sales_count"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

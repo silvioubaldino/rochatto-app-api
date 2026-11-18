@@ -19,7 +19,23 @@ import (
 
 type contextKey string
 
-const userUIDKey contextKey = "userUID"
+const (
+	userUIDKey   contextKey = "userUID"
+	userEmailKey contextKey = "userEmail"
+)
+
+// WithUser devolve um contexto com o uid/e-mail do usuário autenticado (usado pelo
+// middleware e por testes dos handlers protegidos).
+func WithUser(ctx context.Context, uid, email string) context.Context {
+	ctx = context.WithValue(ctx, userUIDKey, uid)
+	return context.WithValue(ctx, userEmailKey, normalizeEmail(email))
+}
+
+// UserEmail devolve o e-mail (minúsculo) do usuário autenticado, se o token trouxe.
+func UserEmail(ctx context.Context) (string, bool) {
+	e, ok := ctx.Value(userEmailKey).(string)
+	return e, ok && e != ""
+}
 
 // UserUID returns the authenticated user's UID from the context.
 func UserUID(ctx context.Context) (string, bool) {
@@ -181,7 +197,8 @@ func RequireAuth(projectID string, allow Allowlist) func(http.Handler) http.Hand
 				return
 			}
 
-			ctx := context.WithValue(r.Context(), userUIDKey, sub)
+			email, _ := claims["email"].(string)
+			ctx := WithUser(r.Context(), sub, email)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

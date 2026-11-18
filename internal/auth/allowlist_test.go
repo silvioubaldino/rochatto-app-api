@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"net/http"
@@ -116,5 +117,25 @@ func TestLoadAllowlist(t *testing.T) {
 	}
 	if a, err := LoadAllowlist("development", ""); err != nil || !a.Empty() {
 		t.Errorf("development vazia = (empty=%t, %v), want (true, nil)", a.Empty(), err)
+	}
+}
+
+func TestAllowsEmailAndUserContext(t *testing.T) {
+	a := ParseAllowlist(" Dono@Exemplo.com , outro@exemplo.com ")
+	if !a.AllowsEmail("dono@exemplo.com") || !a.AllowsEmail("DONO@EXEMPLO.COM") || a.AllowsEmail("intruso@exemplo.com") || a.AllowsEmail("") {
+		t.Error("AllowsEmail deve comparar sem caixa e recusar e-mails fora da lista")
+	}
+	if !ParseAllowlist("").AllowsEmail("qualquer@x.com") {
+		t.Error("lista vazia = aberta (só desenvolvimento)")
+	}
+	ctx := WithUser(context.Background(), "uid-1", " Dono@Exemplo.com ")
+	if uid, ok := UserUID(ctx); !ok || uid != "uid-1" {
+		t.Errorf("uid = %q %v", uid, ok)
+	}
+	if e, ok := UserEmail(ctx); !ok || e != "dono@exemplo.com" {
+		t.Errorf("email = %q %v", e, ok)
+	}
+	if _, ok := UserEmail(context.Background()); ok {
+		t.Error("sem usuário não há e-mail")
 	}
 }

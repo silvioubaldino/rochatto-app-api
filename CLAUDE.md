@@ -10,6 +10,7 @@ Fornecer endpoints HTTP seguros, validados e tipados para:
 - Gerenciar o ciclo completo de vendas (criação, itens, status, entrega)
 - Controlar o fluxo financeiro (recebimentos, pagamentos a fornecedores, comissões, frete)
 - Manter cadastros de clientes, produtos, fornecedores e vendedores externos
+- Expor o **Assistant connector** (RF-37): servidor MCP em `/mcp` e servidor OAuth 2.1 próprio, para o dono operar o sistema pelo Claude (AYD-006)
 - Atender as vendas: origem do item (sob encomenda × de estoque), compras consolidadas por fornecedor (`/purchases`), saldo e ajustes de estoque (`/stock`), status de entrega da venda (SPEC-002)
 - Fornecer dados agregados para o dashboard e alertas de pagamentos
 
@@ -40,6 +41,12 @@ internal/
   fulfillment/              → regras puras do atendimento da Sale (transições, pagamento, cancelamento — SPEC-002)
   dbmigrate/                → golang-migrate sobre as migrations embutidas
   models/                   → structs GORM de domínio e tipos compartilhados
+  oauth/                    → servidor de autorização OAuth 2.1 do Assistant connector (discovery, DCR, authorize, consentimento, token, revoke, Connections, verificador — SPEC-006)
+  mcp/                      → servidor MCP `/mcp` (stateless): pipeline único (scope → rate limit → validação → dedupe → handler → erro → auditoria), registro por módulo, auditoria
+    toolkit/                → Meta + Define[In,Out] (schemas derivados dos tipos), Gateway, erros, paginação
+    gateway/                → Gateway em processo para os handlers /api/v1 (mesmas regras do app)
+    tools/                  → ferramentas por domínio (catalog, crm, sales, procurement, stock, financial, analytics) + adaptadores EN↔PT
+  testdb/                   → banco Postgres descartável por teste de integração (TEST_DATABASE_URL)
 migrations/                 → NNN_nome.{up,down}.sql + embed.go (package migrations)
 docs/ops/                   → operação: baseline de migrations, backup, nota de remoção do pg_cron
 ```
@@ -89,9 +96,22 @@ ENV=development             # ou production
 ALLOWED_EMAILS=dono@exemplo.com   # vírgulas; obrigatório em production (senão não sobe)
 MIGRATE_ON_START=false      # true = aplica migrations pendentes no startup
 FRONTEND_URL=http://localhost:3000  # origem permitida no CORS (default "*")
+
+# Assistant connector (AYD-006) — MCP_ENABLED=false (padrão): /mcp, /oauth/* e /.well-known/* não são montados
+MCP_ENABLED=false
+PUBLIC_BASE_URL=https://api.rochatto.com.br   # obrigatória com MCP_ENABLED=true: https, porta 443, sem barra final (issuer; resource = {PUBLIC_BASE_URL}/mcp)
+WEB_APP_URL=https://app.rochatto.com.br       # obrigatória com MCP_ENABLED=true: origem do app web (destino do consentimento)
+MCP_ALLOWED_REDIRECT_URIS=https://claude.ai/api/mcp/auth_callback  # vírgulas; default = o valor ao lado
 ```
 
-Testes de integração: `TEST_DATABASE_URL` (banco descartável com migrations aplicadas).
+Com `MCP_ENABLED=true` e `PUBLIC_BASE_URL`/`WEB_APP_URL` ausentes ou inválidas a api **não sobe**. A URL
+`{PUBLIC_BASE_URL}/mcp` cadastrada no Claude não pode mudar depois.
+
+Testes de integração: `TEST_DATABASE_URL` (banco descartável com migrations aplicadas; os testes do conector — `oauth`, `mcp`, migração 009 — criam um banco próprio por teste e exigem permissão de `CREATE DATABASE`, senão são pulados).
+
+Catálogo do Assistant connector: `internal/mcp/testdata/catalog.golden.json` é contrato — mudou ferramenta,
+schema ou anotação? Atualize o AYD-006 no repo de contexto e regenere com
+`go test ./internal/mcp -run TestCatalogGolden -update` no mesmo PR.
 
 ## Como rodar localmente
 
@@ -121,6 +141,7 @@ go vet ./... && TEST_DATABASE_URL=$DATABASE_URL go test ./...
 | 6 | `docs/specs/SPEC-002-sale-fulfillment.md` | Atendimento da Sale: Purchase, Stock (Balance/ajustes), delivery/payment status (substitui o antigo módulo `/estoque`) |
 | 7 | `docs/specs/SPEC-004-finance.md` | Financeiro: payment method e soft-delete do Receipt, saldos da Sale, `GET /finance/summary`, alertas sem pg_cron |
 | 8 | `docs/specs/SPEC-005-dashboard.md` | Dashboard: `GET /dashboard/kpis` (ticket médio, conversão Quote → Sale, saldos), `quotes.quick_sale`, `/relatorios/vendas` com N meses exatos e `/relatorios/produtos` com `from`/`to` e `unit` |
+| 9 | `docs/specs/SPEC-006-assistant-connector-platform.md` | Assistant connector: migração 009, OAuth 2.1, `/mcp`, pipeline/extensão e ferramentas de leitura (a escrita e a deduplicação vêm na SPEC-007) |
 
 ## Deploy (Google Cloud Run — free tier)
 

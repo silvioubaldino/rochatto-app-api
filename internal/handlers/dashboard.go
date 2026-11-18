@@ -58,6 +58,7 @@ type notificacaoResponse struct {
 	ID            uuid.UUID  `json:"id"`
 	Tipo          string     `json:"tipo"`
 	VendaID       *uuid.UUID `json:"venda_id"`
+	PagamentoID   *uuid.UUID `json:"pagamento_id"` // Receipt do alerta (SPEC-006: usado pelo Assistant connector)
 	ClienteNome   string     `json:"cliente_nome"`
 	Valor         float64    `json:"valor"`
 	DataRef       string     `json:"data_ref"`
@@ -322,9 +323,13 @@ func (h *DashboardHandler) getNotificacoes(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// only_unread=false (SPEC-006, aditivo) inclui os alertas já lidos; o padrão segue só os não lidos.
+	query := h.db.WithContext(r.Context())
+	if r.URL.Query().Get("only_unread") != "false" {
+		query = query.Where("lida = FALSE")
+	}
 	var notificacoes []models.Notificacao
-	err := h.db.WithContext(r.Context()).
-		Where("lida = FALSE").
+	err := query.
 		Order("CASE WHEN tipo = 'pagamento_vencido' THEN 0 ELSE 1 END, data_ref ASC").
 		Limit(50).
 		Find(&notificacoes).Error
@@ -340,6 +345,7 @@ func (h *DashboardHandler) getNotificacoes(w http.ResponseWriter, r *http.Reques
 			ID:            n.ID,
 			Tipo:          n.Tipo,
 			VendaID:       n.VendaID,
+			PagamentoID:   n.PagamentoID,
 			ClienteNome:   n.ClienteNome,
 			Valor:         n.Valor,
 			DataRef:       n.DataRef.Format("2006-01-02"),
