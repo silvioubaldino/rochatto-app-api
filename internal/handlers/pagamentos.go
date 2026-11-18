@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/silvioubaldino/sales-backend/internal/finance"
+	"github.com/silvioubaldino/sales-backend/internal/fulfillment"
 	"github.com/silvioubaldino/sales-backend/internal/models"
 	"gorm.io/gorm"
 )
@@ -36,12 +38,17 @@ func (h *PagamentosHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /vendas/{id}/pagamentos/{pagId}", h.delete)
 }
 
+// errVendaCancelada: Receipts de Sale CANCELED ficam bloqueados para escrita (AYD-004;
+// estorno é fora do MVP — AYD-002 questão 3).
+const errVendaCancelada = "venda cancelada: recebimentos bloqueados"
+
 // --- Request types ---
 
 type pagamentoCreateRequest struct {
 	Valor         float64 `json:"valor"`
 	DataPagamento *string `json:"data_pagamento"`
 	DataAgendada  *string `json:"data_agendada"`
+	PaymentMethod *string `json:"payment_method"`
 	Observacoes   *string `json:"observacoes"`
 }
 
@@ -50,11 +57,13 @@ type pagamentoUpdateRequest struct {
 	DataPagamento *string `json:"data_pagamento"`
 	DataAgendada  *string `json:"data_agendada"`
 	Status        string  `json:"status"`
+	PaymentMethod *string `json:"payment_method"`
 	Observacoes   *string `json:"observacoes"`
 }
 
 type confirmarRequest struct {
 	DataPagamento *string `json:"data_pagamento"`
+	PaymentMethod *string `json:"payment_method"`
 }
 
 // --- Response type (also used by vendas detail) ---
@@ -66,18 +75,20 @@ type pagamentoResponse struct {
 	DataPagamento *string   `json:"data_pagamento"`
 	DataAgendada  *string   `json:"data_agendada"`
 	Status        string    `json:"status"`
+	PaymentMethod *string   `json:"payment_method"` // null só em Receipts legados ou pendentes (AYD-004)
 	Observacoes   *string   `json:"observacoes"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 
 func pagamentoToResponse(p models.PagamentoCliente) pagamentoResponse {
 	resp := pagamentoResponse{
-		ID:          p.ID,
-		VendaID:     p.VendaID,
-		Valor:       p.Valor,
-		Status:      p.Status,
-		Observacoes: p.Observacoes,
-		CreatedAt:   p.CreatedAt,
+		ID:            p.ID,
+		VendaID:       p.VendaID,
+		Valor:         p.Valor,
+		Status:        p.Status,
+		PaymentMethod: p.PaymentMethod,
+		Observacoes:   p.Observacoes,
+		CreatedAt:     p.CreatedAt,
 	}
 	if p.DataPagamento != nil {
 		s := p.DataPagamento.Format("2006-01-02")
@@ -101,6 +112,26 @@ func (h *PagamentosHandler) checkVendaExists(r *http.Request, w http.ResponseWri
 		}
 		log.Printf("ERROR Pagamentos check venda: %v", err)
 		models.WriteError(w, http.StatusInternalServerError, "erro interno")
+		return false
+	}
+	return true
+}
+
+// loadVendaForWrite exige Sale existente (não excluída) e não CANCELED para escrever Receipts:
+// 404 / 409 / 500 já respondidos quando devolve false.
+func (h *PagamentosHandler) loadVendaForWrite(r *http.Request, w http.ResponseWriter, vendaID uuid.UUID) bool {
+	var venda models.Venda
+	if err := h.db.WithContext(r.Context()).First(&venda, "id = ?", vendaID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			models.WriteError(w, http.StatusNotFound, "venda não encontrada")
+			return false
+		}
+		log.Printf("ERROR Pagamentos check venda: %v", err)
+		models.WriteError(w, http.StatusInternalServerError, "erro interno")
+		return false
+	}
+	if venda.DeliveryStatus == fulfillment.DeliveryCanceled {
+		models.WriteError(w, http.StatusConflict, errVendaCancelada)
 		return false
 	}
 	return true
@@ -147,13 +178,18 @@ func (h *PagamentosHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.checkVendaExists(r, w, vendaID) {
+	if !h.loadVendaForWrite(r, w, vendaID) {
 		return
 	}
 
 	var req pagamentoCreateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		models.WriteError(w, http.StatusBadRequest, "JSON inválido")
+		return
+	}
+	method, err := finance.NormalizeMethod(req.PaymentMethod)
+	if err != nil {
+		models.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -199,10 +235,13 @@ func (h *PagamentosHandler) create(w http.ResponseWriter, r *http.Request) {
 		status = "recebido"
 
 	default:
-		// No dates — received today.
-		today := time.Now().Truncate(24 * time.Hour)
-		dataPagamento = &today
-		status = "recebido"
+		// Sem datas → pendente (AYD-004: só data_pagamento faz nascer "recebido").
+		status = finance.ReceiptPending
+	}
+
+	if err := finance.CheckMethodForStatus(status, method); err != nil {
+		models.WriteError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	pag := models.PagamentoCliente{
@@ -211,6 +250,7 @@ func (h *PagamentosHandler) create(w http.ResponseWriter, r *http.Request) {
 		DataPagamento: dataPagamento,
 		DataAgendada:  dataAgendada,
 		Status:        status,
+		PaymentMethod: method,
 		Observacoes:   req.Observacoes,
 	}
 
@@ -236,9 +276,18 @@ func (h *PagamentosHandler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.loadVendaForWrite(r, w, vendaID) {
+		return
+	}
+
 	var req pagamentoUpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		models.WriteError(w, http.StatusBadRequest, "JSON inválido")
+		return
+	}
+	method, err := finance.NormalizeMethod(req.PaymentMethod)
+	if err != nil {
+		models.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -248,6 +297,11 @@ func (h *PagamentosHandler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	if !validPagamentoStatuses[req.Status] {
 		models.WriteError(w, http.StatusBadRequest, "status inválido (pendente ou recebido)")
+		return
+	}
+
+	if err := finance.CheckMethodForStatus(req.Status, method); err != nil {
+		models.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -294,6 +348,7 @@ func (h *PagamentosHandler) update(w http.ResponseWriter, r *http.Request) {
 	pag.DataPagamento = dataPagamento
 	pag.DataAgendada = dataAgendada
 	pag.Status = req.Status
+	pag.PaymentMethod = method
 	pag.Observacoes = req.Observacoes
 
 	if err := h.db.WithContext(r.Context()).Save(&pag).Error; err != nil {
@@ -318,9 +373,18 @@ func (h *PagamentosHandler) confirmar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.loadVendaForWrite(r, w, vendaID) {
+		return
+	}
+
 	var req confirmarRequest
 	// Body is optional.
 	_ = json.NewDecoder(r.Body).Decode(&req)
+	method, err := finance.NormalizeMethod(req.PaymentMethod)
+	if err != nil {
+		models.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	var pag models.PagamentoCliente
 	if err := h.db.WithContext(r.Context()).First(&pag, "id = ? AND venda_id = ?", pagID, vendaID).Error; err != nil {
@@ -338,6 +402,15 @@ func (h *PagamentosHandler) confirmar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// payment_method obrigatório, salvo se o Receipt pendente já tiver um (é mantido).
+	if method == nil {
+		method = pag.PaymentMethod
+	}
+	if err := finance.CheckMethodForStatus(finance.ReceiptReceived, method); err != nil {
+		models.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	// Determine data_pagamento.
 	var dataPag time.Time
 	if isNonEmptyDateStr(req.DataPagamento) {
@@ -348,10 +421,11 @@ func (h *PagamentosHandler) confirmar(w http.ResponseWriter, r *http.Request) {
 		}
 		dataPag = t
 	} else {
-		dataPag = time.Now().Truncate(24 * time.Hour)
+		dataPag = todayDate()
 	}
 
-	pag.Status = "recebido"
+	pag.Status = finance.ReceiptReceived
+	pag.PaymentMethod = method
 	pag.DataPagamento = &dataPag
 
 	if err := h.db.WithContext(r.Context()).Save(&pag).Error; err != nil {
@@ -376,6 +450,11 @@ func (h *PagamentosHandler) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.loadVendaForWrite(r, w, vendaID) {
+		return
+	}
+
+	// Soft-delete (RN-08): gorm.DeletedAt transforma o Delete em UPDATE deleted_at.
 	result := h.db.WithContext(r.Context()).
 		Where("id = ? AND venda_id = ?", pagID, vendaID).
 		Delete(&models.PagamentoCliente{})

@@ -208,7 +208,16 @@ func (h *DashboardHandler) getResumo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// getNotificacoes gera os alertas antes de ler (AYD-004: sem pg_cron). A função SQL é
+// idempotente e preserva `lida`. Se a geração falhar, responde 500: alertas desatualizados
+// (ex.: Receipt já recebido ainda aparecendo) seriam piores que um erro visível.
 func (h *DashboardHandler) getNotificacoes(w http.ResponseWriter, r *http.Request) {
+	if err := h.db.WithContext(r.Context()).Exec("SELECT gerar_notificacoes_pagamentos()").Error; err != nil {
+		log.Printf("ERROR GetNotificacoes gerar: %v", err)
+		models.WriteError(w, http.StatusInternalServerError, "erro interno")
+		return
+	}
+
 	var notificacoes []models.Notificacao
 	err := h.db.WithContext(r.Context()).
 		Where("lida = FALSE").
@@ -280,7 +289,7 @@ func (h *DashboardHandler) marcarTodasLidas(w http.ResponseWriter, r *http.Reque
 func (h *DashboardHandler) gerarNotificacoes(w http.ResponseWriter, r *http.Request) {
 	if err := h.db.WithContext(r.Context()).Exec("SELECT gerar_notificacoes_pagamentos()").Error; err != nil {
 		log.Printf("ERROR GerarNotificacoes: %v", err)
-		models.WriteError(w, http.StatusInternalServerError, "erro ao gerar notificações (função pg_cron pode não estar configurada)")
+		models.WriteError(w, http.StatusInternalServerError, "erro interno")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

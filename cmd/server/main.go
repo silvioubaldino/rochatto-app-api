@@ -49,6 +49,7 @@ func main() {
 	handlers.NewPurchasesHandler(db).Register(apiMux)
 	handlers.NewStockHandler(db).Register(apiMux)
 	handlers.NewDashboardHandler(db).Register(apiMux)
+	handlers.NewFinanceHandler(db).Register(apiMux)
 
 	root := http.NewServeMux()
 	root.HandleFunc("GET /health", handlers.Health(env))

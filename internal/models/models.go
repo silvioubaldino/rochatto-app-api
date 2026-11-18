@@ -145,8 +145,12 @@ type PagamentoCliente struct {
 	DataPagamento *time.Time `gorm:"type:date"                                       json:"data_pagamento"`
 	DataAgendada  *time.Time `gorm:"type:date"                                       json:"data_agendada"`
 	Status        string     `gorm:"type:status_pagamento;not null;default:'pendente'" json:"status"`
-	Observacoes   *string    `                                                        json:"observacoes"`
-	CreatedAt     time.Time  `                                                        json:"created_at"`
+	// AYD-004: forma de pagamento (obrigatória ao receber) e soft-delete (RN-08). Com
+	// gorm.DeletedAt, todo First/Find/Delete do GORM já ignora/atualiza deleted_at.
+	PaymentMethod *string        `gorm:"type:payment_method"                              json:"payment_method"`
+	Observacoes   *string        `                                                        json:"observacoes"`
+	CreatedAt     time.Time      `                                                        json:"created_at"`
+	DeletedAt     gorm.DeletedAt `gorm:"index"                                            json:"-"`
 }
 
 func (PagamentoCliente) TableName() string { return "pagamentos_cliente" }
