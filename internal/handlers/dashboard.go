@@ -4,9 +4,11 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/silvioubaldino/sales-backend/internal/finance"
 	"github.com/silvioubaldino/sales-backend/internal/models"
 	"gorm.io/gorm"
 )
@@ -23,7 +25,8 @@ func NewDashboardHandler(db *gorm.DB) *DashboardHandler {
 
 func (h *DashboardHandler) Register(mux *http.ServeMux) {
 	// Dashboard
-	mux.HandleFunc("GET /dashboard/resumo", h.getResumo)
+	mux.HandleFunc("GET /dashboard/kpis", h.getKPIs)
+	mux.HandleFunc("GET /dashboard/resumo", h.getResumo) // deprecated (AYD-005): use /dashboard/kpis
 	mux.HandleFunc("GET /dashboard/notificacoes", h.getNotificacoes)
 	mux.HandleFunc("POST /dashboard/notificacoes/{id}/lida", h.marcarNotificacaoLida)
 	mux.HandleFunc("POST /dashboard/notificacoes/marcar-todas-lidas", h.marcarTodasLidas)
@@ -71,6 +74,7 @@ type vendasPorMesItem struct {
 	Mes        string  `json:"mes"`
 	TotalVenda float64 `json:"total_venda"`
 	Lucro      float64 `json:"lucro"`
+	SalesCount int64   `json:"sales_count"`
 }
 
 type vendasPorMesResponse struct {
@@ -81,6 +85,7 @@ type produtoRankingItem struct {
 	ProdutoID          *uuid.UUID `json:"produto_id"` // null para Items legados sem Product
 	ProdutoNome        string     `json:"produto_nome"`
 	TotalVendas        int64      `json:"total_vendas"`
+	Unit               *string    `json:"unit"` // produtos.unidade; null em Item legado sem Product
 	TotalQuantidade    float64    `json:"total_quantidade"`
 	TotalReceita       float64    `json:"total_receita"`
 	PrecoMedio         float64    `json:"preco_medio"`
@@ -92,8 +97,107 @@ type produtosRankingResponse struct {
 	Dados []produtoRankingItem `json:"dados"`
 }
 
+// KPIs do dashboard (AYD-005).
+
+type kpiSales struct {
+	Count         int64   `json:"count"`
+	Revenue       float64 `json:"revenue"`
+	Profit        float64 `json:"profit"`
+	AverageTicket float64 `json:"average_ticket"`
+}
+
+type kpiQuotes struct {
+	Created        int64    `json:"created" gorm:"column:created"`
+	Won            int64    `json:"won" gorm:"column:won"`
+	Lost           int64    `json:"lost" gorm:"column:lost"`
+	Open           int64    `json:"open" gorm:"column:open"`
+	ConversionRate *float64 `json:"conversion_rate" gorm:"-"`
+}
+
+type kpiBalances struct {
+	Receivable         float64 `json:"receivable"`
+	PayableToSuppliers float64 `json:"payable_to_suppliers"`
+	CommissionPayable  float64 `json:"commission_payable"`
+	FreightPayable     float64 `json:"freight_payable"`
+}
+
+type kpisResponse struct {
+	Period         financePeriod `json:"period"`
+	Sales          kpiSales      `json:"sales"`
+	Quotes         kpiQuotes     `json:"quotes"`
+	Balances       kpiBalances   `json:"balances"`
+	OpenDeliveries int64         `json:"open_deliveries"`
+}
+
+// getKPIs: GET /dashboard/kpis?from&to. Os blocos sales e balances vêm das MESMAS funções
+// de /finance/summary (querySalesBlock / queryBalances) — dashboard e Financeiro não divergem.
+func (h *DashboardHandler) getKPIs(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	from, to, err := finance.ResolvePeriod(q.Get("from"), q.Get("to"), today())
+	if err != nil {
+		models.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	db := h.db.WithContext(r.Context())
+	fail := func(what string, err error) {
+		log.Printf("ERROR DashboardKPIs %s: %v", what, err)
+		models.WriteError(w, http.StatusInternalServerError, "erro interno")
+	}
+
+	var sales financeSales
+	if err := querySalesBlock(db, from, to, &sales); err != nil {
+		fail("sales", err)
+		return
+	}
+	var bal financeBalances
+	if what, err := queryBalances(db, &bal); err != nil {
+		fail(what, err)
+		return
+	}
+
+	// Coorte de Quotes emitidos no período (quick sale fica de fora: não houve negociação).
+	var quotes kpiQuotes
+	if err := db.Raw(`
+		SELECT
+			COUNT(*)                                  AS created,
+			COUNT(*) FILTER (WHERE status = 'WON')    AS won,
+			COUNT(*) FILTER (WHERE status = 'LOST')   AS lost,
+			COUNT(*) FILTER (WHERE status = 'OPEN')   AS open
+		FROM quotes
+		WHERE deleted_at IS NULL AND quick_sale = FALSE
+			AND quote_date >= ? AND quote_date <= ?
+	`, from, to).Scan(&quotes).Error; err != nil {
+		fail("quotes", err)
+		return
+	}
+	quotes.ConversionRate = finance.ConversionRate(quotes.Won, quotes.Created)
+
+	var openDeliveries int64
+	if err := db.Raw(`
+		SELECT COUNT(*) FROM vendas WHERE deleted_at IS NULL AND delivery_status = 'TO_DELIVER'
+	`).Scan(&openDeliveries).Error; err != nil {
+		fail("open_deliveries", err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, kpisResponse{
+		Period: financePeriod{From: from.Format("2006-01-02"), To: to.Format("2006-01-02")},
+		Sales: kpiSales{
+			Count: sales.Count, Revenue: sales.Revenue, Profit: sales.Profit,
+			AverageTicket: finance.AverageTicket(sales.Revenue, sales.Count),
+		},
+		Quotes: quotes,
+		Balances: kpiBalances{
+			Receivable: bal.Receivable, PayableToSuppliers: bal.PayableToSuppliers,
+			CommissionPayable: bal.CommissionPayable, FreightPayable: bal.FreightPayable,
+		},
+		OpenDeliveries: openDeliveries,
+	})
+}
+
 // --- Endpoints ---
 
+// getResumo é DEPRECATED (AYD-005): mantido sem mudanças; use GET /dashboard/kpis.
 func (h *DashboardHandler) getResumo(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -310,22 +414,36 @@ func (h *DashboardHandler) getVendasPorMes(w http.ResponseWriter, r *http.Reques
 		Mes        time.Time `gorm:"column:mes"`
 		TotalVenda float64   `gorm:"column:total_venda"`
 		Lucro      float64   `gorm:"column:lucro"`
+		SalesCount int64     `gorm:"column:sales_count"`
 	}
 
-	// Uma linha por Sale (vw_vendas_resumo): frete e comissão entram uma vez por Sale,
-	// não uma vez por Item.
+	// EXATAMENTE N meses, do (mês corrente − N + 1) ao mês corrente (São Paulo), crescente;
+	// meses sem Sale vêm zerados (generate_series LEFT JOIN agregado por mês). Uma linha por
+	// Sale (vw_vendas_resumo): frete e comissão entram uma vez por Sale, não por Item.
+	now := today()
+	last := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	first := last.AddDate(0, -(meses - 1), 0)
+
 	var rows []row
 	err := h.db.WithContext(r.Context()).Raw(`
 		SELECT
-			DATE_TRUNC('month', vr.data_venda)::date AS mes,
-			COALESCE(SUM(vr.total_venda), 0)         AS total_venda,
-			COALESCE(SUM(vr.lucro), 0)               AS lucro
-		FROM vw_vendas_resumo vr
-		WHERE vr.data_venda >= DATE_TRUNC('month', CURRENT_DATE) - MAKE_INTERVAL(months => ?)
-			AND vr.delivery_status <> 'CANCELED'
-		GROUP BY DATE_TRUNC('month', vr.data_venda)
-		ORDER BY mes ASC
-	`, meses).Scan(&rows).Error
+			m.mes::date                                  AS mes,
+			ROUND(COALESCE(a.total_venda, 0), 2)         AS total_venda,
+			ROUND(COALESCE(a.lucro, 0), 2)               AS lucro,
+			COALESCE(a.sales_count, 0)                   AS sales_count
+		FROM generate_series(CAST(? AS date), CAST(? AS date), INTERVAL '1 month') AS m(mes)
+		LEFT JOIN (
+			SELECT
+				DATE_TRUNC('month', vr.data_venda)::date AS mes,
+				SUM(vr.total_venda)                      AS total_venda,
+				SUM(vr.lucro)                            AS lucro,
+				COUNT(*)                                 AS sales_count
+			FROM vw_vendas_resumo vr
+			WHERE vr.delivery_status <> 'CANCELED'
+			GROUP BY 1
+		) a ON a.mes = m.mes::date
+		ORDER BY m.mes ASC
+	`, first, last).Scan(&rows).Error
 	if err != nil {
 		log.Printf("ERROR GetVendasPorMes: %v", err)
 		models.WriteError(w, http.StatusInternalServerError, "erro interno")
@@ -338,6 +456,7 @@ func (h *DashboardHandler) getVendasPorMes(w http.ResponseWriter, r *http.Reques
 			Mes:        r.Mes.Format("2006-01-02"),
 			TotalVenda: r.TotalVenda,
 			Lucro:      r.Lucro,
+			SalesCount: r.SalesCount,
 		})
 	}
 
@@ -345,29 +464,39 @@ func (h *DashboardHandler) getVendasPorMes(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *DashboardHandler) getProdutosMaisVendidos(w http.ResponseWriter, r *http.Request) {
-	var dataInicio, dataFim *time.Time
-
-	if di := r.URL.Query().Get("data_inicio"); di != "" {
-		t, err := parseDate(di)
-		if err != nil {
-			models.WriteError(w, http.StatusBadRequest, "data_inicio inválida (formato: YYYY-MM-DD)")
-			return
+	// from/to (AYD-005) vencem os legados data_inicio/data_fim, limite a limite.
+	q := r.URL.Query()
+	parseBound := func(names ...string) (*time.Time, bool) {
+		for _, name := range names {
+			if v := strings.TrimSpace(q.Get(name)); v != "" {
+				t, err := parseDate(v)
+				if err != nil {
+					models.WriteError(w, http.StatusBadRequest, name+" inválida (formato: YYYY-MM-DD)")
+					return nil, false
+				}
+				return &t, true
+			}
 		}
-		dataInicio = &t
+		return nil, true
 	}
-	if df := r.URL.Query().Get("data_fim"); df != "" {
-		t, err := parseDate(df)
-		if err != nil {
-			models.WriteError(w, http.StatusBadRequest, "data_fim inválida (formato: YYYY-MM-DD)")
-			return
-		}
-		dataFim = &t
+	dataInicio, ok := parseBound("from", "data_inicio")
+	if !ok {
+		return
+	}
+	dataFim, ok := parseBound("to", "data_fim")
+	if !ok {
+		return
+	}
+	if dataInicio != nil && dataFim != nil && dataInicio.After(*dataFim) {
+		models.WriteError(w, http.StatusBadRequest, "from deve ser anterior ou igual a to")
+		return
 	}
 
 	type row struct {
 		ProdutoID          *uuid.UUID `gorm:"column:produto_id"`
 		ProdutoNome        string     `gorm:"column:produto_nome"`
 		TotalVendas        int64      `gorm:"column:total_vendas"`
+		Unit               *string    `gorm:"column:unit"`
 		TotalQuantidade    float64    `gorm:"column:total_quantidade"`
 		TotalReceita       float64    `gorm:"column:total_receita"`
 		PrecoMedio         float64    `gorm:"column:preco_medio"`
@@ -384,6 +513,7 @@ func (h *DashboardHandler) getProdutosMaisVendidos(w http.ResponseWriter, r *htt
 			i.produto_id,
 			COALESCE(MAX(p.nome), MAX(i.produto_nome))                     AS produto_nome,
 			COUNT(DISTINCT v.id)                                           AS total_vendas,
+			MAX(p.unidade)                                                 AS unit,
 			SUM(i.quantidade)                                              AS total_quantidade,
 			SUM(i.quantidade * i.preco_venda_unit)                         AS total_receita,
 			COALESCE(SUM(i.quantidade * i.preco_venda_unit) / NULLIF(SUM(i.quantidade), 0), 0) AS preco_medio,
@@ -425,6 +555,7 @@ func (h *DashboardHandler) getProdutosMaisVendidos(w http.ResponseWriter, r *htt
 			ProdutoID:          r.ProdutoID,
 			ProdutoNome:        r.ProdutoNome,
 			TotalVendas:        r.TotalVendas,
+			Unit:               r.Unit,
 			TotalQuantidade:    r.TotalQuantidade,
 			TotalReceita:       r.TotalReceita,
 			PrecoMedio:         r.PrecoMedio,

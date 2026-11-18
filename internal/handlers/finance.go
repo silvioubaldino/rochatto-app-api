@@ -3,6 +3,7 @@ package handlers
 import (
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/silvioubaldino/sales-backend/internal/finance"
 	"github.com/silvioubaldino/sales-backend/internal/models"
@@ -88,21 +89,8 @@ func (h *FinanceHandler) summary(w http.ResponseWriter, r *http.Request) {
 		models.WriteError(w, http.StatusInternalServerError, "erro interno")
 	}
 
-	// sales: Sales com data_venda no período, não CANCELED (a view já exclui as excluídas).
-	if err := db.Raw(`
-		SELECT
-			COUNT(*)                                         AS count,
-			ROUND(COALESCE(SUM(vr.total_venda), 0), 2)       AS revenue,
-			ROUND(COALESCE(SUM(vr.total_custo), 0), 2)       AS cost,
-			ROUND(COALESCE(SUM(vr.frete_valor), 0), 2)       AS freight,
-			ROUND(COALESCE(SUM(vr.comissao_valor), 0), 2)    AS commission,
-			ROUND(COALESCE(SUM(vr.lucro), 0), 2)             AS profit,
-			ROUND(COALESCE(SUM(vr.total_recebido), 0), 2)    AS received,
-			ROUND(COALESCE(SUM(vr.receivable), 0), 2)        AS receivable
-		FROM vw_vendas_resumo vr
-		WHERE vr.data_venda >= ? AND vr.data_venda <= ?
-			AND vr.delivery_status <> 'CANCELED'
-	`, from, to).Scan(&resp.Sales).Error; err != nil {
+	// sales: Sales com data_venda no período, não CANCELED (compartilhado com /dashboard/kpis).
+	if err := querySalesBlock(db, from, to, &resp.Sales); err != nil {
 		fail("sales", err)
 		return
 	}
@@ -142,35 +130,62 @@ func (h *FinanceHandler) summary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// balances: saldos em aberto HOJE (ignoram o período); Sales CANCELED saem.
+	// balances: saldos em aberto HOJE (compartilhado com /dashboard/kpis).
+	if what, err := queryBalances(db, &resp.Balances); err != nil {
+		fail(what, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// querySalesBlock preenche o bloco `sales` do painel: Sales com data_venda em [from, to],
+// não CANCELED (a view já exclui as excluídas). Fonte única de /finance/summary e
+// /dashboard/kpis (AYD-005: os dois nunca divergem).
+func querySalesBlock(db *gorm.DB, from, to time.Time, out *financeSales) error {
+	return db.Raw(`
+		SELECT
+			COUNT(*)                                         AS count,
+			ROUND(COALESCE(SUM(vr.total_venda), 0), 2)       AS revenue,
+			ROUND(COALESCE(SUM(vr.total_custo), 0), 2)       AS cost,
+			ROUND(COALESCE(SUM(vr.frete_valor), 0), 2)       AS freight,
+			ROUND(COALESCE(SUM(vr.comissao_valor), 0), 2)    AS commission,
+			ROUND(COALESCE(SUM(vr.lucro), 0), 2)             AS profit,
+			ROUND(COALESCE(SUM(vr.total_recebido), 0), 2)    AS received,
+			ROUND(COALESCE(SUM(vr.receivable), 0), 2)        AS receivable
+		FROM vw_vendas_resumo vr
+		WHERE vr.data_venda >= ? AND vr.data_venda <= ?
+			AND vr.delivery_status <> 'CANCELED'
+	`, from, to).Scan(out).Error
+}
+
+// queryBalances preenche o bloco `balances` (saldos em aberto HOJE; ignoram o período;
+// Sales CANCELED saem). Em caso de erro devolve o nome do saldo que falhou (para o log).
+// Fonte única de /finance/summary e /dashboard/kpis.
+func queryBalances(db *gorm.DB, out *financeBalances) (string, error) {
 	if err := db.Raw(`
 		SELECT ROUND(COALESCE(SUM(vr.receivable), 0), 2)
 		FROM vw_vendas_resumo vr WHERE vr.delivery_status <> 'CANCELED'
-	`).Scan(&resp.Balances.Receivable).Error; err != nil {
-		fail("balances.receivable", err)
-		return
+	`).Scan(&out.Receivable).Error; err != nil {
+		return "balances.receivable", err
 	}
 	if err := db.Raw(`
 		SELECT ROUND(COALESCE(SUM(pr.to_pay), 0), 2) FROM vw_purchases_resumo pr
-	`).Scan(&resp.Balances.PayableToSuppliers).Error; err != nil {
-		fail("balances.payable_to_suppliers", err)
-		return
+	`).Scan(&out.PayableToSuppliers).Error; err != nil {
+		return "balances.payable_to_suppliers", err
 	}
 	if err := db.Raw(`
 		SELECT ROUND(COALESCE(SUM(vr.freight_payable), 0), 2)
 		FROM vw_vendas_resumo vr WHERE vr.delivery_status <> 'CANCELED'
-	`).Scan(&resp.Balances.FreightPayable).Error; err != nil {
-		fail("balances.freight_payable", err)
-		return
+	`).Scan(&out.FreightPayable).Error; err != nil {
+		return "balances.freight_payable", err
 	}
 	if err := db.Raw(`
 		SELECT ROUND(COALESCE(SUM(vr.comissao_valor), 0), 2)
 		FROM vw_vendas_resumo vr
 		WHERE vr.delivery_status <> 'CANCELED' AND vr.comissao_valor > 0 AND vr.comissao_paga = FALSE
-	`).Scan(&resp.Balances.CommissionPayable).Error; err != nil {
-		fail("balances.commission_payable", err)
-		return
+	`).Scan(&out.CommissionPayable).Error; err != nil {
+		return "balances.commission_payable", err
 	}
-
-	writeJSON(w, http.StatusOK, resp)
+	return "", nil
 }
