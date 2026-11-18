@@ -24,7 +24,9 @@ func newFulfillmentEnv(t *testing.T) fxEnv {
 	mux := http.NewServeMux()
 	NewQuotesHandler(db).Register(mux)
 	NewVendasHandler(db).Register(mux)
-	NewPagamentosHandler(db).Register(mux)
+	NewObligationsHandler(db).Register(mux)
+	NewSettlementsHandler(db).Register(mux)
+	NewFinancialMovementsHandler(db).Register(mux)
 	NewPurchasesHandler(db).Register(mux)
 	NewStockHandler(db).Register(mux)
 	NewDashboardHandler(db).Register(mux)
@@ -334,7 +336,7 @@ func TestIntegration_PendingQueueAndAttach(t *testing.T) {
 
 	// Gera a Purchase do Supplier A com A1.
 	code, p := e.api.do("POST", "/purchases", map[string]any{"kind": "MADE_TO_ORDER", "supplier_id": supA, "sale_item_ids": []string{it[0]}})
-	if code != 201 || num(p, "total_cost") != 60 || num(p, "to_pay") != 60 || len(p["sale_items"].([]any)) != 1 || p["supplier_name"] == nil {
+	if code != 201 || num(p, "total_cost") != 60 || num(p, "payable") != 60 || len(p["sale_items"].([]any)) != 1 || p["supplier_name"] == nil {
 		t.Fatalf("POST purchase = %d %v", code, p)
 	}
 	pidA := p["id"].(string)
@@ -488,34 +490,51 @@ func TestIntegration_PurchaseStatusPaymentAndCancel(t *testing.T) {
 		t.Errorf("cancelar com Item em Purchase ORDERED = %d, want 409", code)
 	}
 
-	// Pagamento: Σ to_pay no painel acompanha (RN-06).
+	// Pagamento (AYD-007): quitar a conta do Supplier da compra; Σ a pagar no painel acompanha (RN-06).
 	resumo := func() float64 {
 		t.Helper()
 		_, r := e.api.do("GET", "/dashboard/resumo", nil)
 		return num(r, "total_a_pagar_fornecedor")
 	}
+	purchase := func() map[string]any {
+		t.Helper()
+		_, r := e.api.do("GET", "/purchases/"+id, nil)
+		return r
+	}
 	before := resumo()
-	code, pay := e.api.do("PATCH", "/purchases/"+id+"/payment", map[string]any{"payment_status": "PAID"})
-	if code != 200 || num(pay, "paid_amount") != 200 || pay["paid_at"] != day || num(pay, "to_pay") != 0 {
-		t.Errorf("PAID defaults = %d %v", code, pay)
+	supObl := e.api.payableOf("PURCHASE", id, sup)
+	code, pay := e.api.do("POST", "/obligations/"+supObl+"/settle", map[string]any{"movement": map[string]any{"occurred_on": day, "payment_method": "PIX"}})
+	mv, _ := pay["movement"].(map[string]any)
+	if code != 201 || num(mv, "amount") != -200 || mv["category"] != "PURCHASE_PAYMENT" {
+		t.Fatalf("pagar a conta = %d %v", code, pay)
+	}
+	if pr := purchase(); num(pr, "paid") != 200 || num(pr, "payable") != 0 || pr["payment_status"] != "PAID" {
+		t.Errorf("compra paga = %v", pr)
 	}
 	if d := resumo() - before; !approx(d, -200) {
-		t.Errorf("a pagar delta após PAID = %v, want -200", d)
+		t.Errorf("a pagar delta após quitar = %v, want -200", d)
 	}
-	code, pay = e.api.do("PATCH", "/purchases/"+id+"/payment", map[string]any{"payment_status": "PENDING", "paid_amount": 50})
-	if code != 200 || pay["paid_amount"] != nil || pay["paid_at"] != nil || num(pay, "to_pay") != 200 {
-		t.Errorf("PENDING = %d %v", code, pay)
+	// Desfazer a quitação reabre a conta; pagar a menos deixa PENDING com saldo.
+	settlementID := mv["settlements"].([]any)[0].(map[string]any)["id"].(string)
+	if code, _ := e.api.do("DELETE", "/settlements/"+settlementID, nil); code != 204 {
+		t.Errorf("DELETE settlement = %d, want 204", code)
 	}
-	code, pay = e.api.do("PATCH", "/purchases/"+id+"/payment", map[string]any{"payment_status": "PAID", "paid_amount": 150, "paid_at": "2026-03-01"})
-	if code != 200 || num(pay, "paid_amount") != 150 || pay["paid_at"] != "2026-03-01" || num(pay, "to_pay") != 0 {
-		t.Errorf("PAID explícito = %d %v", code, pay)
+	if pr := purchase(); num(pr, "paid") != 0 || num(pr, "payable") != 200 || pr["payment_status"] != "PENDING" {
+		t.Errorf("compra após desfazer = %v", pr)
 	}
-	if code, _ := e.api.do("PATCH", "/purchases/"+id+"/payment", map[string]any{"payment_status": "PAID", "paid_amount": -1}); code != 400 {
-		t.Errorf("paid_amount negativo = %d, want 400", code)
+	if code, _ := e.api.do("POST", "/obligations/"+supObl+"/settle", map[string]any{"amount": 150, "movement": map[string]any{"occurred_on": "2026-03-01", "payment_method": "PIX"}}); code != 201 {
+		t.Errorf("pagar 150 = %d", code)
 	}
-	if code, _ := e.api.do("PATCH", "/purchases/"+id+"/payment", map[string]any{"payment_status": "MAYBE"}); code != 400 {
-		t.Errorf("payment_status inválido = %d, want 400", code)
+	if pr := purchase(); num(pr, "paid") != 150 || num(pr, "payable") != 50 || pr["payment_status"] != "PENDING" {
+		t.Errorf("compra parcial = %v", pr)
 	}
+	if code, _ := e.api.do("POST", "/obligations/"+supObl+"/settle", map[string]any{"amount": 60, "movement": map[string]any{"occurred_on": day}}); code != 409 {
+		t.Errorf("pagar acima do devido = %d, want 409", code)
+	}
+	if code, _ := e.api.do("PATCH", "/purchases/"+id+"/payment", map[string]any{"payment_status": "PAID"}); code != 404 && code != 405 {
+		t.Errorf("rota legada de pagamento = %d, want 404/405", code)
+	}
+	e.api.do("POST", "/obligations/"+supObl+"/settle", map[string]any{"movement": map[string]any{"occurred_on": day, "payment_method": "PIX"}})
 
 	// Pedida → recebida; continua impedindo o cancelamento.
 	code, st = e.api.do("PATCH", "/purchases/"+id+"/status", map[string]any{"status": "RECEIVED"})
@@ -590,11 +609,11 @@ func TestIntegration_SaleStatuses(t *testing.T) {
 		_, s := e.api.do("GET", "/vendas/"+saleID, nil)
 		return s["payment_status"].(string)
 	}
-	e.api.do("POST", "/vendas/"+saleID+"/pagamentos", map[string]any{"valor": 400, "data_pagamento": "2026-11-01", "payment_method": "PIX"})
+	e.api.receive(saleID, 400, "2026-11-01", "PIX")
 	if got := status(); got != "PARTIAL" {
 		t.Errorf("após 400/1000 = %s, want PARTIAL", got)
 	}
-	e.api.do("POST", "/vendas/"+saleID+"/pagamentos", map[string]any{"valor": 600, "data_pagamento": "2026-11-02", "payment_method": "PIX"})
+	e.api.receive(saleID, 600, "2026-11-02", "PIX")
 	if got := status(); got != "PAID" {
 		t.Errorf("após 1000/1000 = %s, want PAID", got)
 	}
@@ -648,7 +667,7 @@ func TestIntegration_DashboardExcludesCanceled(t *testing.T) {
 
 	saleID, _ := e.sale(qItem("D1", 2, 500, 200, pid))
 	mustExec(t, e.db, `UPDATE vendas SET data_venda = CURRENT_DATE, frete_valor = 100, comissao_valor = 50 WHERE id = ?`, saleID)
-	e.api.do("POST", "/vendas/"+saleID+"/pagamentos", map[string]any{"valor": 300, "data_pagamento": day, "payment_method": "PIX"})
+	e.api.receive(saleID, 300, day, "PIX")
 
 	rankQty := func() float64 {
 		_, rank := e.api.do("GET", "/relatorios/produtos?data_inicio="+day+"&data_fim="+day, nil)

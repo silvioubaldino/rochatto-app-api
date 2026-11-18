@@ -7,11 +7,12 @@ import (
 
 	"github.com/silvioubaldino/sales-backend/internal/finance"
 	"github.com/silvioubaldino/sales-backend/internal/models"
+	"github.com/silvioubaldino/sales-backend/internal/obligations"
 	"gorm.io/gorm"
 )
 
-// FinanceHandler serve o painel Financeiro (AYD-004): visão por competência (Sales do
-// período), movimento de caixa datado e saldos em aberto hoje.
+// FinanceHandler serve o painel Financeiro (AYD-004/AYD-007): visão por competência (Sales do
+// período), dinheiro executado (movimentações), despesas, resultado e saldos em aberto hoje.
 type FinanceHandler struct {
 	db *gorm.DB
 }
@@ -42,17 +43,8 @@ type financeSales struct {
 	Receivable float64 `json:"receivable" gorm:"column:receivable"`
 }
 
-type receivedByMethod struct {
-	PaymentMethod *string `json:"payment_method" gorm:"column:payment_method"` // null = legado "Não informado"
-	Amount        float64 `json:"amount" gorm:"column:amount"`
-}
-
-type financeCash struct {
-	Received         float64            `json:"received"`
-	ReceivedByMethod []receivedByMethod `json:"received_by_method"`
-	PaidToSuppliers  float64            `json:"paid_to_suppliers"`
-}
-
+// financeBalances: saldos em aberto no formato do dashboard (/dashboard/kpis — AYD-005),
+// re-derivados das contas (AYD-007). /finance/summary usa obligations.Balances.
 type financeBalances struct {
 	Receivable         float64 `json:"receivable"`
 	PayableToSuppliers float64 `json:"payable_to_suppliers"`
@@ -60,16 +52,24 @@ type financeBalances struct {
 	CommissionPayable  float64 `json:"commission_payable"`
 }
 
-type financeSummaryResponse struct {
-	Period   financePeriod   `json:"period"`
-	Sales    financeSales    `json:"sales"`
-	Cash     financeCash     `json:"cash"`
-	Balances financeBalances `json:"balances"`
+type financeResult struct {
+	SalesProfit float64 `json:"sales_profit"`
+	Expenses    float64 `json:"expenses"`
+	NetResult   float64 `json:"net_result"`
 }
 
-// summary: GET /finance/summary?from&to. Cada agregado é uma consulta própria sobre as
-// views (itens e Receipts já pré-agregados por Sale) ou sobre a tabela de Receipts —
-// nunca um SUM sobre join de Items × Receipts (fan-out). Valores com ROUND(…, 2).
+type financeSummaryResponse struct {
+	Period   financePeriod        `json:"period"`
+	Sales    financeSales         `json:"sales"`
+	Cash     obligations.Cash     `json:"cash"`
+	Expenses obligations.Expenses `json:"expenses"`
+	Result   financeResult        `json:"result"`
+	Balances obligations.Balances `json:"balances"`
+}
+
+// summary: GET /finance/summary?from&to (AYD-007 §6). Cada agregado é uma consulta própria
+// sobre as views (itens e quitações já pré-agregados) — nunca um SUM sobre join (fan-out).
+// Valores com ROUND(…, 2).
 func (h *FinanceHandler) summary(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	from, to, err := finance.ResolvePeriod(q.Get("from"), q.Get("to"), today())
@@ -81,7 +81,6 @@ func (h *FinanceHandler) summary(w http.ResponseWriter, r *http.Request) {
 
 	resp := financeSummaryResponse{
 		Period: financePeriod{From: from.Format("2006-01-02"), To: to.Format("2006-01-02")},
-		Cash:   financeCash{ReceivedByMethod: []receivedByMethod{}},
 	}
 
 	fail := func(what string, err error) {
@@ -89,50 +88,30 @@ func (h *FinanceHandler) summary(w http.ResponseWriter, r *http.Request) {
 		models.WriteError(w, http.StatusInternalServerError, "erro interno")
 	}
 
-	// sales: Sales com data_venda no período, não CANCELED (compartilhado com /dashboard/kpis).
+	// sales: Sales com data_venda no período, não CANCELED (compartilhado com /dashboard/kpis);
+	// received = Σ quitações das contas RECEIVABLE dessas Sales.
 	if err := querySalesBlock(db, from, to, &resp.Sales); err != nil {
 		fail("sales", err)
 		return
 	}
-
-	// cash.received e received_by_method: Receipts recebidos com data_pagamento no período
-	// (Receipt e Sale não excluídos; Sale não CANCELED).
-	const receiptsInPeriod = `
-		FROM pagamentos_cliente p
-		JOIN vendas v ON v.id = p.venda_id
-		WHERE p.status = 'recebido'
-			AND p.deleted_at IS NULL
-			AND p.data_pagamento >= ? AND p.data_pagamento <= ?
-			AND v.deleted_at IS NULL
-			AND v.delivery_status <> 'CANCELED'`
-	if err := db.Raw(`SELECT ROUND(COALESCE(SUM(p.valor), 0), 2) `+receiptsInPeriod, from, to).
-		Scan(&resp.Cash.Received).Error; err != nil {
-		fail("cash.received", err)
+	// cash e expenses: movimentações do período (dinheiro executado).
+	if resp.Cash, err = obligations.CashSummary(db, from, to); err != nil {
+		fail("cash", err)
 		return
 	}
-	if err := db.Raw(`
-		SELECT p.payment_method::text AS payment_method, ROUND(SUM(p.valor), 2) AS amount `+receiptsInPeriod+`
-		GROUP BY p.payment_method
-		HAVING SUM(p.valor) <> 0
-		ORDER BY amount DESC, p.payment_method ASC NULLS LAST
-	`, from, to).Scan(&resp.Cash.ReceivedByMethod).Error; err != nil {
-		fail("cash.received_by_method", err)
+	if resp.Expenses, err = obligations.ExpensesSummary(db, from, to); err != nil {
+		fail("expenses", err)
 		return
 	}
-
-	// cash.paid_to_suppliers: Purchases não excluídas com paid_at no período (RN-06).
-	if err := db.Raw(`
-		SELECT ROUND(COALESCE(SUM(paid_amount), 0), 2)
-		FROM purchases
-		WHERE deleted_at IS NULL AND paid_at >= ? AND paid_at <= ?
-	`, from, to).Scan(&resp.Cash.PaidToSuppliers).Error; err != nil {
-		fail("cash.paid_to_suppliers", err)
-		return
+	// result (RN-17): Profit das Sales do período − despesas.
+	resp.Result = financeResult{
+		SalesProfit: resp.Sales.Profit,
+		Expenses:    resp.Expenses.Total,
+		NetResult:   obligations.Round2(resp.Sales.Profit - resp.Expenses.Total),
 	}
-
-	// balances: saldos em aberto HOJE (compartilhado com /dashboard/kpis).
-	if what, err := queryBalances(db, &resp.Balances); err != nil {
-		fail(what, err)
+	// balances: Σ open das contas HOJE.
+	if resp.Balances, err = obligations.BalancesSummary(db); err != nil {
+		fail("balances", err)
 		return
 	}
 
@@ -159,9 +138,9 @@ func querySalesBlock(db *gorm.DB, from, to time.Time, out *financeSales) error {
 	`, from, to).Scan(out).Error
 }
 
-// queryBalances preenche o bloco `balances` (saldos em aberto HOJE; ignoram o período;
-// Sales CANCELED saem). Em caso de erro devolve o nome do saldo que falhou (para o log).
-// Fonte única de /finance/summary e /dashboard/kpis.
+// queryBalances preenche os saldos em aberto HOJE no formato do dashboard (ignoram o período;
+// Sales CANCELED saem — a conta delas tem amount 0). Em caso de erro devolve o nome do saldo que
+// falhou (para o log). Fonte do bloco `balances` de /dashboard/kpis.
 func queryBalances(db *gorm.DB, out *financeBalances) (string, error) {
 	if err := db.Raw(`
 		SELECT ROUND(COALESCE(SUM(vr.receivable), 0), 2)
@@ -170,7 +149,7 @@ func queryBalances(db *gorm.DB, out *financeBalances) (string, error) {
 		return "balances.receivable", err
 	}
 	if err := db.Raw(`
-		SELECT ROUND(COALESCE(SUM(pr.to_pay), 0), 2) FROM vw_purchases_resumo pr
+		SELECT ROUND(COALESCE(SUM(pr.payable), 0), 2) FROM vw_purchases_resumo pr
 	`).Scan(&out.PayableToSuppliers).Error; err != nil {
 		return "balances.payable_to_suppliers", err
 	}
@@ -181,9 +160,8 @@ func queryBalances(db *gorm.DB, out *financeBalances) (string, error) {
 		return "balances.freight_payable", err
 	}
 	if err := db.Raw(`
-		SELECT ROUND(COALESCE(SUM(vr.comissao_valor), 0), 2)
-		FROM vw_vendas_resumo vr
-		WHERE vr.delivery_status <> 'CANCELED' AND vr.comissao_valor > 0 AND vr.comissao_paga = FALSE
+		SELECT ROUND(COALESCE(SUM(vr.commission_payable), 0), 2)
+		FROM vw_vendas_resumo vr WHERE vr.delivery_status <> 'CANCELED'
 	`).Scan(&out.CommissionPayable).Error; err != nil {
 		return "balances.commission_payable", err
 	}

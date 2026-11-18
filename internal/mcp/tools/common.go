@@ -10,6 +10,7 @@ import (
 	"math"
 	"net/url"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/silvioubaldino/sales-backend/internal/mcp/toolkit"
@@ -145,4 +146,13 @@ func optUUIDStr(s UUID) *UUID {
 		return nil
 	}
 	return &s
+}
+
+// todaySP devolve a data de hoje no fuso do negócio (America/Sao_Paulo), "YYYY-MM-DD".
+func todaySP() string {
+	loc, err := time.LoadLocation("America/Sao_Paulo")
+	if err != nil {
+		loc = time.FixedZone("BRT", -3*60*60)
+	}
+	return time.Now().In(loc).Format("2006-01-02")
 }

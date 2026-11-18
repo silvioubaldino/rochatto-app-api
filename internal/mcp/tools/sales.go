@@ -70,16 +70,22 @@ var getSale = toolkit.Define(toolkit.Meta{
 	Title: "Ver venda",
 	Description: "Mostra uma Sale (venda) completa: cliente, status de entrega e de pagamento, totais, " +
 		"frete, comissão, os itens (produto, origem MADE_TO_ORDER sob encomenda ou FROM_STOCK de " +
-		"estoque, fornecedor, compra) e os Receipts (recebimentos) com forma de pagamento. Use para " +
-		"conferir uma venda antes de lançar recebimento ou ajuste. Pré-requisito: obtenha o sale_id " +
-		"com list_sales. Não altera dados.",
+		"estoque, fornecedor, compra) e os recebimentos (receipts: quitações RECEIVED e parcelas " +
+		"PENDING da conta a receber, com forma de pagamento). Use para conferir uma venda antes de " +
+		"lançar recebimento ou ajuste. Pré-requisito: obtenha o sale_id com list_sales. Não altera dados.",
 	ReadOnly: true, Idempotent: true,
 }, func(ctx context.Context, gw toolkit.Gateway, in GetSaleIn) (GetSaleOut, error) {
 	d, err := get[legacySaleDetail](ctx, gw, "/vendas/"+pathID(string(in.SaleID)), nil)
 	if err != nil {
 		return GetSaleOut{}, err
 	}
-	return GetSaleOut{Sale: d.toEN()}, nil
+	out := d.toEN()
+	acc, err := saleReceivable(ctx, gw, in.SaleID)
+	if err != nil {
+		return GetSaleOut{}, err
+	}
+	out.Receipts = receiptsOf(acc)
+	return GetSaleOut{Sale: out}, nil
 })
 
 // --- update_sale (W · I): atualização parcial (GET + PUT completo) ---
@@ -88,9 +94,9 @@ type UpdateSaleIn struct {
 	SaleID               UUID                           `json:"sale_id" jsonschema:"id da venda (obtenha com list_sales)"`
 	ExpectedDeliveryDate toolkit.Nullable[toolkit.Date] `json:"expected_delivery_date,omitzero" jsonschema:"prazo de entrega YYYY-MM-DD; null limpa"`
 	FreightAmount        *toolkit.Money                 `json:"freight_amount,omitempty" jsonschema:"valor do frete (Freight) em BRL"`
-	FreightPaid          *toolkit.Money                 `json:"freight_paid,omitempty" jsonschema:"quanto do frete já foi pago, em BRL (não pode passar do valor do frete)"`
+	FreightPaid          *toolkit.Money                 `json:"freight_paid,omitempty" jsonschema:"quanto do frete já foi pago, em BRL (não pode passar do valor do frete); a diferença vira quitação da conta do frete"`
 	CommissionAmount     *toolkit.Money                 `json:"commission_amount,omitempty" jsonschema:"valor da comissão (Commission) em BRL"`
-	CommissionPaid       *bool                          `json:"commission_paid,omitempty" jsonschema:"se a comissão já foi paga"`
+	CommissionPaid       *bool                          `json:"commission_paid,omitempty" jsonschema:"true quita a comissão a pagar (vira quitação da conta)"`
 	Notes                toolkit.Nullable[string]       `json:"notes,omitzero" jsonschema:"observações; null limpa"`
 }
 
@@ -104,9 +110,9 @@ var updateSale = toolkit.Define(toolkit.Meta{
 	Title: "Ajustar venda",
 	Description: "Ajusta campos de uma Sale (venda): prazo de entrega, valor do frete (Freight) e quanto dele foi " +
 		"pago, valor da comissão (Commission) e se foi paga, observações. Só os campos enviados mudam; os " +
-		"demais permanecem. Use para lançar o frete ou marcar a comissão paga. Pré-requisito: sale_id de " +
-		"list_sales; envie ao menos um campo. null limpa o prazo ou as observações. Não muda status de " +
-		"entrega, itens nem recebimentos.",
+		"demais permanecem. Use para lançar o frete ou marcar a comissão paga (viram quitações das contas a " +
+		"pagar da venda; pagamento não é desfeito por aqui). Pré-requisito: sale_id de list_sales; envie ao " +
+		"menos um campo. null limpa o prazo ou as observações. Não muda status de entrega, itens nem recebimentos.",
 	Idempotent: true,
 }, func(ctx context.Context, gw toolkit.Gateway, in UpdateSaleIn) (UpdateSaleOut, error) {
 	if !in.ExpectedDeliveryDate.Present && in.FreightAmount == nil && in.FreightPaid == nil &&
@@ -125,13 +131,96 @@ var updateSale = toolkit.Define(toolkit.Meta{
 	if err != nil {
 		return UpdateSaleOut{}, err
 	}
+	// Valida antes de gravar: o frete pago não passa do valor (novo) do frete.
+	newFreight := cur.FreteValor
+	if in.FreightAmount != nil {
+		newFreight = float64(*in.FreightAmount)
+	}
+	if in.FreightPaid != nil && float64(*in.FreightPaid) > newFreight+0.004 {
+		return UpdateSaleOut{}, invalid("frete_pago não pode ser maior que frete_valor")
+	}
 	body := toLegacySalePut(cur.legacySale, in)
 	updated, err := send[legacySale](ctx, gw, "PUT", path, body)
 	if err != nil {
 		return UpdateSaleOut{}, err
 	}
+	if in.FreightPaid != nil || in.CommissionPaid != nil {
+		if err := applyPaidFlags(ctx, gw, updated, in); err != nil {
+			return UpdateSaleOut{}, err
+		}
+		if updated, err = get[legacySale](ctx, gw, path, nil); err != nil {
+			return UpdateSaleOut{}, afterWrite(err)
+		}
+	}
 	return UpdateSaleOut{Sale: updated.toEN(), Warnings: noWarnings()}, nil
 })
+
+// applyPaidFlags traduz freight_paid e commission_paid (AYD-007: frete e comissão pagos são
+// quitações das contas a pagar da Sale). Só quita a diferença; desfazer pagamento não é possível
+// por aqui (erro de entrada com orientação).
+func applyPaidFlags(ctx context.Context, gw toolkit.Gateway, sale legacySale, in UpdateSaleIn) error {
+	accounts, err := get[ObligationList](ctx, gw, "/obligations", url.Values{
+		"origin_type": {"SALE"}, "origin_id": {string(sale.ID)}, "direction": {"PAYABLE"}, "limit": {"200"}})
+	if err != nil {
+		return err
+	}
+	settle := func(acc ObligationSummary, amount float64, category string) error {
+		_, err := send[settleResult](ctx, gw, "POST", "/obligations/"+pathID(string(acc.ID))+"/settle", map[string]any{
+			"amount": amount, "movement": map[string]any{"occurred_on": todaySP(), "category": category},
+		})
+		return err
+	}
+	if in.FreightPaid != nil {
+		paid := max(sale.FreteValor-sale.FreightPayable, 0)
+		delta := round2(float64(*in.FreightPaid) - paid)
+		switch {
+		case delta < 0:
+			return invalid("não é possível reduzir o frete pago: desfaça a quitação no app web")
+		case delta > 0:
+			var acc *ObligationSummary
+			for i, a := range accounts.Items {
+				if a.Counterparty == nil {
+					acc = &accounts.Items[i]
+				}
+			}
+			if acc == nil {
+				return invalid("a venda não tem frete a pagar")
+			}
+			if err := settle(*acc, delta, "FREIGHT"); err != nil {
+				return err
+			}
+		}
+	}
+	if in.CommissionPaid != nil {
+		paid := sale.ComissaoValor > 0 && sale.CommissionPayable <= 0
+		switch {
+		case *in.CommissionPaid && !paid && sale.CommissionPayable > 0:
+			var acc *ObligationSummary
+			for i, a := range accounts.Items { // a conta do Partner; sem Partner, a conta "a definir"
+				if a.Counterparty != nil && a.Counterparty.Type == "PARTNER" && a.Open > 0 {
+					acc = &accounts.Items[i]
+				}
+			}
+			amount := sale.CommissionPayable
+			if acc != nil {
+				amount = acc.Open
+			} else {
+				for i, a := range accounts.Items {
+					if a.Counterparty == nil {
+						acc = &accounts.Items[i]
+					}
+				}
+			}
+			if acc == nil {
+				return invalid("a venda não tem comissão a pagar")
+			}
+			return settle(*acc, amount, "COMMISSION")
+		case !*in.CommissionPaid && paid:
+			return invalid("não é possível desfazer o pagamento da comissão: use o app web")
+		}
+	}
+	return nil
+}
 
 // toLegacySalePut aplica só os campos enviados sobre a representação atual da Sale e monta o
 // corpo do PUT legado (substituição completa — AYD-006 §4.3). Função pura (testável sem banco).
@@ -140,9 +229,7 @@ func toLegacySalePut(cur legacySale, in UpdateSaleIn) map[string]any {
 		"vendedor_externo_id":   cur.VendedorExternoID,
 		"data_entrega_prevista": optDate(cur.DataEntregaPrevista),
 		"frete_valor":           cur.FreteValor,
-		"frete_pago":            cur.FretePago,
 		"comissao_valor":        cur.ComissaoValor,
-		"comissao_paga":         cur.ComissaoPaga,
 		"observacoes":           cur.Observacoes,
 	}
 	if d := in.ExpectedDeliveryDate; d.Present {
@@ -155,14 +242,8 @@ func toLegacySalePut(cur legacySale, in UpdateSaleIn) map[string]any {
 	if in.FreightAmount != nil {
 		body["frete_valor"] = float64(*in.FreightAmount)
 	}
-	if in.FreightPaid != nil {
-		body["frete_pago"] = float64(*in.FreightPaid)
-	}
 	if in.CommissionAmount != nil {
 		body["comissao_valor"] = float64(*in.CommissionAmount)
-	}
-	if in.CommissionPaid != nil {
-		body["comissao_paga"] = *in.CommissionPaid
 	}
 	if n := in.Notes; n.Present {
 		if n.Null {

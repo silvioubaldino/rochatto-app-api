@@ -145,8 +145,8 @@ func TestIntegration_KPIsMatchFinanceSummary(t *testing.T) {
 	e := newDashboardEnv(t)
 	from, to, mid := uniquePeriod()
 	sale := e.simpleSale(3, 100, 40)
-	mustExec(t, e.db, `UPDATE vendas SET data_venda = ?, frete_valor = 12, frete_pago = 2, comissao_valor = 7 WHERE id = ?`, mid, sale)
-	e.receipt(sale, map[string]any{"valor": 100, "data_pagamento": mid, "payment_method": "PIX"})
+	mustExec(t, e.db, `UPDATE vendas SET data_venda = ?, frete_valor = 12, comissao_valor = 7 WHERE id = ?`, mid, sale)
+	e.api.receive(sale, 100, mid, "PIX")
 	sup := e.supplier()
 	pid := e.product()
 	var pur string
@@ -162,14 +162,19 @@ func TestIntegration_KPIsMatchFinanceSummary(t *testing.T) {
 			t.Errorf("sales.%s: finance=%v kpis=%v", key, fs[key], ks[key])
 		}
 	}
+	// Os saldos vêm das mesmas contas (AYD-007): o a receber é o mesmo e o a pagar do painel é a
+	// soma dos três a pagar do dashboard (fornecedores + frete + comissão).
 	fb, kb := sub(fin, "balances"), sub(k, "balances")
 	for _, key := range []string{"receivable", "payable_to_suppliers", "commission_payable", "freight_payable"} {
 		if _, ok := kb[key]; !ok {
 			t.Errorf("balances.%s ausente", key)
 		}
-		if num(fb, key) != num(kb, key) {
-			t.Errorf("balances.%s: finance=%v kpis=%v", key, fb[key], kb[key])
-		}
+	}
+	if num(fb, "receivable") != num(kb, "receivable") {
+		t.Errorf("balances.receivable: finance=%v kpis=%v", fb["receivable"], kb["receivable"])
+	}
+	if want := num(kb, "payable_to_suppliers") + num(kb, "freight_payable") + num(kb, "commission_payable"); !near(num(fb, "payable"), want) {
+		t.Errorf("balances.payable: finance=%v, kpis (fornecedores+frete+comissão)=%v", fb["payable"], want)
 	}
 	e.wantNum("sales", ks, "average_ticket", 300)
 }

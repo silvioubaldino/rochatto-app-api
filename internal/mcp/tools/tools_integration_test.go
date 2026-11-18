@@ -46,7 +46,9 @@ func newEnv(t *testing.T) *env {
 	handlers.NewProductCategoriesHandler(db).Register(mux)
 	handlers.NewVendasHandler(db).Register(mux)
 	handlers.NewQuotesHandler(db).Register(mux)
-	handlers.NewPagamentosHandler(db).Register(mux)
+	handlers.NewObligationsHandler(db).Register(mux)
+	handlers.NewSettlementsHandler(db).Register(mux)
+	handlers.NewFinancialMovementsHandler(db).Register(mux)
 	handlers.NewPurchasesHandler(db).Register(mux)
 	handlers.NewStockHandler(db).Register(mux)
 	handlers.NewDashboardHandler(db).Register(mux)
@@ -155,13 +157,13 @@ func obj(v any) map[string]any       { return v.(map[string]any) }
 func day(offset int) string { return time.Now().AddDate(0, 0, offset).Format("2006-01-02") }
 
 type seed struct {
-	catID, partnerID, joao, joaoPereira, maria  string
-	pedraID, mármoreID, supplierID              string
-	quoteOpen, quoteLost, quoteWon              string
-	saleQuick, saleConv                         string
-	saleQuickItem, saleConvItem1, saleConvItem2 string
-	receiptRecv, receiptPending                 string
-	purchaseID                                  string
+	catID, partnerID, joao, joaoPereira, maria       string
+	pedraID, mármoreID, supplierID                   string
+	quoteOpen, quoteLost, quoteWon                   string
+	saleQuick, saleConv                              string
+	saleQuickItem, saleConvItem1, saleConvItem2      string
+	receiptRecv, receiptPending, saleQuickReceivable string
+	purchaseID                                       string
 }
 
 func (e *env) seed() seed {
@@ -212,9 +214,15 @@ func (e *env) seed() seed {
 	put(s.saleQuick, s.saleQuickItem, map[string]any{"produto_id": s.pedraID, "produto_nome": "Granito Preto", "quantidade": 4, "preco_venda_unit": 500, "custo_unit": 300,
 		"origin": "MADE_TO_ORDER", "fornecedor_id": s.supplierID})
 
-	// Receipts: um recebido (PIX) e um pendente vencido (gera alerta OVERDUE).
-	s.receiptRecv = e.mustREST("POST", "/vendas/"+s.saleQuick+"/pagamentos", map[string]any{"valor": 500, "data_pagamento": day(0), "payment_method": "PIX"}, 201)["id"].(string)
-	s.receiptPending = e.mustREST("POST", "/vendas/"+s.saleQuick+"/pagamentos", map[string]any{"valor": 700, "data_agendada": day(-3)}, 201)["id"].(string)
+	// Conta a receber da venda rápida: uma parcela de 700 vencida (gera alerta OVERDUE) e um
+	// recebimento de 500 (PIX) que cobre a parcela pela metade (o quitado cobre as mais antigas).
+	s.saleQuickReceivable = e.mustREST("GET", "/obligations?origin_type=SALE&origin_id="+s.saleQuick+"&direction=RECEIVABLE", nil, 200)["items"].([]any)[0].(map[string]any)["id"].(string)
+	plan := e.mustREST("PUT", "/obligations/"+s.saleQuickReceivable+"/installments",
+		map[string]any{"installments": []map[string]any{{"due_date": day(-3), "amount": 700}}}, 200)
+	s.receiptPending = obj(plan["installments"].([]any)[0])["id"].(string)
+	paid := e.mustREST("POST", "/obligations/"+s.saleQuickReceivable+"/settle",
+		map[string]any{"amount": 500, "movement": map[string]any{"occurred_on": day(0), "payment_method": "PIX"}}, 201)
+	s.receiptRecv = obj(obj(paid["movement"])["settlements"].([]any)[0])["id"].(string)
 
 	// Purchase consolidada com o item sob encomenda da venda rápida.
 	s.purchaseID = e.mustREST("POST", "/purchases", map[string]any{"kind": "MADE_TO_ORDER", "supplier_id": s.supplierID,
@@ -299,6 +307,15 @@ func TestIntegration_CatalogReadTools(t *testing.T) {
 		if out := e.ok("search_suppliers", map[string]any{}); out["total"] != float64(2) {
 			t.Errorf("todos os suppliers = %v", out)
 		}
+		// AYD-007: kind (STONE por padrão) na saída e como filtro.
+		if sp["kind"] != "STONE" {
+			t.Errorf("kind do fornecedor = %v, quero STONE", sp["kind"])
+		}
+		e.mustREST("POST", "/fornecedores", map[string]any{"nome": "Transportes Rápido", "kind": "TRANSPORT"}, 201)
+		if out := e.ok("search_suppliers", map[string]any{"kind": "TRANSPORT"}); out["total"] != float64(1) || obj(items(out)[0])["kind"] != "TRANSPORT" {
+			t.Errorf("search_suppliers kind=TRANSPORT = %v", out)
+		}
+		e.fail("search_suppliers", map[string]any{"kind": "NOPE"}, "INVALID_INPUT", "")
 		out = e.ok("search_partners", map[string]any{"query": "ana", "type": "ARCHITECT"})
 		pp := obj(items(out)[0])
 		if out["total"] != float64(1) || pp["name"] != "Arq. Ana" || pp["type"] != "ARCHITECT" || pp["phone"] != "11 9999" {
@@ -407,7 +424,8 @@ func TestIntegration_SalesProcurementStockReadTools(t *testing.T) {
 		if rr["status"] != "RECEIVED" || rr["amount"] != float64(500) || rr["payment_method"] != "PIX" || rr["paid_at"] != day(0) {
 			t.Errorf("receipt recebido = %v", rr)
 		}
-		if rp["status"] != "PENDING" || rp["scheduled_date"] != day(-3) || rp["amount"] != float64(700) {
+		// A parcela de 700 está coberta em 500 pelo recebimento: pendente pelo que falta.
+		if rp["status"] != "PENDING" || rp["scheduled_date"] != day(-3) || rp["amount"] != float64(200) {
 			t.Errorf("receipt pendente = %v", rp)
 		}
 		if _, has := rp["payment_method"]; has {
@@ -524,14 +542,26 @@ func TestIntegration_FinanceAndAnalyticsReadTools(t *testing.T) {
 				t.Errorf("sales.%s = %v, REST %v", k, sales[k], rs[k])
 			}
 		}
-		for k, v := range obj(rest["balances"]) {
-			if obj(out["balances"])[k] != v {
-				t.Errorf("balances.%s = %v, REST %v", k, obj(out["balances"])[k], v)
+		for _, k := range []string{"receivable", "payable"} {
+			if obj(out["balances"])[k] != obj(rest["balances"])[k] {
+				t.Errorf("balances.%s = %v, REST %v", k, obj(out["balances"])[k], obj(rest["balances"])[k])
 			}
 		}
+		if _, ok := obj(out["balances"])["payable_by_counterparty_kind"].([]any); !ok {
+			t.Errorf("payable_by_counterparty_kind = %v", obj(out["balances"]))
+		}
 		cash := obj(out["cash"])
-		if cash["received"] != float64(500) || cash["paid_to_suppliers"] != float64(0) {
+		if cash["inflow"] != float64(500) || cash["outflow"] != float64(0) || cash["net"] != float64(500) {
 			t.Errorf("cash = %v", cash)
+		}
+		if cats := cash["by_category"].([]any); len(cats) != 1 || obj(cats[0])["category"] != "SALE_RECEIPT" || obj(cats[0])["amount"] != float64(500) {
+			t.Errorf("cash.by_category = %v", cash["by_category"])
+		}
+		if exp := obj(out["expenses"]); exp["total"] != float64(0) || len(exp["by_category"].([]any)) != 0 {
+			t.Errorf("expenses = %v", out["expenses"])
+		}
+		if res := obj(out["result"]); res["sales_profit"] != obj(rest["result"])["sales_profit"] || res["net_result"] != obj(rest["result"])["net_result"] {
+			t.Errorf("result = %v, REST %v", res, rest["result"])
 		}
 		by := cash["received_by_method"].([]any)
 		if len(by) != 1 || obj(by[0])["payment_method"] != "PIX" || obj(by[0])["amount"] != float64(500) {
@@ -615,9 +645,13 @@ func TestIntegration_FinanceAndAnalyticsReadTools(t *testing.T) {
 			t.Fatalf("alertas = %v", out)
 		}
 		a := obj(list[0])
-		if a["kind"] != "OVERDUE" || a["sale_id"] != s.saleQuick || a["receipt_id"] != s.receiptPending || a["customer_name"] != "João Silva" ||
-			a["amount"] != float64(700) || a["due_date"] != day(-3) || a["read"] != false {
+		if a["kind"] != "OVERDUE" || a["direction"] != "RECEIVABLE" || a["sale_id"] != s.saleQuick || a["obligation_id"] != s.saleQuickReceivable ||
+			a["installment_id"] != s.receiptPending || a["customer_name"] != "João Silva" || a["counterparty_name"] != "João Silva" ||
+			a["amount"] != float64(200) || a["due_date"] != day(-3) || a["read"] != false {
 			t.Errorf("alerta = %v", a)
+		}
+		if _, has := a["receipt_id"]; has {
+			t.Error("receipt_id foi substituído por obligation_id/installment_id")
 		}
 		// Marca como lido (REST): some do padrão, volta com only_unread=false.
 		e.mustREST("POST", "/dashboard/notificacoes/"+a["id"].(string)+"/lida", nil, 204)
@@ -631,6 +665,118 @@ func TestIntegration_FinanceAndAnalyticsReadTools(t *testing.T) {
 		if len(items(all)) != 1 || obj(items(all)[0])["read"] != true {
 			t.Errorf("only_unread false = %v", all)
 		}
+	})
+}
+
+// AYD-007 §8: list_obligations e list_financial_movements (leitura) pelo pipeline real.
+func TestIntegration_ObligationAndMovementReadTools(t *testing.T) {
+	e := newEnv(t)
+	s := e.seed()
+
+	t.Run("list_obligations: padrão em aberto, filtros, totais e paginação", func(t *testing.T) {
+		out := e.ok("list_obligations", map[string]any{})
+		// Em aberto: a receber das 2 vendas, a pagar da compra (1200) — a venda convertida ainda não tem compra.
+		if out["total"] != float64(3) || len(items(out)) != 3 || out["has_more"] != false || out["offset"] != float64(0) {
+			t.Fatalf("list_obligations = %v", out)
+		}
+		tot := obj(out["totals"])
+		if tot["amount"] != float64(2000+2800+1200) || tot["settled"] != float64(500) || tot["open"] != float64(5500) {
+			t.Errorf("totals = %v", tot)
+		}
+		// Mais próxima do vencimento primeiro: a conta com a parcela vencida (venda rápida).
+		first := obj(items(out)[0])
+		if first["id"] != s.saleQuickReceivable || first["overdue"] != true || first["status"] != "PARTIAL" || first["direction"] != "RECEIVABLE" ||
+			first["amount"] != float64(2000) || first["settled"] != float64(500) || first["open"] != float64(1500) {
+			t.Errorf("1ª conta = %v", first)
+		}
+		if ni := obj(first["next_installment"]); ni["due_date"] != day(-3) || ni["amount_open"] != float64(200) {
+			t.Errorf("next_installment = %v", ni)
+		}
+		if cp := obj(first["counterparty"]); cp["type"] != "CUSTOMER" || cp["id"] != s.joao || cp["name"] != "João Silva" {
+			t.Errorf("counterparty = %v", cp)
+		}
+		if org := obj(first["origin"]); org["type"] != "SALE" || org["id"] != s.saleQuick || org["label"] == "" {
+			t.Errorf("origin = %v", org)
+		}
+		if _, has := first["notes"]; has {
+			t.Error("campo nulo deve ser omitido")
+		}
+		pay := e.ok("list_obligations", map[string]any{"direction": "PAYABLE"})
+		if pay["total"] != float64(1) {
+			t.Fatalf("PAYABLE = %v", pay)
+		}
+		po := obj(items(pay)[0])
+		if cp := obj(po["counterparty"]); cp["type"] != "SUPPLIER" || cp["id"] != s.supplierID || po["amount"] != float64(1200) || obj(po["origin"])["type"] != "PURCHASE" {
+			t.Errorf("conta da compra = %v", po)
+		}
+		for name, args := range map[string]map[string]any{
+			"origem":    {"origin_type": "PURCHASE", "origin_id": s.purchaseID},
+			"credor":    {"counterparty_type": "SUPPLIER", "counterparty_id": s.supplierID},
+			"status":    {"status": []string{"OPEN"}, "direction": "PAYABLE"},
+			"due_to":    {"due_to": day(0), "direction": "RECEIVABLE"},
+			"vencidas":  {"overdue": true},
+			"pago/tudo": {"status": []string{"OPEN", "PARTIAL", "SETTLED"}, "direction": "PAYABLE"},
+		} {
+			if out := e.ok("list_obligations", args); out["total"] != float64(1) {
+				t.Errorf("list_obligations %s = %v", name, out)
+			}
+		}
+		if out := e.ok("list_obligations", map[string]any{"status": []string{"SETTLED"}}); out["total"] != float64(0) || len(items(out)) != 0 {
+			t.Errorf("SETTLED = %v", out)
+		}
+		page := e.ok("list_obligations", map[string]any{"limit": 2})
+		if len(items(page)) != 2 || page["has_more"] != true || page["total"] != float64(3) {
+			t.Errorf("limit=2 = %v", page)
+		}
+		page = e.ok("list_obligations", map[string]any{"limit": 2, "offset": 2})
+		if len(items(page)) != 1 || page["has_more"] != false || page["offset"] != float64(2) {
+			t.Errorf("offset=2 = %v", page)
+		}
+		e.fail("list_obligations", map[string]any{"direction": "X"}, "INVALID_INPUT", "")
+	})
+
+	t.Run("list_financial_movements", func(t *testing.T) {
+		e.mustREST("POST", "/financial-movements", map[string]any{"occurred_on": day(0), "amount": -317.87, "category": "VEHICLE", "counterparty_name": "Posto"}, 201)
+		out := e.ok("list_financial_movements", map[string]any{"from": day(0), "to": day(0)})
+		if out["total"] != float64(2) || len(items(out)) != 2 {
+			t.Fatalf("movimentações = %v", out)
+		}
+		tot := obj(out["totals"])
+		if tot["inflow"] != float64(500) || tot["outflow"] != 317.87 || tot["net"] != 182.13 {
+			t.Errorf("totals = %v", tot)
+		}
+		var receipt, expense map[string]any
+		for _, it := range items(out) {
+			if obj(it)["category"] == "SALE_RECEIPT" {
+				receipt = obj(it)
+			} else {
+				expense = obj(it)
+			}
+		}
+		if receipt["amount"] != float64(500) || receipt["payment_method"] != "PIX" || receipt["unallocated"] != float64(0) || len(receipt["settlements"].([]any)) != 1 ||
+			obj(receipt["settlements"].([]any)[0])["obligation_id"] != s.saleQuickReceivable {
+			t.Errorf("recebimento = %v", receipt)
+		}
+		if expense["amount"] != -317.87 || expense["counterparty_name"] != "Posto" || expense["unallocated"] != 317.87 || len(expense["settlements"].([]any)) != 0 {
+			t.Errorf("despesa = %v", expense)
+		}
+		if _, has := expense["payment_method"]; has {
+			t.Error("payment_method nulo deve ser omitido")
+		}
+		for name, args := range map[string]map[string]any{
+			"saídas":       {"direction": "OUT", "from": day(0), "to": day(0)},
+			"categoria":    {"category": "VEHICLE", "from": day(0), "to": day(0)},
+			"sem quitação": {"unallocated_only": true, "from": day(0), "to": day(0)},
+			"credor":       {"counterparty_type": "CUSTOMER", "counterparty_id": s.joao, "from": day(0), "to": day(0)},
+		} {
+			if got := e.ok("list_financial_movements", args); got["total"] != float64(1) {
+				t.Errorf("list_financial_movements %s = %v", name, got)
+			}
+		}
+		if got := e.ok("list_financial_movements", map[string]any{"from": "2000-01-01", "to": "2000-01-31"}); got["total"] != float64(0) || len(items(got)) != 0 {
+			t.Errorf("período vazio = %v", got)
+		}
+		e.fail("list_financial_movements", map[string]any{"category": "X"}, "INVALID_INPUT", "")
 	})
 }
 

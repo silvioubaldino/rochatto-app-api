@@ -32,11 +32,12 @@ type ProductSummary struct {
 }
 
 type SupplierSummary struct {
-	ID    UUID    `json:"id"`
-	Name  string  `json:"name"`
-	Phone *string `json:"phone,omitempty"`
-	City  *string `json:"city,omitempty"`
-	Notes *string `json:"notes,omitempty"`
+	ID    UUID                 `json:"id"`
+	Name  string               `json:"name"`
+	Kind  toolkit.SupplierKind `json:"kind"` // fornecedor ou prestador (AYD-007): STONE, TRANSPORT, LABOR, TAX_AUTHORITY, OTHER
+	Phone *string              `json:"phone,omitempty"`
+	City  *string              `json:"city,omitempty"`
+	Notes *string              `json:"notes,omitempty"`
 }
 
 type PartnerSummary struct {
@@ -142,12 +143,45 @@ type PurchaseSummary struct {
 	OrderedAt     *Date                         `json:"ordered_at,omitempty"`
 	ReceivedAt    *Date                         `json:"received_at,omitempty"`
 	PaymentStatus toolkit.SupplierPaymentStatus `json:"payment_status"`
-	PaidAmount    *float64                      `json:"paid_amount,omitempty"`
+	PaidAmount    *float64                      `json:"paid_amount,omitempty"` // Σ quitado das contas da compra (AYD-007)
 	PaidAt        *Date                         `json:"paid_at,omitempty"`
 	TotalCost     float64                       `json:"total_cost"`
-	ToPay         float64                       `json:"to_pay"`
+	ToPay         float64                       `json:"to_pay"` // Σ em aberto das contas da compra
 	LineCount     int                           `json:"line_count"`
 	CreatedAt     time.Time                     `json:"created_at"`
+}
+
+// restPurchaseSummary espelha o resumo da compra na rota REST (AYD-007): `paid` e `payable` (Σ das
+// contas da compra) viram paid_amount e to_pay do contrato da ferramenta.
+type restPurchaseSummary struct {
+	ID            UUID                          `json:"id"`
+	Kind          toolkit.PurchaseKind          `json:"kind"`
+	Status        toolkit.PurchaseStatus        `json:"status"`
+	SupplierID    UUID                          `json:"supplier_id"`
+	SupplierName  string                        `json:"supplier_name"`
+	ExpectedDate  *Date                         `json:"expected_date"`
+	Notes         *string                       `json:"notes"`
+	OrderedAt     *Date                         `json:"ordered_at"`
+	ReceivedAt    *Date                         `json:"received_at"`
+	PaymentStatus toolkit.SupplierPaymentStatus `json:"payment_status"`
+	TotalCost     float64                       `json:"total_cost"`
+	Paid          float64                       `json:"paid"`
+	Payable       float64                       `json:"payable"`
+	LineCount     int                           `json:"line_count"`
+	CreatedAt     time.Time                     `json:"created_at"`
+}
+
+func (r restPurchaseSummary) toEN() PurchaseSummary {
+	p := PurchaseSummary{
+		ID: r.ID, Kind: r.Kind, Status: r.Status, SupplierID: r.SupplierID, SupplierName: r.SupplierName,
+		ExpectedDate: optDate(r.ExpectedDate), Notes: opt(r.Notes), OrderedAt: optDate(r.OrderedAt), ReceivedAt: optDate(r.ReceivedAt),
+		PaymentStatus: r.PaymentStatus, TotalCost: r.TotalCost, ToPay: r.Payable, LineCount: r.LineCount, CreatedAt: r.CreatedAt,
+	}
+	if r.Paid > 0 {
+		paid := r.Paid
+		p.PaidAmount = &paid
+	}
+	return p
 }
 
 // PurchaseSaleItem é o item de venda atendido por uma Purchase, com os campos legados PT
@@ -175,7 +209,7 @@ type restPurchaseSaleItem struct {
 }
 
 type restPurchaseDetail struct {
-	PurchaseSummary
+	restPurchaseSummary
 	SaleItems []restPurchaseSaleItem `json:"sale_items"`
 	Items     []PurchaseLine         `json:"items"`
 }
@@ -264,15 +298,20 @@ func (p legacyProduct) toEN() ProductSummary {
 }
 
 type legacySupplier struct {
-	ID          UUID    `json:"id"`
-	Nome        string  `json:"nome"`
-	Telefone    *string `json:"telefone"`
-	Cidade      *string `json:"cidade"`
-	Observacoes *string `json:"observacoes"`
+	ID          UUID                 `json:"id"`
+	Nome        string               `json:"nome"`
+	Kind        toolkit.SupplierKind `json:"kind"`
+	Telefone    *string              `json:"telefone"`
+	Cidade      *string              `json:"cidade"`
+	Observacoes *string              `json:"observacoes"`
 }
 
 func (s legacySupplier) toEN() SupplierSummary {
-	return SupplierSummary{ID: s.ID, Name: s.Nome, Phone: opt(s.Telefone), City: opt(s.Cidade), Notes: opt(s.Observacoes)}
+	kind := s.Kind
+	if kind == "" {
+		kind = "STONE"
+	}
+	return SupplierSummary{ID: s.ID, Name: s.Nome, Kind: kind, Phone: opt(s.Telefone), City: opt(s.Cidade), Notes: opt(s.Observacoes)}
 }
 
 type legacySale struct {
@@ -287,15 +326,14 @@ type legacySale struct {
 	DataVenda           Date                   `json:"data_venda"`
 	DataEntregaPrevista *Date                  `json:"data_entrega_prevista"`
 	FreteValor          float64                `json:"frete_valor"`
-	FretePago           float64                `json:"frete_pago"`
 	ComissaoValor       float64                `json:"comissao_valor"`
-	ComissaoPaga        bool                   `json:"comissao_paga"`
 	Observacoes         *string                `json:"observacoes"`
 	TotalVenda          float64                `json:"total_venda"`
 	TotalCusto          float64                `json:"total_custo"`
 	TotalRecebido       float64                `json:"total_recebido"`
 	Receivable          float64                `json:"receivable"`
 	FreightPayable      float64                `json:"freight_payable"`
+	CommissionPayable   float64                `json:"commission_payable"`
 	Lucro               float64                `json:"lucro"`
 }
 
@@ -307,8 +345,10 @@ func (s legacySale) toEN() SaleSummary {
 		DeliveryStatus: s.DeliveryStatus, PaymentStatus: s.PaymentStatus,
 		Total: s.TotalVenda, TotalCost: s.TotalCusto, TotalReceived: s.TotalRecebido,
 		Receivable: s.Receivable, Profit: s.Lucro,
-		FreightAmount: s.FreteValor, FreightPaid: s.FretePago, FreightPayable: s.FreightPayable,
-		CommissionAmount: s.ComissaoValor, CommissionPaid: s.ComissaoPaga, Notes: opt(s.Observacoes),
+		// Frete e comissão pagos são derivados das contas a pagar da Sale (AYD-007): o que não está
+		// mais a pagar foi quitado.
+		FreightAmount: s.FreteValor, FreightPaid: max(s.FreteValor-s.FreightPayable, 0), FreightPayable: s.FreightPayable,
+		CommissionAmount: s.ComissaoValor, CommissionPaid: s.ComissaoValor > 0 && s.CommissionPayable <= 0, Notes: opt(s.Observacoes),
 	}
 }
 
@@ -340,40 +380,17 @@ func (i legacySaleItem) toEN() SaleItem {
 	}
 }
 
-type legacyReceipt struct {
-	ID            UUID                   `json:"id"`
-	Valor         float64                `json:"valor"`
-	DataPagamento *Date                  `json:"data_pagamento"`
-	DataAgendada  *Date                  `json:"data_agendada"`
-	Status        string                 `json:"status"`
-	PaymentMethod *toolkit.PaymentMethod `json:"payment_method"`
-	Observacoes   *string                `json:"observacoes"`
-}
-
-func (r legacyReceipt) toEN() Receipt {
-	status := toolkit.ReceiptStatus("PENDING")
-	if r.Status == "recebido" {
-		status = "RECEIVED"
-	}
-	return Receipt{
-		ID: r.ID, Amount: r.Valor, Status: status, ScheduledDate: optDate(r.DataAgendada),
-		PaidAt: optDate(r.DataPagamento), PaymentMethod: r.PaymentMethod, Notes: opt(r.Observacoes),
-	}
-}
-
 type legacySaleDetail struct {
 	legacySale
-	Itens      []legacySaleItem `json:"itens"`
-	Pagamentos []legacyReceipt  `json:"pagamentos"`
+	Itens []legacySaleItem `json:"itens"`
 }
 
+// toEN devolve a Sale com os Items; os Receipts (recebimentos) são derivados da conta a receber
+// (parcelas e quitações — AYD-007) e preenchidos por get_sale via withReceipts.
 func (d legacySaleDetail) toEN() SaleDetail {
-	out := SaleDetail{SaleSummary: d.legacySale.toEN(), Items: make([]SaleItem, 0, len(d.Itens)), Receipts: make([]Receipt, 0, len(d.Pagamentos))}
+	out := SaleDetail{SaleSummary: d.legacySale.toEN(), Items: make([]SaleItem, 0, len(d.Itens)), Receipts: []Receipt{}}
 	for _, i := range d.Itens {
 		out.Items = append(out.Items, i.toEN())
-	}
-	for _, p := range d.Pagamentos {
-		out.Receipts = append(out.Receipts, p.toEN())
 	}
 	return out
 }

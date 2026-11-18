@@ -8,7 +8,7 @@ API REST em **Go** responsável por toda a lógica de negócio, persistência de
 
 Fornecer endpoints HTTP seguros, validados e tipados para:
 - Gerenciar o ciclo completo de vendas (criação, itens, status, entrega)
-- Controlar o fluxo financeiro (recebimentos, pagamentos a fornecedores, comissões, frete)
+- Controlar o fluxo financeiro: contas a pagar/receber por credor (`/obligations`), parcelas, quitações (`/settlements`) e movimentações (`/financial-movements`) — substituem Receipts e o pagamento único da Purchase (SPEC-008)
 - Manter cadastros de clientes, produtos, fornecedores e vendedores externos
 - Expor o **Assistant connector** (RF-37): servidor MCP em `/mcp` e servidor OAuth 2.1 próprio, para o dono operar o sistema pelo Claude (AYD-006)
 - Atender as vendas: origem do item (sob encomenda × de estoque), compras consolidadas por fornecedor (`/purchases`), saldo e ajustes de estoque (`/stock`), status de entrega da venda (SPEC-002)
@@ -37,8 +37,9 @@ cmd/server/                 → bootstrap: env, allowlist, migrations (opcional)
 cmd/migrate/                → CLI de migrations: up | down N | version | force N
 internal/
   auth/                     → middleware: Firebase JWT + allowlist do dono (ALLOWED_EMAILS); CORS
-  handlers/                 → um arquivo por recurso (clientes, vendas, quotes, purchases, stock, etc.)
-  fulfillment/              → regras puras do atendimento da Sale (transições, pagamento, cancelamento — SPEC-002)
+  handlers/                 → um arquivo por recurso (clientes, vendas, quotes, purchases, stock, obligations, settlements, financial_movements etc.)
+  fulfillment/              → regras puras do atendimento da Sale (transições, cancelamento — SPEC-002)
+  obligations/              → contas, parcelas, quitações e movimentações (SPEC-008): regras puras (`rules.go`: categoria × sinal, categoria padrão, geração/validação/cobertura de parcelas, alocação) + acesso a dados transacional (`store.go`, `movements.go`, `summary.go`)
   dbmigrate/                → golang-migrate sobre as migrations embutidas
   models/                   → structs GORM de domínio e tipos compartilhados
   oauth/                    → servidor de autorização OAuth 2.1 do Assistant connector (discovery, DCR, authorize, consentimento, token, revoke, Connections, verificador — SPEC-006)
@@ -75,7 +76,7 @@ docs/ops/                   → operação: baseline de migrations, backup, nota
 - Todas as PKs são `UUID` geradas pelo PostgreSQL (`gen_random_uuid()`)
 - Todas as entidades principais têm `created_at TIMESTAMPTZ` e `deleted_at TIMESTAMPTZ` (soft delete)
 - **Nunca deletar fisicamente** registros de vendas, clientes, produtos ou pagamentos
-- Campos calculados (total_venda, lucro, a_receber, payment_status, total_cost/to_pay, balance) **nunca são persistidos** — vêm das views `vw_vendas_resumo` (inclui `receivable`, `freight_payable`), `vw_purchases_resumo` e `vw_stock_balance`
+- Campos calculados (total_venda, lucro, a_receber, payment_status, total_cost/paid/payable, balance, valor/quitado/em aberto/status das contas, cobertura das parcelas) **nunca são persistidos** — vêm das views `vw_vendas_resumo` (inclui `receivable`, `freight_payable`, `commission_payable`), `vw_purchases_resumo`, `vw_obligations`, `vw_installment_coverage`, `vw_movement_allocation` e `vw_stock_balance`. As contas são mantidas por **triggers** (`sp_sync_obligations`) a partir dos componentes (`vw_obligation_components`)
 - Valores monetários: `DECIMAL(12,2)` no banco, `float64` no Go
 
 ### Código Go
@@ -109,7 +110,7 @@ Com `MCP_ENABLED=true` e `PUBLIC_BASE_URL`/`WEB_APP_URL` ausentes ou inválidas 
 
 Testes de integração: `TEST_DATABASE_URL` (banco descartável com migrations aplicadas; os testes do conector — `oauth`, `mcp`, migração 009 — criam um banco próprio por teste e exigem permissão de `CREATE DATABASE`, senão são pulados).
 
-Catálogo do Assistant connector (`catalog_version` **1.0.0** = `CatalogVersion` em `internal/mcp/registry.go`, publicada em `serverInfo.version`; 34 ferramentas: 18 de leitura + 16 de escrita; mudança de catálogo muda a versão — AYD-006 §3.9): `internal/mcp/testdata/catalog.golden.json` é contrato — mudou ferramenta,
+Catálogo do Assistant connector (`catalog_version` **1.1.0** = `CatalogVersion` em `internal/mcp/registry.go`, publicada em `serverInfo.version`; 39 ferramentas: 20 de leitura + 19 de escrita; mudança de catálogo muda a versão — AYD-006 §3.9): `internal/mcp/testdata/catalog.golden.json` é contrato — mudou ferramenta,
 schema ou anotação? Atualize o AYD-006 no repo de contexto e regenere com
 `go test ./internal/mcp -run TestCatalogGolden -update` no mesmo PR.
 
@@ -143,6 +144,7 @@ go vet ./... && TEST_DATABASE_URL=$DATABASE_URL go test ./...
 | 8 | `docs/specs/SPEC-005-dashboard.md` | Dashboard: `GET /dashboard/kpis` (ticket médio, conversão Quote → Sale, saldos), `quotes.quick_sale`, `/relatorios/vendas` com N meses exatos e `/relatorios/produtos` com `from`/`to` e `unit` |
 | 9 | `docs/specs/SPEC-006-assistant-connector-platform.md` | Assistant connector: migração 009, OAuth 2.1, `/mcp`, pipeline/extensão e ferramentas de leitura |
 | 10 | `docs/specs/SPEC-007-assistant-connector-write-tools.md` | Assistant connector: 16 ferramentas de escrita, deduplicação de criações (120 s, `allow_duplicate`), scope `write` e catálogo completo `1.0.0` (34 ferramentas) |
+| 11 | `docs/specs/SPEC-008-obligations-and-movements.md` | Contas e movimentações (AYD-007): `fornecedores.kind`, Obligation/Installment/Settlement/Financial movement, migração 010 (substitui Receipts e `purchases.paid_*`), `/finance/summary` com cash/despesas/resultado, alertas a pagar, catálogo do connector `1.1.0` (39 ferramentas) |
 
 ## Deploy (Google Cloud Run — free tier)
 

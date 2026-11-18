@@ -108,7 +108,7 @@ var listPurchases = toolkit.Define(toolkit.Meta{
 	Description: "Lista Purchases (compras ao fornecedor) com filtros opcionais de status (OPEN aberta, " +
 		"ORDERED pedida, RECEIVED recebida), pagamento ao fornecedor (PENDING ou PAID), tipo " +
 		"(MADE_TO_ORDER sob encomenda ou STOCK_REPLENISHMENT reposição de estoque), fornecedor e " +
-		"período de criação. Traz custo total, valor a pagar (to_pay) e datas, sem as linhas (use " +
+		"período de criação. Traz custo total, pago, valor a pagar (to_pay) e datas, sem as linhas (use " +
 		"get_purchase). Ordem: mais recente primeiro. Não cria nem altera compras.",
 	ReadOnly: true, Idempotent: true,
 }, func(ctx context.Context, gw toolkit.Gateway, in ListPurchasesIn) (toolkit.PageOut[PurchaseSummary], error) {
@@ -121,7 +121,7 @@ var listPurchases = toolkit.Define(toolkit.Meta{
 	setIf(q, "supplier_id", string(in.SupplierID))
 	setIf(q, "from", string(in.From))
 	setIf(q, "to", string(in.To))
-	rows, err := get[[]PurchaseSummary](ctx, gw, "/purchases", q)
+	rows, err := get[[]restPurchaseSummary](ctx, gw, "/purchases", q)
 	if err != nil {
 		return toolkit.PageOut[PurchaseSummary]{}, err
 	}
@@ -130,15 +130,10 @@ var listPurchases = toolkit.Define(toolkit.Meta{
 		if len(in.Status) > 1 && !slices.Contains(in.Status, r.Status) {
 			continue
 		}
-		all = append(all, r.normalized())
+		all = append(all, r.toEN())
 	}
 	return toolkit.Paginate(all, in.Page), nil
 })
-
-func (p PurchaseSummary) normalized() PurchaseSummary {
-	p.Notes = opt(p.Notes)
-	return p
-}
 
 // --- get_purchase ---
 
@@ -169,7 +164,7 @@ var getPurchase = toolkit.Define(toolkit.Meta{
 
 // toEN traduz o PurchaseDetail do REST (sale_items com campos PT) para o contrato EN (§4.2/§5).
 func (r restPurchaseDetail) toEN() PurchaseDetail {
-	p := PurchaseDetail{PurchaseSummary: r.PurchaseSummary.normalized(), SaleItems: make([]PurchaseSaleItem, 0, len(r.SaleItems)), Items: r.Items}
+	p := PurchaseDetail{PurchaseSummary: r.restPurchaseSummary.toEN(), SaleItems: make([]PurchaseSaleItem, 0, len(r.SaleItems)), Items: r.Items}
 	for _, i := range r.SaleItems {
 		p.SaleItems = append(p.SaleItems, PurchaseSaleItem{
 			ID: i.ID, SaleID: i.SaleID, CustomerName: i.CustomerName, ProductID: i.ProdutoID,
@@ -293,7 +288,7 @@ var setPurchaseStatus = toolkit.Define(toolkit.Meta{
 		"RECEIVED (recebida). Use quando o pedido for feito ao Supplier (fornecedor) ou a mercadoria chegar; " +
 		"as datas de pedido e recebimento são gravadas. Compra de reposição recebida gera entrada no estoque. " +
 		"Pré-requisito: purchase_id de list_purchases. As transições seguem as regras da API. Não registra o " +
-		"pagamento ao fornecedor (use record_supplier_payment).",
+		"pagamento ao fornecedor (use settle_obligations).",
 	Idempotent: true,
 }, func(ctx context.Context, gw toolkit.Gateway, in SetPurchaseStatusIn) (SetPurchaseStatusOut, error) {
 	r, err := send[struct {
@@ -308,55 +303,80 @@ var setPurchaseStatus = toolkit.Define(toolkit.Meta{
 	return SetPurchaseStatusOut{PurchaseID: r.ID, Status: r.Status, OrderedAt: optDate(r.OrderedAt), ReceivedAt: optDate(r.ReceivedAt), Warnings: noWarnings()}, nil
 })
 
-// --- record_supplier_payment (W · I) ---
+// --- record_supplier_payment (W · I) — DESCONTINUADA (AYD-007): quita a conta do Supplier ---
 
 type RecordSupplierPaymentIn struct {
 	PurchaseID UUID           `json:"purchase_id" jsonschema:"id da compra (obtenha com list_purchases)"`
-	PaidAmount *toolkit.Money `json:"paid_amount,omitempty" jsonschema:"valor pago em BRL (padrão: custo total da compra)"`
+	PaidAmount *toolkit.Money `json:"paid_amount,omitempty" jsonschema:"valor pago em BRL (padrão: o que falta pagar da compra ao fornecedor)"`
 	PaidAt     Date           `json:"paid_at,omitempty" jsonschema:"data do pagamento (padrão: hoje em São Paulo)"`
 }
 
 type RecordSupplierPaymentOut struct {
-	PurchaseID    UUID     `json:"purchase_id"`
-	PaymentStatus string   `json:"payment_status"`
-	PaidAmount    float64  `json:"paid_amount"`
-	PaidAt        Date     `json:"paid_at"`
-	ToPay         float64  `json:"to_pay"`
-	Warnings      []string `json:"warnings"`
+	PurchaseID    UUID                          `json:"purchase_id"`
+	PaymentStatus toolkit.SupplierPaymentStatus `json:"payment_status"`
+	PaidAmount    float64                       `json:"paid_amount"`
+	PaidAt        Date                          `json:"paid_at"`
+	ToPay         float64                       `json:"to_pay"`
+	Warnings      []string                      `json:"warnings"`
 }
 
 var recordSupplierPayment = toolkit.Define(toolkit.Meta{
 	Name:  "record_supplier_payment",
 	Title: "Registrar pagamento ao fornecedor",
-	Description: "Registra o Supplier payment (pagamento ao fornecedor) de uma Purchase (compra): um acerto " +
-		"consolidado por compra, marcado como PAID (pago), com valor (padrão: custo total) e data (padrão: " +
-		"hoje). Use quando o dono pagar o fornecedor. Pré-requisito: purchase_id de list_purchases. Devolve o " +
-		"que ainda resta a pagar (to_pay). O frete não entra na compra. Não desfaz pagamento: isso só no app " +
-		"web.",
+	Description: "[DESCONTINUADA — use settle_obligations / set_installments] Paga o Supplier (fornecedor) de uma " +
+		"Purchase (compra): quita a conta da compra com o valor informado (padrão: o que falta pagar) e a data " +
+		"(padrão: hoje). Continua funcionando, traduzida para a quitação da conta (Settlement); será removida " +
+		"na 2.0.0. Pré-requisito: purchase_id de list_purchases. Devolve o pago e o que ainda resta (to_pay); " +
+		"pagar menos que o devido deixa a compra PENDING. Não desfaz pagamento: isso só no app web.",
 	Idempotent: true,
 }, func(ctx context.Context, gw toolkit.Gateway, in RecordSupplierPaymentIn) (RecordSupplierPaymentOut, error) {
-	body := map[string]any{"payment_status": "PAID", "paid_at": optStr(string(in.PaidAt))}
+	var amount *float64
 	if in.PaidAmount != nil {
 		if err := checkMoney("paid_amount", float64(*in.PaidAmount)); err != nil {
 			return RecordSupplierPaymentOut{}, err
 		}
-		body["paid_amount"] = float64(*in.PaidAmount)
+		v := float64(*in.PaidAmount)
+		amount = &v
 	}
-	r, err := send[struct {
-		ID         UUID     `json:"id"`
-		PaidAmount *float64 `json:"paid_amount"`
-		PaidAt     *Date    `json:"paid_at"`
-		ToPay      float64  `json:"to_pay"`
-	}](ctx, gw, "PATCH", "/purchases/"+pathID(string(in.PurchaseID))+"/payment", body)
+	pur, err := get[restPurchaseSummary](ctx, gw, "/purchases/"+pathID(string(in.PurchaseID)), nil)
 	if err != nil {
 		return RecordSupplierPaymentOut{}, err
 	}
-	out := RecordSupplierPaymentOut{PurchaseID: r.ID, PaymentStatus: "PAID", ToPay: r.ToPay, Warnings: noWarnings()}
-	if r.PaidAmount != nil {
-		out.PaidAmount = *r.PaidAmount
+	accounts, err := get[ObligationList](ctx, gw, "/obligations", url.Values{
+		"origin_type": {"PURCHASE"}, "origin_id": {string(in.PurchaseID)}, "direction": {"PAYABLE"}, "limit": {"200"}})
+	if err != nil {
+		return RecordSupplierPaymentOut{}, err
 	}
-	if r.PaidAt != nil {
-		out.PaidAt = *r.PaidAt
+	// A conta do Supplier da compra; sem ela, a primeira com saldo.
+	var acc *ObligationSummary
+	for i, o := range accounts.Items {
+		if o.Counterparty != nil && o.Counterparty.ID == pur.SupplierID {
+			acc = &accounts.Items[i]
+		}
 	}
-	return out, nil
-}, toolkit.OutConst("payment_status", "PAID"))
+	for i, o := range accounts.Items {
+		if acc == nil && o.Open > 0 {
+			acc = &accounts.Items[i]
+		}
+	}
+	if acc == nil {
+		return RecordSupplierPaymentOut{}, invalid("a compra não tem valor a pagar")
+	}
+	paidAt := string(in.PaidAt)
+	if paidAt == "" {
+		paidAt = todaySP()
+	}
+	body := map[string]any{"movement": map[string]any{"occurred_on": paidAt}}
+	if amount != nil {
+		body["amount"] = *amount
+	}
+	if _, err := send[settleResult](ctx, gw, "POST", "/obligations/"+pathID(string(acc.ID))+"/settle", body); err != nil {
+		return RecordSupplierPaymentOut{}, err
+	}
+	after, err := get[restPurchaseSummary](ctx, gw, "/purchases/"+pathID(string(in.PurchaseID)), nil)
+	if err != nil {
+		return RecordSupplierPaymentOut{}, afterWrite(err)
+	}
+	return RecordSupplierPaymentOut{PurchaseID: in.PurchaseID, PaymentStatus: after.PaymentStatus, PaidAmount: after.Paid,
+		PaidAt: Date(paidAt), ToPay: after.Payable, Warnings: noWarnings()}, nil
+})

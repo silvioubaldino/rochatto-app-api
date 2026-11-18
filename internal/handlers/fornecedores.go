@@ -5,9 +5,11 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/silvioubaldino/sales-backend/internal/models"
+	"github.com/silvioubaldino/sales-backend/internal/obligations"
 	"gorm.io/gorm"
 )
 
@@ -32,11 +34,33 @@ type fornecedorRequest struct {
 	Telefone    *string `json:"telefone"`
 	Cidade      *string `json:"cidade"`
 	Observacoes *string `json:"observacoes"`
+	Kind        *string `json:"kind"` // AYD-007: STONE (padrão) | TRANSPORT | LABOR | TAX_AUTHORITY | OTHER
+}
+
+// resolveKind valida o tipo do fornecedor/prestador; sem valor, devolve fallback.
+func resolveKind(w http.ResponseWriter, kind *string, fallback string) (string, bool) {
+	if kind == nil || strings.TrimSpace(*kind) == "" {
+		return fallback, true
+	}
+	k := strings.TrimSpace(*kind)
+	if !obligations.SupplierKinds[k] {
+		models.WriteError(w, http.StatusBadRequest, "kind inválido (STONE | TRANSPORT | LABOR | TAX_AUTHORITY | OTHER)")
+		return "", false
+	}
+	return k, true
 }
 
 func (h *FornecedoresHandler) list(w http.ResponseWriter, r *http.Request) {
 	var fornecedores []models.Fornecedor
-	if err := h.db.WithContext(r.Context()).Order("nome asc").Find(&fornecedores).Error; err != nil {
+	query := h.db.WithContext(r.Context())
+	if v := r.URL.Query().Get("kind"); v != "" {
+		if !obligations.SupplierKinds[v] {
+			models.WriteError(w, http.StatusBadRequest, "kind inválido (STONE | TRANSPORT | LABOR | TAX_AUTHORITY | OTHER)")
+			return
+		}
+		query = query.Where("kind = ?", v)
+	}
+	if err := query.Order("nome asc").Find(&fornecedores).Error; err != nil {
 		log.Printf("ERROR ListFornecedores: %v", err)
 		models.WriteError(w, http.StatusInternalServerError, "erro interno")
 		return
@@ -80,11 +104,16 @@ func (h *FornecedoresHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	kind, ok := resolveKind(w, req.Kind, "STONE")
+	if !ok {
+		return
+	}
 	f := models.Fornecedor{
 		Nome:        nome,
 		Telefone:    req.Telefone,
 		Cidade:      req.Cidade,
 		Observacoes: req.Observacoes,
+		Kind:        kind,
 	}
 
 	if err := h.db.WithContext(r.Context()).Create(&f).Error; err != nil {
@@ -125,6 +154,11 @@ func (h *FornecedoresHandler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	kind, ok := resolveKind(w, req.Kind, f.Kind) // sem kind no PUT, mantém o atual
+	if !ok {
+		return
+	}
+	f.Kind = kind
 	f.Nome = nome
 	f.Telefone = req.Telefone
 	f.Cidade = req.Cidade

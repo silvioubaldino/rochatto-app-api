@@ -1,5 +1,5 @@
 {
-  "catalog_version": "1.0.0",
+  "catalog_version": "1.1.0",
   "tools": [
     {
       "name": "search_products",
@@ -102,7 +102,7 @@
     {
       "name": "search_suppliers",
       "title": "Buscar fornecedores",
-      "description": "Busca Suppliers (fornecedores) por trecho do nome, sem diferenciar acentos nem maiúsculas. Use para obter o supplier_id ao criar uma Purchase (compra) ou filtrar compras e itens a comprar por fornecedor; se houver mais de um candidato, pergunte ao dono. Lista paginada, ordenada por nome. Não cria nem altera fornecedores.",
+      "description": "Busca Suppliers (fornecedores e prestadores: pedra, transporte, mão de obra, imposto) por trecho do nome, sem diferenciar acentos nem maiúsculas, com filtro opcional de tipo (kind). Use para obter o supplier_id ao criar uma Purchase (compra), filtrar compras e itens a comprar ou achar o credor de uma conta; se houver mais de um candidato, pergunte ao dono. Lista paginada, ordenada por nome. Não cria nem altera fornecedores.",
       "scope": "read",
       "annotations": {
         "readOnlyHint": true,
@@ -116,6 +116,17 @@
           "query": {
             "type": "string",
             "description": "trecho do nome do fornecedor (sem diferenciar acentos nem maiúsculas)"
+          },
+          "kind": {
+            "type": "string",
+            "description": "tipo: STONE (pedra), TRANSPORT (transporte), LABOR (mão de obra), TAX_AUTHORITY (imposto/órgão) ou OTHER",
+            "enum": [
+              "STONE",
+              "TRANSPORT",
+              "LABOR",
+              "TAX_AUTHORITY",
+              "OTHER"
+            ]
           },
           "limit": {
             "type": "integer",
@@ -146,6 +157,16 @@
                 "name": {
                   "type": "string"
                 },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "STONE",
+                    "TRANSPORT",
+                    "LABOR",
+                    "TAX_AUTHORITY",
+                    "OTHER"
+                  ]
+                },
                 "phone": {
                   "type": "string"
                 },
@@ -158,7 +179,8 @@
               },
               "required": [
                 "id",
-                "name"
+                "name",
+                "kind"
               ],
               "additionalProperties": false
             }
@@ -2069,7 +2091,7 @@
     {
       "name": "get_sale",
       "title": "Ver venda",
-      "description": "Mostra uma Sale (venda) completa: cliente, status de entrega e de pagamento, totais, frete, comissão, os itens (produto, origem MADE_TO_ORDER sob encomenda ou FROM_STOCK de estoque, fornecedor, compra) e os Receipts (recebimentos) com forma de pagamento. Use para conferir uma venda antes de lançar recebimento ou ajuste. Pré-requisito: obtenha o sale_id com list_sales. Não altera dados.",
+      "description": "Mostra uma Sale (venda) completa: cliente, status de entrega e de pagamento, totais, frete, comissão, os itens (produto, origem MADE_TO_ORDER sob encomenda ou FROM_STOCK de estoque, fornecedor, compra) e os recebimentos (receipts: quitações RECEIVED e parcelas PENDING da conta a receber, com forma de pagamento). Use para conferir uma venda antes de lançar recebimento ou ajuste. Pré-requisito: obtenha o sale_id com list_sales. Não altera dados.",
       "scope": "read",
       "annotations": {
         "readOnlyHint": true,
@@ -2317,7 +2339,7 @@
     {
       "name": "update_sale",
       "title": "Ajustar venda",
-      "description": "Ajusta campos de uma Sale (venda): prazo de entrega, valor do frete (Freight) e quanto dele foi pago, valor da comissão (Commission) e se foi paga, observações. Só os campos enviados mudam; os demais permanecem. Use para lançar o frete ou marcar a comissão paga. Pré-requisito: sale_id de list_sales; envie ao menos um campo. null limpa o prazo ou as observações. Não muda status de entrega, itens nem recebimentos.",
+      "description": "Ajusta campos de uma Sale (venda): prazo de entrega, valor do frete (Freight) e quanto dele foi pago, valor da comissão (Commission) e se foi paga, observações. Só os campos enviados mudam; os demais permanecem. Use para lançar o frete ou marcar a comissão paga (viram quitações das contas a pagar da venda; pagamento não é desfeito por aqui). Pré-requisito: sale_id de list_sales; envie ao menos um campo. null limpa o prazo ou as observações. Não muda status de entrega, itens nem recebimentos.",
       "scope": "write",
       "annotations": {
         "readOnlyHint": false,
@@ -2354,7 +2376,7 @@
           },
           "freight_paid": {
             "type": "number",
-            "description": "quanto do frete já foi pago, em BRL (não pode passar do valor do frete)",
+            "description": "quanto do frete já foi pago, em BRL (não pode passar do valor do frete); a diferença vira quitação da conta do frete",
             "minimum": 0
           },
           "commission_amount": {
@@ -2364,7 +2386,7 @@
           },
           "commission_paid": {
             "type": "boolean",
-            "description": "se a comissão já foi paga"
+            "description": "true quita a comissão a pagar (vira quitação da conta)"
           },
           "notes": {
             "description": "observações; null limpa",
@@ -2862,7 +2884,7 @@
     {
       "name": "list_purchases",
       "title": "Listar compras",
-      "description": "Lista Purchases (compras ao fornecedor) com filtros opcionais de status (OPEN aberta, ORDERED pedida, RECEIVED recebida), pagamento ao fornecedor (PENDING ou PAID), tipo (MADE_TO_ORDER sob encomenda ou STOCK_REPLENISHMENT reposição de estoque), fornecedor e período de criação. Traz custo total, valor a pagar (to_pay) e datas, sem as linhas (use get_purchase). Ordem: mais recente primeiro. Não cria nem altera compras.",
+      "description": "Lista Purchases (compras ao fornecedor) com filtros opcionais de status (OPEN aberta, ORDERED pedida, RECEIVED recebida), pagamento ao fornecedor (PENDING ou PAID), tipo (MADE_TO_ORDER sob encomenda ou STOCK_REPLENISHMENT reposição de estoque), fornecedor e período de criação. Traz custo total, pago, valor a pagar (to_pay) e datas, sem as linhas (use get_purchase). Ordem: mais recente primeiro. Não cria nem altera compras.",
       "scope": "read",
       "annotations": {
         "readOnlyHint": true,
@@ -3736,7 +3758,7 @@
     {
       "name": "set_purchase_status",
       "title": "Atualizar status da compra",
-      "description": "Atualiza o status de uma Purchase (compra): OPEN (aberta), ORDERED (pedida ao fornecedor) ou RECEIVED (recebida). Use quando o pedido for feito ao Supplier (fornecedor) ou a mercadoria chegar; as datas de pedido e recebimento são gravadas. Compra de reposição recebida gera entrada no estoque. Pré-requisito: purchase_id de list_purchases. As transições seguem as regras da API. Não registra o pagamento ao fornecedor (use record_supplier_payment).",
+      "description": "Atualiza o status de uma Purchase (compra): OPEN (aberta), ORDERED (pedida ao fornecedor) ou RECEIVED (recebida). Use quando o pedido for feito ao Supplier (fornecedor) ou a mercadoria chegar; as datas de pedido e recebimento são gravadas. Compra de reposição recebida gera entrada no estoque. Pré-requisito: purchase_id de list_purchases. As transições seguem as regras da API. Não registra o pagamento ao fornecedor (use settle_obligations).",
       "scope": "write",
       "annotations": {
         "readOnlyHint": false,
@@ -3812,7 +3834,7 @@
     {
       "name": "record_supplier_payment",
       "title": "Registrar pagamento ao fornecedor",
-      "description": "Registra o Supplier payment (pagamento ao fornecedor) de uma Purchase (compra): um acerto consolidado por compra, marcado como PAID (pago), com valor (padrão: custo total) e data (padrão: hoje). Use quando o dono pagar o fornecedor. Pré-requisito: purchase_id de list_purchases. Devolve o que ainda resta a pagar (to_pay). O frete não entra na compra. Não desfaz pagamento: isso só no app web.",
+      "description": "[DESCONTINUADA — use settle_obligations / set_installments] Paga o Supplier (fornecedor) de uma Purchase (compra): quita a conta da compra com o valor informado (padrão: o que falta pagar) e a data (padrão: hoje). Continua funcionando, traduzida para a quitação da conta (Settlement); será removida na 2.0.0. Pré-requisito: purchase_id de list_purchases. Devolve o pago e o que ainda resta (to_pay); pagar menos que o devido deixa a compra PENDING. Não desfaz pagamento: isso só no app web.",
       "scope": "write",
       "annotations": {
         "readOnlyHint": false,
@@ -3831,7 +3853,7 @@
           },
           "paid_amount": {
             "type": "number",
-            "description": "valor pago em BRL (padrão: custo total da compra)",
+            "description": "valor pago em BRL (padrão: o que falta pagar da compra ao fornecedor)",
             "minimum": 0
           },
           "paid_at": {
@@ -3854,7 +3876,10 @@
           },
           "payment_status": {
             "type": "string",
-            "const": "PAID"
+            "enum": [
+              "PENDING",
+              "PAID"
+            ]
           },
           "paid_amount": {
             "type": "number"
@@ -4248,7 +4273,7 @@
     {
       "name": "get_finance_summary",
       "title": "Resumo financeiro",
-      "description": "Resumo financeiro entra × sai de um período: vendas (quantidade, faturamento, custo, frete, comissão, Profit/lucro, recebido, a receber), movimento de caixa (recebido por forma de pagamento e pago a fornecedores) e saldos em aberto de hoje (a receber, a pagar a fornecedores, frete e comissão a pagar). Sem datas, usa o mês corrente até hoje (fuso de São Paulo). Use para perguntas de fluxo de caixa e saldos. Não altera dados.",
+      "description": "Resumo financeiro de um período: vendas (quantidade, faturamento, custo, frete, comissão, Profit/lucro, recebido, a receber), dinheiro executado (entradas, saídas e saldo por categoria e por forma de pagamento), despesas operacionais, resultado (lucro das vendas − despesas) e saldos em aberto de hoje (a receber, a pagar, a pagar por tipo de credor). Sem datas, usa o mês corrente até hoje (fuso de São Paulo). Use para perguntas de fluxo de caixa, resultado e saldos. Não altera dados.",
       "scope": "read",
       "annotations": {
         "readOnlyHint": true,
@@ -4338,8 +4363,47 @@
           "cash": {
             "type": "object",
             "properties": {
-              "received": {
+              "inflow": {
                 "type": "number"
+              },
+              "outflow": {
+                "type": "number"
+              },
+              "net": {
+                "type": "number"
+              },
+              "by_category": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "category": {
+                      "type": "string",
+                      "enum": [
+                        "SALE_RECEIPT",
+                        "OTHER_INCOME",
+                        "PURCHASE_PAYMENT",
+                        "FREIGHT",
+                        "LABOR",
+                        "COMMISSION",
+                        "VEHICLE",
+                        "TAXES",
+                        "FIXED_COSTS",
+                        "MARKETING",
+                        "BANK_FEES",
+                        "OTHER_EXPENSE"
+                      ]
+                    },
+                    "amount": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "category",
+                    "amount"
+                  ],
+                  "additionalProperties": false
+                }
               },
               "received_by_method": {
                 "type": "array",
@@ -4365,15 +4429,80 @@
                   ],
                   "additionalProperties": false
                 }
+              }
+            },
+            "required": [
+              "inflow",
+              "outflow",
+              "net",
+              "by_category",
+              "received_by_method"
+            ],
+            "additionalProperties": false
+          },
+          "expenses": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "number"
               },
-              "paid_to_suppliers": {
+              "by_category": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "category": {
+                      "type": "string",
+                      "enum": [
+                        "SALE_RECEIPT",
+                        "OTHER_INCOME",
+                        "PURCHASE_PAYMENT",
+                        "FREIGHT",
+                        "LABOR",
+                        "COMMISSION",
+                        "VEHICLE",
+                        "TAXES",
+                        "FIXED_COSTS",
+                        "MARKETING",
+                        "BANK_FEES",
+                        "OTHER_EXPENSE"
+                      ]
+                    },
+                    "amount": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "category",
+                    "amount"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "total",
+              "by_category"
+            ],
+            "additionalProperties": false
+          },
+          "result": {
+            "type": "object",
+            "properties": {
+              "sales_profit": {
+                "type": "number"
+              },
+              "expenses": {
+                "type": "number"
+              },
+              "net_result": {
                 "type": "number"
               }
             },
             "required": [
-              "received",
-              "received_by_method",
-              "paid_to_suppliers"
+              "sales_profit",
+              "expenses",
+              "net_result"
             ],
             "additionalProperties": false
           },
@@ -4383,21 +4512,33 @@
               "receivable": {
                 "type": "number"
               },
-              "payable_to_suppliers": {
+              "payable": {
                 "type": "number"
               },
-              "freight_payable": {
-                "type": "number"
-              },
-              "commission_payable": {
-                "type": "number"
+              "payable_by_counterparty_kind": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string"
+                    },
+                    "open": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "open"
+                  ],
+                  "additionalProperties": false
+                }
               }
             },
             "required": [
               "receivable",
-              "payable_to_suppliers",
-              "freight_payable",
-              "commission_payable"
+              "payable",
+              "payable_by_counterparty_kind"
             ],
             "additionalProperties": false
           }
@@ -4406,6 +4547,8 @@
           "period",
           "sales",
           "cash",
+          "expenses",
+          "result",
           "balances"
         ],
         "additionalProperties": false
@@ -4414,7 +4557,7 @@
     {
       "name": "list_payment_alerts",
       "title": "Alertas de pagamento",
-      "description": "Lista os alertas de recebimento do Customer (cliente): OVERDUE (vencido) e DUE_SOON (vencendo), com cliente, valor, data de vencimento e dias restantes. Por padrão só os não lidos; passe only_unread false para incluir os já lidos. Use para cobranças e para ver o que vence em breve. Não marca alertas como lidos nem altera dados.",
+      "description": "Lista os alertas de contas: a receber do Customer (cliente) e a pagar a credores, OVERDUE (vencido) e DUE_SOON (vencendo em até 5 dias), por parcela não coberta ou prazo da conta, com valor, vencimento, dias restantes, direção (RECEIVABLE ou PAYABLE) e o obligation_id para abrir a conta. Por padrão só os não lidos; passe only_unread false para incluir os já lidos. Use para cobranças e para ver o que vence. Não marca alertas como lidos nem altera dados.",
       "scope": "read",
       "annotations": {
         "readOnlyHint": true,
@@ -4451,13 +4594,27 @@
                     "DUE_SOON"
                   ]
                 },
+                "direction": {
+                  "type": "string",
+                  "enum": [
+                    "PAYABLE",
+                    "RECEIVABLE"
+                  ]
+                },
                 "sale_id": {
                   "type": "string",
                   "format": "uuid"
                 },
-                "receipt_id": {
+                "obligation_id": {
                   "type": "string",
                   "format": "uuid"
+                },
+                "installment_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "counterparty_name": {
+                  "type": "string"
                 },
                 "customer_name": {
                   "type": "string"
@@ -4480,7 +4637,9 @@
               "required": [
                 "id",
                 "kind",
-                "customer_name",
+                "direction",
+                "obligation_id",
+                "counterparty_name",
                 "amount",
                 "due_date",
                 "read"
@@ -4496,9 +4655,1378 @@
       }
     },
     {
+      "name": "list_obligations",
+      "title": "Listar contas a pagar e a receber",
+      "description": "Lista Obligations (contas): o que se deve a um credor dentro de uma compra ou venda (PAYABLE, a pagar) ou o cliente deve (RECEIVABLE, a receber), com valor, quitado, em aberto, status, vencimento, se está vencida e a próxima parcela. Por padrão só as em aberto (OPEN e PARTIAL), mais próximas do vencimento primeiro. Filtros: direção, credor, origem, vencidas e vencimento. Traz totais do filtro. Use para 'o que tenho a pagar/receber'. Não altera dados.",
+      "scope": "read",
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "dedupe": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "direction": {
+            "type": "string",
+            "description": "PAYABLE (a pagar) ou RECEIVABLE (a receber)",
+            "enum": [
+              "PAYABLE",
+              "RECEIVABLE"
+            ]
+          },
+          "status": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "OPEN",
+                "PARTIAL",
+                "SETTLED"
+              ]
+            },
+            "description": "status da conta (um ou mais; padrão: OPEN e PARTIAL, as em aberto)"
+          },
+          "counterparty_type": {
+            "type": "string",
+            "description": "tipo do credor/devedor: SUPPLIER, PARTNER ou CUSTOMER",
+            "enum": [
+              "SUPPLIER",
+              "PARTNER",
+              "CUSTOMER"
+            ]
+          },
+          "counterparty_id": {
+            "type": "string",
+            "description": "id do credor/devedor (search_suppliers, search_partners, search_customers)",
+            "format": "uuid"
+          },
+          "origin_type": {
+            "type": "string",
+            "description": "origem da conta: SALE (venda) ou PURCHASE (compra)",
+            "enum": [
+              "SALE",
+              "PURCHASE"
+            ]
+          },
+          "origin_id": {
+            "type": "string",
+            "description": "id da venda ou da compra",
+            "format": "uuid"
+          },
+          "overdue": {
+            "type": "boolean",
+            "description": "true: só contas vencidas (parcela não coberta ou prazo vencido)"
+          },
+          "due_to": {
+            "type": "string",
+            "description": "só contas com vencimento até esta data (inclusive)",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "itens por página (padrão 20, máximo 100)",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "offset": {
+            "type": "integer",
+            "description": "quantos itens pular (padrão 0)",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "direction": {
+                  "type": "string",
+                  "enum": [
+                    "PAYABLE",
+                    "RECEIVABLE"
+                  ]
+                },
+                "origin": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "SALE",
+                        "PURCHASE"
+                      ]
+                    },
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "id",
+                    "label"
+                  ],
+                  "additionalProperties": false
+                },
+                "counterparty": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "SUPPLIER",
+                        "PARTNER",
+                        "CUSTOMER"
+                      ]
+                    },
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "id",
+                    "name"
+                  ],
+                  "additionalProperties": false
+                },
+                "amount": {
+                  "type": "number"
+                },
+                "settled": {
+                  "type": "number"
+                },
+                "open": {
+                  "type": "number"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "OPEN",
+                    "PARTIAL",
+                    "SETTLED"
+                  ]
+                },
+                "due_date": {
+                  "type": "string",
+                  "description": "YYYY-MM-DD",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "overdue": {
+                  "type": "boolean"
+                },
+                "next_installment": {
+                  "type": "object",
+                  "properties": {
+                    "due_date": {
+                      "type": "string",
+                      "description": "YYYY-MM-DD",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "amount_open": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "due_date",
+                    "amount_open"
+                  ],
+                  "additionalProperties": false
+                },
+                "notes": {
+                  "type": "string"
+                },
+                "warnings": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "direction",
+                "origin",
+                "amount",
+                "settled",
+                "open",
+                "status",
+                "overdue"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "totals": {
+            "type": "object",
+            "properties": {
+              "amount": {
+                "type": "number"
+              },
+              "settled": {
+                "type": "number"
+              },
+              "open": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "amount",
+              "settled",
+              "open"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "offset",
+          "has_more",
+          "totals"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_financial_movements",
+      "title": "Listar movimentações financeiras",
+      "description": "Lista as Financial movements (movimentações): dinheiro que de fato entrou (+) ou saiu (−), com data, valor, categoria, forma de pagamento, credor e as contas que quitou (settlements). Filtros: período, categoria, entrada ou saída, credor e só as sem quitação (despesas e receitas avulsas). Traz totais de entradas, saídas e saldo do filtro. Mais recentes primeiro. Use para 'o que saiu ou entrou no mês'. Não altera dados.",
+      "scope": "read",
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "dedupe": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "a partir da data do movimento (inclusive)",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "to": {
+            "type": "string",
+            "description": "até a data do movimento (inclusive)",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "category": {
+            "type": "string",
+            "description": "categoria da movimentação",
+            "enum": [
+              "SALE_RECEIPT",
+              "OTHER_INCOME",
+              "PURCHASE_PAYMENT",
+              "FREIGHT",
+              "LABOR",
+              "COMMISSION",
+              "VEHICLE",
+              "TAXES",
+              "FIXED_COSTS",
+              "MARKETING",
+              "BANK_FEES",
+              "OTHER_EXPENSE"
+            ]
+          },
+          "direction": {
+            "type": "string",
+            "description": "IN (entradas) ou OUT (saídas)",
+            "enum": [
+              "IN",
+              "OUT"
+            ]
+          },
+          "counterparty_type": {
+            "type": "string",
+            "description": "só movimentações que quitam contas deste tipo de credor",
+            "enum": [
+              "SUPPLIER",
+              "PARTNER",
+              "CUSTOMER"
+            ]
+          },
+          "counterparty_id": {
+            "type": "string",
+            "description": "só movimentações que quitam contas deste credor",
+            "format": "uuid"
+          },
+          "unallocated_only": {
+            "type": "boolean",
+            "description": "true: só movimentações sem quitação (despesas e receitas avulsas)"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "itens por página (padrão 20, máximo 100)",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "offset": {
+            "type": "integer",
+            "description": "quantos itens pular (padrão 0)",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "occurred_on": {
+                  "type": "string",
+                  "description": "YYYY-MM-DD",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "amount": {
+                  "type": "number"
+                },
+                "category": {
+                  "type": "string",
+                  "enum": [
+                    "SALE_RECEIPT",
+                    "OTHER_INCOME",
+                    "PURCHASE_PAYMENT",
+                    "FREIGHT",
+                    "LABOR",
+                    "COMMISSION",
+                    "VEHICLE",
+                    "TAXES",
+                    "FIXED_COSTS",
+                    "MARKETING",
+                    "BANK_FEES",
+                    "OTHER_EXPENSE"
+                  ]
+                },
+                "payment_method": {
+                  "type": "string",
+                  "enum": [
+                    "PIX",
+                    "CASH",
+                    "CARD",
+                    "BOLETO",
+                    "TRANSFER"
+                  ]
+                },
+                "counterparty_name": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "settlements": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "obligation_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "amount": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "obligation_id",
+                      "amount"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "unallocated": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "id",
+                "occurred_on",
+                "amount",
+                "category",
+                "settlements",
+                "unallocated"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "totals": {
+            "type": "object",
+            "properties": {
+              "inflow": {
+                "type": "number"
+              },
+              "outflow": {
+                "type": "number"
+              },
+              "net": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "inflow",
+              "outflow",
+              "net"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "offset",
+          "has_more",
+          "totals"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "settle_obligations",
+      "title": "Pagar ou receber contas",
+      "description": "Paga (contas a pagar) ou recebe (contas a receber): lança UMA Financial movement com a data e a forma de pagamento e quita N contas (Settlement), cada uma com o valor informado (padrão: o que falta). Um Pix pode quitar várias contas, mas todas na mesma direção. Use quando o dono disser que pagou um fornecedor, motorista ou comissão, ou que o cliente pagou. Pré-requisito: obligation_ids de list_obligations. Passar do devido é recusado; credores diferentes geram o aviso MIXED_COUNTERPARTIES. Não desfaz quitações: isso só no app web.",
+      "scope": "write",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "dedupe": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "allocations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "obligation_id": {
+                  "type": "string",
+                  "description": "id da conta (obtenha com list_obligations)",
+                  "format": "uuid"
+                },
+                "amount": {
+                  "type": "number",
+                  "description": "valor a quitar em BRL (padrão: o que falta na conta)",
+                  "exclusiveMinimum": 0
+                }
+              },
+              "required": [
+                "obligation_id"
+              ],
+              "additionalProperties": false
+            },
+            "description": "contas quitadas pela mesma movimentação, todas a pagar ou todas a receber (pelo menos 1)",
+            "minItems": 1
+          },
+          "occurred_on": {
+            "type": "string",
+            "description": "data em que o dinheiro saiu ou entrou (padrão: hoje em São Paulo)",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "payment_method": {
+            "type": "string",
+            "description": "forma de pagamento: PIX, CASH, CARD, BOLETO ou TRANSFER",
+            "enum": [
+              "PIX",
+              "CASH",
+              "CARD",
+              "BOLETO",
+              "TRANSFER"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "description": "observação da movimentação"
+          },
+          "allow_duplicate": {
+            "type": "boolean",
+            "description": "true força a criação mesmo que o mesmo lançamento tenha acabado de ser feito (padrão false: repetições em 120 s são ignoradas)"
+          }
+        },
+        "required": [
+          "allocations"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "movement": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "occurred_on": {
+                "type": "string",
+                "description": "YYYY-MM-DD",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "amount": {
+                "type": "number"
+              },
+              "category": {
+                "type": "string",
+                "enum": [
+                  "SALE_RECEIPT",
+                  "OTHER_INCOME",
+                  "PURCHASE_PAYMENT",
+                  "FREIGHT",
+                  "LABOR",
+                  "COMMISSION",
+                  "VEHICLE",
+                  "TAXES",
+                  "FIXED_COSTS",
+                  "MARKETING",
+                  "BANK_FEES",
+                  "OTHER_EXPENSE"
+                ]
+              },
+              "payment_method": {
+                "type": "string",
+                "enum": [
+                  "PIX",
+                  "CASH",
+                  "CARD",
+                  "BOLETO",
+                  "TRANSFER"
+                ]
+              },
+              "counterparty_name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "settlements": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "obligation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "amount": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "obligation_id",
+                    "amount"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "unallocated": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "occurred_on",
+              "amount",
+              "category",
+              "settlements",
+              "unallocated"
+            ],
+            "additionalProperties": false
+          },
+          "obligations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "direction": {
+                  "type": "string",
+                  "enum": [
+                    "PAYABLE",
+                    "RECEIVABLE"
+                  ]
+                },
+                "origin": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "SALE",
+                        "PURCHASE"
+                      ]
+                    },
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "id",
+                    "label"
+                  ],
+                  "additionalProperties": false
+                },
+                "counterparty": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "SUPPLIER",
+                        "PARTNER",
+                        "CUSTOMER"
+                      ]
+                    },
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "id",
+                    "name"
+                  ],
+                  "additionalProperties": false
+                },
+                "amount": {
+                  "type": "number"
+                },
+                "settled": {
+                  "type": "number"
+                },
+                "open": {
+                  "type": "number"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "OPEN",
+                    "PARTIAL",
+                    "SETTLED"
+                  ]
+                },
+                "due_date": {
+                  "type": "string",
+                  "description": "YYYY-MM-DD",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "overdue": {
+                  "type": "boolean"
+                },
+                "next_installment": {
+                  "type": "object",
+                  "properties": {
+                    "due_date": {
+                      "type": "string",
+                      "description": "YYYY-MM-DD",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "amount_open": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "due_date",
+                    "amount_open"
+                  ],
+                  "additionalProperties": false
+                },
+                "notes": {
+                  "type": "string"
+                },
+                "warnings": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "direction",
+                "origin",
+                "amount",
+                "settled",
+                "open",
+                "status",
+                "overdue"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "deduplicated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "movement",
+          "obligations",
+          "warnings"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "record_expense",
+      "title": "Registrar despesa ou receita avulsa",
+      "description": "Lança uma Financial movement avulsa, sem quitar conta: despesa operacional (combustível, manutenção, impostos do mês, tarifas, marketing, mão de obra avulsa) ou receita avulsa (OTHER_INCOME). Informe o valor sempre positivo; o sinal vem da categoria. Use quando o dono contar um gasto que não é de uma compra ou venda. Para pagar uma conta de compra ou venda use settle_obligations. Retirada do sócio não é despesa e não é lançada por aqui.",
+      "scope": "write",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "dedupe": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string",
+            "description": "VEHICLE (veículo), TAXES (impostos), FIXED_COSTS (custos fixos), MARKETING, BANK_FEES (tarifas), LABOR (mão de obra avulsa), OTHER_EXPENSE (outra despesa) ou OTHER_INCOME (receita avulsa)",
+            "enum": [
+              "VEHICLE",
+              "TAXES",
+              "FIXED_COSTS",
+              "MARKETING",
+              "BANK_FEES",
+              "LABOR",
+              "OTHER_EXPENSE",
+              "OTHER_INCOME"
+            ]
+          },
+          "amount": {
+            "type": "number",
+            "description": "valor em BRL (\u003e 0); o sinal vem da categoria: OTHER_INCOME entra, as demais saem",
+            "exclusiveMinimum": 0
+          },
+          "occurred_on": {
+            "type": "string",
+            "description": "data do movimento (padrão: hoje em São Paulo)",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "payment_method": {
+            "type": "string",
+            "description": "forma de pagamento: PIX, CASH, CARD, BOLETO ou TRANSFER",
+            "enum": [
+              "PIX",
+              "CASH",
+              "CARD",
+              "BOLETO",
+              "TRANSFER"
+            ]
+          },
+          "counterparty_name": {
+            "type": "string",
+            "description": "quem recebeu ou pagou (texto livre, ex.: Posto Shell)"
+          },
+          "description": {
+            "type": "string",
+            "description": "observação"
+          },
+          "allow_duplicate": {
+            "type": "boolean",
+            "description": "true força a criação mesmo que o mesmo lançamento tenha acabado de ser feito (padrão false: repetições em 120 s são ignoradas)"
+          }
+        },
+        "required": [
+          "category",
+          "amount"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "movement": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "occurred_on": {
+                "type": "string",
+                "description": "YYYY-MM-DD",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "amount": {
+                "type": "number"
+              },
+              "category": {
+                "type": "string",
+                "enum": [
+                  "SALE_RECEIPT",
+                  "OTHER_INCOME",
+                  "PURCHASE_PAYMENT",
+                  "FREIGHT",
+                  "LABOR",
+                  "COMMISSION",
+                  "VEHICLE",
+                  "TAXES",
+                  "FIXED_COSTS",
+                  "MARKETING",
+                  "BANK_FEES",
+                  "OTHER_EXPENSE"
+                ]
+              },
+              "payment_method": {
+                "type": "string",
+                "enum": [
+                  "PIX",
+                  "CASH",
+                  "CARD",
+                  "BOLETO",
+                  "TRANSFER"
+                ]
+              },
+              "counterparty_name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "settlements": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "obligation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "amount": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "obligation_id",
+                    "amount"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "unallocated": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "occurred_on",
+              "amount",
+              "category",
+              "settlements",
+              "unallocated"
+            ],
+            "additionalProperties": false
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "deduplicated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "movement",
+          "warnings"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "set_installments",
+      "title": "Definir parcelas e prazo da conta",
+      "description": "Define o plano de Installments (parcelas) e/ou o prazo final de uma Obligation (conta). Envie installments (lista completa, substitui as atuais) OU count + first_due_date (gera parcelas iguais; centavos na última), e/ou due_date (null limpa o prazo). Parcela é plano, não dinheiro: o que for pago cobre as mais antigas primeiro. Use para 'parcelar em 5 vezes' ou 'prazo até 09/04'. Pré-requisito: obligation_id de list_obligations. Não registra pagamentos (use settle_obligations).",
+      "scope": "write",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "dedupe": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "obligation_id": {
+            "type": "string",
+            "description": "id da conta (obtenha com list_obligations)",
+            "format": "uuid"
+          },
+          "installments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "due_date": {
+                  "type": "string",
+                  "description": "vencimento da parcela",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "amount": {
+                  "type": "number",
+                  "description": "valor da parcela em BRL",
+                  "exclusiveMinimum": 0
+                },
+                "payment_method": {
+                  "type": "string",
+                  "description": "forma de pagamento combinada",
+                  "enum": [
+                    "PIX",
+                    "CASH",
+                    "CARD",
+                    "BOLETO",
+                    "TRANSFER"
+                  ]
+                },
+                "notes": {
+                  "type": "string",
+                  "description": "observações"
+                }
+              },
+              "required": [
+                "due_date",
+                "amount"
+              ],
+              "additionalProperties": false
+            },
+            "description": "plano completo: substitui as parcelas atuais (a soma não pode passar do valor da conta)"
+          },
+          "count": {
+            "type": "integer",
+            "description": "em vez de installments: gera count parcelas iguais (2 a 24); exige first_due_date; os centavos sobram na última"
+          },
+          "first_due_date": {
+            "type": "string",
+            "description": "vencimento da 1ª parcela (com count)",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "interval_months": {
+            "type": "integer",
+            "description": "meses entre as parcelas (com count; padrão 1)"
+          },
+          "amount": {
+            "type": "number",
+            "description": "valor total a parcelar em BRL (com count; padrão: o que falta na conta)",
+            "exclusiveMinimum": 0
+          },
+          "due_date": {
+            "description": "prazo final combinado da conta YYYY-MM-DD; null limpa",
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "YYYY-MM-DD; null limpa",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "obligation_id"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "obligation": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "direction": {
+                "type": "string",
+                "enum": [
+                  "PAYABLE",
+                  "RECEIVABLE"
+                ]
+              },
+              "origin": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "SALE",
+                      "PURCHASE"
+                    ]
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "id",
+                  "label"
+                ],
+                "additionalProperties": false
+              },
+              "counterparty": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "SUPPLIER",
+                      "PARTNER",
+                      "CUSTOMER"
+                    ]
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "id",
+                  "name"
+                ],
+                "additionalProperties": false
+              },
+              "amount": {
+                "type": "number"
+              },
+              "settled": {
+                "type": "number"
+              },
+              "open": {
+                "type": "number"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "OPEN",
+                  "PARTIAL",
+                  "SETTLED"
+                ]
+              },
+              "due_date": {
+                "type": "string",
+                "description": "YYYY-MM-DD",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "overdue": {
+                "type": "boolean"
+              },
+              "next_installment": {
+                "type": "object",
+                "properties": {
+                  "due_date": {
+                    "type": "string",
+                    "description": "YYYY-MM-DD",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  },
+                  "amount_open": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "due_date",
+                  "amount_open"
+                ],
+                "additionalProperties": false
+              },
+              "notes": {
+                "type": "string"
+              },
+              "warnings": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "components": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "amount": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "id",
+                    "label",
+                    "amount"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "installments": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "due_date": {
+                      "type": "string",
+                      "description": "YYYY-MM-DD",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "amount": {
+                      "type": "number"
+                    },
+                    "payment_method": {
+                      "type": "string",
+                      "enum": [
+                        "PIX",
+                        "CASH",
+                        "CARD",
+                        "BOLETO",
+                        "TRANSFER"
+                      ]
+                    },
+                    "notes": {
+                      "type": "string"
+                    },
+                    "covered": {
+                      "type": "number"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "OPEN",
+                        "PARTIAL",
+                        "COVERED"
+                      ]
+                    },
+                    "overdue": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "due_date",
+                    "amount",
+                    "covered",
+                    "status",
+                    "overdue"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "settlements": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "amount": {
+                      "type": "number"
+                    },
+                    "movement": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "occurred_on": {
+                          "type": "string",
+                          "description": "YYYY-MM-DD",
+                          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                        },
+                        "amount": {
+                          "type": "number"
+                        },
+                        "category": {
+                          "type": "string",
+                          "enum": [
+                            "SALE_RECEIPT",
+                            "OTHER_INCOME",
+                            "PURCHASE_PAYMENT",
+                            "FREIGHT",
+                            "LABOR",
+                            "COMMISSION",
+                            "VEHICLE",
+                            "TAXES",
+                            "FIXED_COSTS",
+                            "MARKETING",
+                            "BANK_FEES",
+                            "OTHER_EXPENSE"
+                          ]
+                        },
+                        "payment_method": {
+                          "type": "string",
+                          "enum": [
+                            "PIX",
+                            "CASH",
+                            "CARD",
+                            "BOLETO",
+                            "TRANSFER"
+                          ]
+                        },
+                        "counterparty_name": {
+                          "type": "string"
+                        },
+                        "description": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "occurred_on",
+                        "amount",
+                        "category"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "amount",
+                    "movement"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "id",
+              "direction",
+              "origin",
+              "amount",
+              "settled",
+              "open",
+              "status",
+              "overdue",
+              "components",
+              "installments",
+              "settlements"
+            ],
+            "additionalProperties": false
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "obligation",
+          "warnings"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "record_receipt",
       "title": "Registrar recebimento",
-      "description": "Registra um Receipt (recebimento) de uma Sale (venda): com paid_at já foi pago (RECEIVED) e exige payment_method; sem paid_at é uma parcela agendada (PENDING), opcionalmente com scheduled_date. Use quando o dono disser que o cliente pagou ou combinou uma parcela. Pré-requisito: sale_id de list_sales. Devolve o recebimento e a venda com o novo a receber (receivable). Venda cancelada não aceita recebimentos. Não edita nem exclui recebimentos.",
+      "description": "[DESCONTINUADA — use settle_obligations / set_installments] Registra um recebimento de uma Sale (venda): com paid_at é uma quitação da conta a receber (RECEIVED; exige payment_method); sem paid_at é uma parcela agendada (PENDING; scheduled_date, padrão hoje) no plano da conta. Continua funcionando, traduzida para parcela/quitação; será removida na 2.0.0. Pré-requisito: sale_id de list_sales. Devolve o recebimento e a venda com o novo a receber. Venda cancelada não aceita recebimentos.",
       "scope": "write",
       "annotations": {
         "readOnlyHint": false,
@@ -4733,7 +6261,7 @@
     {
       "name": "confirm_receipt",
       "title": "Confirmar recebimento",
-      "description": "Confirma um Receipt (recebimento) PENDING (agendado) de uma Sale (venda) como RECEIVED (recebido), com a data do pagamento (padrão: hoje) e a forma de pagamento, que é obrigatória se o recebimento ainda não tiver uma. Use quando uma parcela agendada for paga. Pré-requisitos: sale_id e receipt_id (get_sale). Devolve o recebimento e a venda com o novo a receber (receivable). Não cria recebimentos novos (use record_receipt) nem desfaz confirmações.",
+      "description": "[DESCONTINUADA — use settle_obligations / set_installments] Confirma o recebimento PENDING (parcela agendada) de uma Sale (venda): quita o que falta da parcela, com a data do pagamento (padrão: hoje) e a forma de pagamento, obrigatória se a parcela ainda não tiver uma. Continua funcionando, traduzida para a quitação da conta; será removida na 2.0.0. Pré-requisitos: sale_id e receipt_id (get_sale). Devolve o recebimento e a venda com o novo a receber. Não desfaz confirmações.",
       "scope": "write",
       "annotations": {
         "readOnlyHint": false,

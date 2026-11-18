@@ -51,33 +51,94 @@ func TestLegacyAdapters(t *testing.T) {
 	if c.Name != "João" || c.Phone != nil || c.Notes == nil || *c.Notes != "Ana" {
 		t.Errorf("customer = %+v (string vazia vira ausente)", c)
 	}
-	r := legacyReceipt{ID: "r", Valor: 10, Status: "recebido"}.toEN()
-	p := legacyReceipt{ID: "p", Valor: 10, Status: "pendente"}.toEN()
-	if r.Status != "RECEIVED" || p.Status != "PENDING" {
-		t.Errorf("status do Receipt: %v %v", r.Status, p.Status)
-	}
-	s := legacySale{FreteValor: 300, FretePago: 100, TotalVenda: 1000, Receivable: 400, Lucro: 250}.toEN()
-	if s.FreightAmount != 300 || s.FreightPaid != 100 || s.Total != 1000 || s.Receivable != 400 || s.Profit != 250 {
+	// Frete e comissão pagos são derivados do que ainda está a pagar nas contas (AYD-007).
+	s := legacySale{FreteValor: 300, FreightPayable: 200, ComissaoValor: 50, CommissionPayable: 0, TotalVenda: 1000, Receivable: 400, Lucro: 250}.toEN()
+	if s.FreightAmount != 300 || s.FreightPaid != 100 || s.FreightPayable != 200 || !s.CommissionPaid || s.Total != 1000 || s.Receivable != 400 || s.Profit != 250 {
 		t.Errorf("sale = %+v (calculados vêm da API, sem recálculo)", s)
+	}
+	if s2 := (legacySale{ComissaoValor: 50, CommissionPayable: 50}).toEN(); s2.CommissionPaid {
+		t.Errorf("comissão a pagar não é paga: %+v", s2)
+	}
+	if s3 := (legacySale{ComissaoValor: 0}).toEN(); s3.CommissionPaid || s3.FreightPaid != 0 {
+		t.Errorf("sem comissão/frete nada é pago: %+v", s3)
+	}
+	if sup := (legacySupplier{ID: "s", Nome: "Z"}).toEN(); sup.Kind != "STONE" {
+		t.Errorf("fornecedor sem kind = %+v, quero STONE", sup)
+	}
+}
+
+func TestReceiptsOfTranslatesInstallmentsAndSettlements(t *testing.T) {
+	pm := toolkit.PaymentMethod("PIX")
+	d := &ObligationDetail{
+		ObligationSummary: ObligationSummary{Open: 400},
+		Installments: []Installment{
+			{ID: "i1", DueDate: "2026-12-01", Amount: 300, Covered: 300, Status: "COVERED"},
+			{ID: "i2", DueDate: "2026-12-15", Amount: 300, Covered: 200, Status: "PARTIAL", PaymentMethod: &pm},
+		},
+		Settlements: []ObligationSettlement{{ID: "s1", Amount: 500, Movement: MovementSummary{ID: "m1", OccurredOn: "2026-11-01", PaymentMethod: &pm}}},
+	}
+	got := receiptsOf(d)
+	if len(got) != 2 {
+		t.Fatalf("receipts = %+v", got)
+	}
+	if p := got[0]; p.ID != "i2" || p.Status != "PENDING" || p.Amount != 100 || p.ScheduledDate == nil || *p.ScheduledDate != "2026-12-15" {
+		t.Errorf("pendente = %+v (parcela parcial: pelo que falta)", p)
+	}
+	if r := got[1]; r.ID != "s1" || r.Status != "RECEIVED" || r.Amount != 500 || r.PaidAt == nil || *r.PaidAt != "2026-11-01" || r.PaymentMethod == nil {
+		t.Errorf("recebido = %+v", r)
+	}
+	// Conta sem nada em aberto (quitada ou venda cancelada): parcelas não viram PENDING.
+	d.Open = 0
+	if got = receiptsOf(d); len(got) != 1 || got[0].Status != "RECEIVED" {
+		t.Errorf("sem aberto = %+v", got)
+	}
+	if got = receiptsOf(nil); got == nil || len(got) != 0 {
+		t.Errorf("venda sem conta = %+v, quero []", got)
+	}
+}
+
+func TestRound2(t *testing.T) {
+	for in, want := range map[float64]float64{100: 100, 33.335: 33.34, 0.1 + 0.2: 0.3, -5.555: -5.56} {
+		if got := round2(in); got != want && (got-want > 0.0001 || want-got > 0.0001) {
+			t.Errorf("round2(%v) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+func TestRestPurchaseSummaryMapsPaidAndPayable(t *testing.T) {
+	p := restPurchaseSummary{ID: "p", TotalCost: 200, Paid: 150, Payable: 50, PaymentStatus: "PENDING"}.toEN()
+	if p.ToPay != 50 || p.PaidAmount == nil || *p.PaidAmount != 150 || p.PaidAt != nil {
+		t.Errorf("purchase = %+v", p)
+	}
+	if q := (restPurchaseSummary{TotalCost: 200, Payable: 200}).toEN(); q.PaidAmount != nil || q.ToPay != 200 {
+		t.Errorf("sem pagamento = %+v (paid_amount omitido)", q)
 	}
 }
 
 func TestToLegacySalePutAppliesOnlySentFields(t *testing.T) {
 	note, date := "x", Date("2026-12-20")
-	cur := legacySale{FreteValor: 300, FretePago: 0, ComissaoValor: 40, ComissaoPaga: true, Observacoes: &note, DataEntregaPrevista: &date}
-	paid := toolkit.Money(300)
-	body := toLegacySalePut(cur, UpdateSaleIn{FreightPaid: &paid})
-	if body["frete_pago"] != 300.0 || body["frete_valor"] != 300.0 || body["comissao_valor"] != 40.0 || body["comissao_paga"] != true ||
+	cur := legacySale{FreteValor: 300, ComissaoValor: 40, Observacoes: &note, DataEntregaPrevista: &date}
+	freight := toolkit.Money(350)
+	body := toLegacySalePut(cur, UpdateSaleIn{FreightAmount: &freight})
+	if body["frete_valor"] != 350.0 || body["comissao_valor"] != 40.0 ||
 		*(body["observacoes"].(*string)) != "x" || *(body["data_entrega_prevista"].(*Date)) != "2026-12-20" {
 		t.Errorf("PUT = %v", body)
 	}
-	// null explícito limpa; false explícito é diferente de omitido.
-	no := false
+	// Frete e comissão pagos viraram quitações: não vão mais no PUT (AYD-007).
+	paid, no := toolkit.Money(100), false
+	body = toLegacySalePut(cur, UpdateSaleIn{FreightPaid: &paid, CommissionPaid: &no})
+	if _, has := body["frete_pago"]; has {
+		t.Errorf("frete_pago não existe mais no PUT: %v", body)
+	}
+	if _, has := body["comissao_paga"]; has {
+		t.Errorf("comissao_paga não existe mais no PUT: %v", body)
+	}
+	// null explícito limpa.
 	body = toLegacySalePut(cur, UpdateSaleIn{
 		ExpectedDeliveryDate: toolkit.Nullable[Date]{Present: true, Null: true},
-		Notes:                toolkit.Nullable[string]{Present: true, Null: true}, CommissionPaid: &no,
+		Notes:                toolkit.Nullable[string]{Present: true, Null: true},
 	})
-	if body["data_entrega_prevista"] != nil || body["observacoes"] != nil || body["comissao_paga"] != false || body["frete_valor"] != 300.0 {
+	if body["data_entrega_prevista"] != nil || body["observacoes"] != nil || body["frete_valor"] != 300.0 {
 		t.Errorf("PUT com null = %v", body)
 	}
 }

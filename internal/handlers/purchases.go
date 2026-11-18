@@ -1,9 +1,9 @@
 package handlers
 
 // Purchase (AYD-002@context): compra consolidada por Supplier — Items de Sale made-to-order
-// (kind MADE_TO_ORDER) ou linhas de reposição de Stock (kind STOCK_REPLENISHMENT). Custo e
-// um único pagamento ao Supplier por Purchase (RN-06 / PDR-001). Totais vêm de
-// vw_purchases_resumo (nunca persistidos).
+// (kind MADE_TO_ORDER) ou linhas de reposição de Stock (kind STOCK_REPLENISHMENT). Custo, pago e
+// a pagar vêm das contas da compra (AYD-007; o PATCH .../payment foi removido — pagar é quitar a
+// conta: POST /settlements). Totais vêm de vw_purchases_resumo (nunca persistidos).
 
 import (
 	"context"
@@ -45,7 +45,6 @@ func (h *PurchasesHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /purchases/{id}/items/{itemId}", h.deleteLine)
 
 	mux.HandleFunc("PATCH /purchases/{id}/status", h.updateStatus)
-	mux.HandleFunc("PATCH /purchases/{id}/payment", h.updatePayment)
 }
 
 // --- Request types ---
@@ -78,12 +77,6 @@ type purchaseStatusRequest struct {
 	Status string `json:"status"`
 }
 
-type purchasePaymentRequest struct {
-	PaymentStatus string   `json:"payment_status"`
-	PaidAmount    *float64 `json:"paid_amount"`
-	PaidAt        *string  `json:"paid_at"`
-}
-
 // --- Response types ---
 
 type purchaseSummaryResponse struct {
@@ -96,11 +89,10 @@ type purchaseSummaryResponse struct {
 	Notes         *string   `json:"notes"`
 	OrderedAt     *string   `json:"ordered_at"`
 	ReceivedAt    *string   `json:"received_at"`
-	PaymentStatus string    `json:"payment_status"`
-	PaidAmount    *float64  `json:"paid_amount"`
-	PaidAt        *string   `json:"paid_at"`
+	PaymentStatus string    `json:"payment_status"` // derivado das contas: PENDING | PAID (AYD-007)
 	TotalCost     float64   `json:"total_cost"`
-	ToPay         float64   `json:"to_pay"`
+	Paid          float64   `json:"paid"`    // Σ quitado das contas da compra
+	Payable       float64   `json:"payable"` // Σ em aberto das contas da compra
 	LineCount     int64     `json:"line_count"`
 	CreatedAt     time.Time `json:"created_at"`
 }
@@ -136,14 +128,6 @@ type purchaseStatusResponse struct {
 	ReceivedAt *string   `json:"received_at"`
 }
 
-type purchasePaymentResponse struct {
-	ID            uuid.UUID `json:"id"`
-	PaymentStatus string    `json:"payment_status"`
-	PaidAmount    *float64  `json:"paid_amount"`
-	PaidAt        *string   `json:"paid_at"`
-	ToPay         float64   `json:"to_pay"`
-}
-
 type pendingSaleItemResponse struct {
 	ID           uuid.UUID  `json:"id"`
 	SaleID       uuid.UUID  `json:"sale_id"`
@@ -174,10 +158,9 @@ type purchaseResumoRow struct {
 	OrderedAt     *time.Time `gorm:"column:ordered_at"`
 	ReceivedAt    *time.Time `gorm:"column:received_at"`
 	PaymentStatus string     `gorm:"column:payment_status"`
-	PaidAmount    *float64   `gorm:"column:paid_amount"`
-	PaidAt        *time.Time `gorm:"column:paid_at"`
 	TotalCost     float64    `gorm:"column:total_cost"`
-	ToPay         float64    `gorm:"column:to_pay"`
+	Paid          float64    `gorm:"column:paid"`
+	Payable       float64    `gorm:"column:payable"`
 	LineCount     int64      `gorm:"column:line_count"`
 	CreatedAt     time.Time  `gorm:"column:created_at"`
 }
@@ -194,10 +177,9 @@ func (row purchaseResumoRow) toSummary() purchaseSummaryResponse {
 		OrderedAt:     formatDate(row.OrderedAt),
 		ReceivedAt:    formatDate(row.ReceivedAt),
 		PaymentStatus: row.PaymentStatus,
-		PaidAmount:    row.PaidAmount,
-		PaidAt:        formatDate(row.PaidAt),
 		TotalCost:     row.TotalCost,
-		ToPay:         row.ToPay,
+		Paid:          row.Paid,
+		Payable:       row.Payable,
 		LineCount:     row.LineCount,
 		CreatedAt:     row.CreatedAt,
 	}
@@ -455,12 +437,11 @@ func (h *PurchasesHandler) create(w http.ResponseWriter, r *http.Request) {
 			return errStatus(http.StatusBadRequest, "fornecedor não encontrado")
 		}
 		p := models.Purchase{
-			Kind:          req.Kind,
-			SupplierID:    *req.SupplierID,
-			Status:        fulfillment.PurchaseOpen,
-			PaymentStatus: fulfillment.PaymentPending,
-			ExpectedDate:  expected,
-			Notes:         nullIfBlank(req.Notes),
+			Kind:         req.Kind,
+			SupplierID:   *req.SupplierID,
+			Status:       fulfillment.PurchaseOpen,
+			ExpectedDate: expected,
+			Notes:        nullIfBlank(req.Notes),
 		}
 		if err := tx.Create(&p).Error; err != nil {
 			return err
@@ -873,61 +854,6 @@ func (h *PurchasesHandler) updateStatus(w http.ResponseWriter, r *http.Request) 
 	})
 	if err != nil {
 		writeTxError(w, "UpdatePurchaseStatus", err)
-		return
-	}
-	writeJSON(w, http.StatusOK, resp)
-}
-
-// updatePayment: um pagamento por Purchase (PDR-001). Independe do status da Purchase.
-func (h *PurchasesHandler) updatePayment(w http.ResponseWriter, r *http.Request) {
-	ids, ok := parsePathIDs(w, r, "id")
-	if !ok {
-		return
-	}
-	var req purchasePaymentRequest
-	if !decodeJSON(w, r, &req) {
-		return
-	}
-	if !fulfillment.SupplierPaymentStatus[req.PaymentStatus] {
-		models.WriteError(w, http.StatusBadRequest, "payment_status inválido (PENDING | PAID)")
-		return
-	}
-	paidAt, err := parseOptionalDate("paid_at", req.PaidAt)
-	if err != nil {
-		writeTxError(w, "UpdatePurchasePayment", err)
-		return
-	}
-	var resp purchasePaymentResponse
-	err = h.db.WithContext(r.Context()).Transaction(func(tx *gorm.DB) error {
-		p, err := lockPurchase(tx, ids[0])
-		if err != nil {
-			return err
-		}
-		var totalCost float64
-		if err := tx.Raw(`SELECT total_cost FROM vw_purchases_resumo WHERE id = ?`, p.ID).Scan(&totalCost).Error; err != nil {
-			return err
-		}
-		amount, at, err := fulfillment.ResolvePayment(req.PaymentStatus, req.PaidAmount, paidAt, totalCost, todayDate())
-		if errors.Is(err, fulfillment.ErrNegativePaidAmount) {
-			return errStatus(http.StatusBadRequest, err.Error())
-		}
-		if err != nil {
-			return err
-		}
-		if err := tx.Model(p).Updates(map[string]any{
-			"payment_status": req.PaymentStatus, "paid_amount": amount, "paid_at": at,
-		}).Error; err != nil {
-			return err
-		}
-		var toPay float64
-		if err := tx.Raw(`SELECT to_pay FROM vw_purchases_resumo WHERE id = ?`, p.ID).Scan(&toPay).Error; err != nil {
-			return err
-		}
-		resp = purchasePaymentResponse{ID: p.ID, PaymentStatus: req.PaymentStatus, PaidAmount: amount, PaidAt: formatDate(at), ToPay: toPay}
-		return nil
-	})
-	if err != nil {
-		writeTxError(w, "UpdatePurchasePayment", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)

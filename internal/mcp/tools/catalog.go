@@ -43,20 +43,24 @@ var searchProducts = toolkit.Define(toolkit.Meta{
 })
 
 type SearchSuppliersIn struct {
-	Query string `json:"query,omitempty" jsonschema:"trecho do nome do fornecedor (sem diferenciar acentos nem maiúsculas)"`
+	Query string               `json:"query,omitempty" jsonschema:"trecho do nome do fornecedor (sem diferenciar acentos nem maiúsculas)"`
+	Kind  toolkit.SupplierKind `json:"kind,omitempty" jsonschema:"tipo: STONE (pedra), TRANSPORT (transporte), LABOR (mão de obra), TAX_AUTHORITY (imposto/órgão) ou OTHER"`
 	toolkit.Page
 }
 
 var searchSuppliers = toolkit.Define(toolkit.Meta{
 	Name:  "search_suppliers",
 	Title: "Buscar fornecedores",
-	Description: "Busca Suppliers (fornecedores) por trecho do nome, sem diferenciar acentos nem maiúsculas. " +
-		"Use para obter o supplier_id ao criar uma Purchase (compra) ou filtrar compras e itens a " +
-		"comprar por fornecedor; se houver mais de um candidato, pergunte ao dono. Lista paginada, " +
-		"ordenada por nome. Não cria nem altera fornecedores.",
+	Description: "Busca Suppliers (fornecedores e prestadores: pedra, transporte, mão de obra, imposto) por trecho " +
+		"do nome, sem diferenciar acentos nem maiúsculas, com filtro opcional de tipo (kind). Use para obter " +
+		"o supplier_id ao criar uma Purchase (compra), filtrar compras e itens a comprar ou achar o credor " +
+		"de uma conta; se houver mais de um candidato, pergunte ao dono. Lista paginada, ordenada por nome. " +
+		"Não cria nem altera fornecedores.",
 	ReadOnly: true, Idempotent: true,
 }, func(ctx context.Context, gw toolkit.Gateway, in SearchSuppliersIn) (toolkit.PageOut[SupplierSummary], error) {
-	rows, err := get[[]legacySupplier](ctx, gw, "/fornecedores", nil)
+	q := url.Values{}
+	setIf(q, "kind", string(in.Kind))
+	rows, err := get[[]legacySupplier](ctx, gw, "/fornecedores", q)
 	if err != nil {
 		return toolkit.PageOut[SupplierSummary]{}, err
 	}

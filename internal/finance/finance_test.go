@@ -30,24 +30,6 @@ func TestNormalizeMethod(t *testing.T) {
 	}
 }
 
-func TestCheckMethodForStatus(t *testing.T) {
-	cases := []struct {
-		status string
-		method *string
-		want   error
-	}{
-		{ReceiptReceived, nil, ErrMethodRequired},
-		{ReceiptReceived, sp("PIX"), nil},
-		{ReceiptPending, nil, nil},
-		{ReceiptPending, sp("BOLETO"), nil},
-	}
-	for _, c := range cases {
-		if got := CheckMethodForStatus(c.status, c.method); got != c.want {
-			t.Errorf("%s/%v = %v, want %v", c.status, c.method, got, c.want)
-		}
-	}
-}
-
 func TestResolvePeriod(t *testing.T) {
 	now := time.Date(2026, 11, 18, 22, 30, 0, 0, time.UTC)
 

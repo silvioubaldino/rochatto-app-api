@@ -35,6 +35,27 @@ func mustExec(t *testing.T, db *gorm.DB, sql string, args ...any) {
 	}
 }
 
+// insertReceived registra um recebimento direto no banco (AYD-007): movimentação SALE_RECEIPT +
+// quitação da conta a receber da Sale (a conta nasce dos Items pelo trigger de sincronização).
+func insertReceived(t *testing.T, db *gorm.DB, saleID string, amount float64) {
+	t.Helper()
+	var movement string
+	if err := db.Raw(`INSERT INTO financial_movements (occurred_on, amount, category) VALUES (CURRENT_DATE, ?, 'SALE_RECEIPT') RETURNING id::text`, amount).Scan(&movement).Error; err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db, `INSERT INTO settlements (obligation_id, movement_id, amount)
+		SELECT o.id, ?, ? FROM obligations o WHERE o.sale_id = ? AND o.direction = 'RECEIVABLE' AND o.deleted_at IS NULL`,
+		movement, amount, saleID)
+}
+
+// insertPlanned registra uma parcela planejada (plano, não dinheiro) na conta a receber da Sale.
+func insertPlanned(t *testing.T, db *gorm.DB, saleID string, amount float64) {
+	t.Helper()
+	mustExec(t, db, `INSERT INTO installments (obligation_id, due_date, amount)
+		SELECT o.id, CURRENT_DATE + 30, ? FROM obligations o WHERE o.sale_id = ? AND o.direction = 'RECEIVABLE' AND o.deleted_at IS NULL`,
+		amount, saleID)
+}
+
 func insertSale(t *testing.T, db *gorm.DB, customerID string, freight, commission float64) string {
 	t.Helper()
 	var id string
@@ -81,8 +102,9 @@ func TestIntegration_SaleSummaryNoFanOut(t *testing.T) {
 	saleID := insertSale(t, db, cid, 400, 100)
 	mustExec(t, db, `INSERT INTO itens_venda (venda_id, produto_nome, quantidade, preco_venda_unit, custo_unit)
 		VALUES (?, 'Granito', 2, 1000, 600), (?, 'Mármore', 1.5, 2000, 1200)`, saleID, saleID)
-	mustExec(t, db, `INSERT INTO pagamentos_cliente (venda_id, valor, status)
-		VALUES (?, 1000, 'recebido'), (?, 1500, 'recebido'), (?, 800, 'pendente')`, saleID, saleID, saleID)
+	insertReceived(t, db, saleID, 1000)
+	insertReceived(t, db, saleID, 1500)
+	insertPlanned(t, db, saleID, 800)
 
 	code, sale := api.do("GET", "/vendas/"+saleID, nil)
 	if code != 200 {
@@ -147,8 +169,9 @@ func TestIntegration_DashboardNumbers(t *testing.T) {
 		VALUES (?, ?, 'Quartzito nome antigo', 2, 1000, 600)`, s1, productID)
 	mustExec(t, db, `INSERT INTO itens_venda (venda_id, produto_nome, quantidade, preco_venda_unit, custo_unit)
 		VALUES (?, ?, 1.5, 2000, 1200)`, s1, legacyName)
-	mustExec(t, db, `INSERT INTO pagamentos_cliente (venda_id, valor, status)
-		VALUES (?, 1000, 'recebido'), (?, 1500, 'recebido'), (?, 800, 'pendente')`, s1, s1, s1)
+	insertReceived(t, db, s1, 1000)
+	insertReceived(t, db, s1, 1500)
+	insertPlanned(t, db, s1, 800)
 	// Sale 2: mesmo Product, outra quantidade/preço, sem Receipts.
 	s2 := insertSale(t, db, cid, 0, 0)
 	mustExec(t, db, `INSERT INTO itens_venda (venda_id, produto_id, produto_nome, quantidade, preco_venda_unit, custo_unit)
@@ -228,12 +251,12 @@ func TestIntegration_DashboardAReceberIncludesDelivered(t *testing.T) {
 	mustExec(t, db, `UPDATE vendas SET delivery_status = 'DELIVERED' WHERE id = ?`, delivered)
 	mustExec(t, db, `INSERT INTO itens_venda (venda_id, produto_nome, quantidade, preco_venda_unit, custo_unit)
 		VALUES (?, 'Granito', 1, 1000, 500)`, delivered)
-	mustExec(t, db, `INSERT INTO pagamentos_cliente (venda_id, valor, status) VALUES (?, 400, 'recebido')`, delivered)
+	insertReceived(t, db, delivered, 400)
 
 	overpaid := insertSale(t, db, cid, 0, 0)
 	mustExec(t, db, `INSERT INTO itens_venda (venda_id, produto_nome, quantidade, preco_venda_unit, custo_unit)
 		VALUES (?, 'Mármore', 1, 300, 100)`, overpaid)
-	mustExec(t, db, `INSERT INTO pagamentos_cliente (venda_id, valor, status) VALUES (?, 500, 'recebido')`, overpaid)
+	insertReceived(t, db, overpaid, 500)
 
 	after := takeSnapshot(t, api, day, month)
 	if got := after.aReceber - before.aReceber; !approx(got, 600) {

@@ -52,45 +52,6 @@ func TestStampTransition(t *testing.T) {
 	}
 }
 
-func TestResolvePayment(t *testing.T) {
-	today := time.Date(2026, 11, 18, 10, 0, 0, 0, time.UTC)
-	f := func(v float64) *float64 { return &v }
-	paidAt := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
-
-	// PAID sem valor/data → total_cost e hoje.
-	a, d, err := ResolvePayment(PaymentPaid, nil, nil, 300, today)
-	if err != nil || *a != 300 || d.Format("2006-01-02") != "2026-11-18" {
-		t.Errorf("PAID defaults = %v %v %v", a, d, err)
-	}
-	// PAID com valor/data explícitos são mantidos (inclusive 0).
-	a, d, err = ResolvePayment(PaymentPaid, f(0), &paidAt, 300, today)
-	if err != nil || *a != 0 || !d.Equal(paidAt) {
-		t.Errorf("PAID explícito = %v %v %v", a, d, err)
-	}
-	// PAID com valor negativo → erro.
-	if _, _, err := ResolvePayment(PaymentPaid, f(-1), nil, 300, today); !errors.Is(err, ErrNegativePaidAmount) {
-		t.Errorf("PAID negativo err = %v", err)
-	}
-	// PENDING zera valor e data, mesmo se vierem.
-	a, d, err = ResolvePayment(PaymentPending, f(100), &paidAt, 300, today)
-	if err != nil || a != nil || d != nil {
-		t.Errorf("PENDING = %v %v %v, want nil nil nil", a, d, err)
-	}
-}
-
-func TestToPay(t *testing.T) {
-	f := func(v float64) *float64 { return &v }
-	if got := ToPay(PaymentPaid, 300, f(100)); got != 0 {
-		t.Errorf("PAID to_pay = %v, want 0", got)
-	}
-	if got := ToPay(PaymentPending, 300, nil); got != 300 {
-		t.Errorf("PENDING sem pago = %v, want 300", got)
-	}
-	if got := ToPay(PaymentPending, 300, f(50)); got != 250 {
-		t.Errorf("PENDING legado parcial = %v, want 250", got)
-	}
-}
-
 func TestCheckDeliveryChange(t *testing.T) {
 	cases := []struct {
 		current, next string

@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: Rochatto App API
   description: |
-    API de gestão de vendas, clientes, produtos, compras, estoque, pagamentos e dashboard.
+    API de gestão de vendas, clientes, produtos, compras, estoque, contas e movimentações financeiras e dashboard.
 
     **Autenticação**: Todos os endpoints em `/api/v1/` exigem um token Firebase Bearer válido.
     O endpoint `GET /health` é público.
@@ -209,6 +209,8 @@ components:
         observacoes:
           type: string
           nullable: true
+        kind:
+          $ref: "#/components/schemas/SupplierKind"
         created_at:
           type: string
           format: date-time
@@ -230,6 +232,15 @@ components:
         observacoes:
           type: string
           nullable: true
+        kind:
+          allOf:
+            - $ref: "#/components/schemas/SupplierKind"
+          description: "AYD-007. Padrão STONE no POST; sem kind no PUT mantém o atual. Valor fora do enum → 400."
+
+    SupplierKind:
+      type: string
+      enum: [STONE, TRANSPORT, LABOR, TAX_AUTHORITY, OTHER]
+      description: "Fornecedor ou prestador (AYD-007)"
 
     # --- Partner (AYD-003) ---
     PartnerType:
@@ -306,12 +317,12 @@ components:
     PaymentMethod:
       type: string
       enum: [PIX, CASH, CARD, BOLETO, TRANSFER]
-      description: "Forma de pagamento do Receipt (AYD-004): Pix, Dinheiro, Cartão, Boleto, Transferência"
+      description: "Forma de pagamento da movimentação/parcela (AYD-004, AYD-007): Pix, Dinheiro, Cartão, Boleto, Transferência"
       description: Status de entrega da Sale (manual). CANCELED é terminal.
     SalePaymentStatus:
       type: string
       enum: [PENDING, PARTIAL, PAID]
-      description: "Calculado dos Receipts (view): PENDING se recebido = 0; PARTIAL se 0 < recebido < total; PAID se recebido ≥ total"
+      description: "Calculado da conta RECEIVABLE da Sale (view, AYD-007): PENDING se recebido = 0; PARTIAL se 0 < recebido < total; PAID se recebido ≥ total"
     ItemOrigin:
       type: string
       enum: [MADE_TO_ORDER, FROM_STOCK]
@@ -425,43 +436,6 @@ components:
                 enum: [INSUFFICIENT_STOCK]
               description: Sempre presente em POST/PUT (pode ser vazio)
 
-    PagamentoResponse:
-      type: object
-      properties:
-        id:
-          type: string
-          format: uuid
-        venda_id:
-          type: string
-          format: uuid
-        valor:
-          type: number
-          format: double
-        data_pagamento:
-          type: string
-          format: date
-          nullable: true
-          description: "Data em que o pagamento foi recebido (formato: YYYY-MM-DD)"
-        data_agendada:
-          type: string
-          format: date
-          nullable: true
-          description: "Data agendada para recebimento futuro (formato: YYYY-MM-DD)"
-        status:
-          type: string
-          enum: [pendente, recebido]
-        payment_method:
-          allOf:
-            - $ref: "#/components/schemas/PaymentMethod"
-          nullable: true
-          description: "null só em Receipts legados ou pendentes (AYD-004)"
-        observacoes:
-          type: string
-          nullable: true
-        created_at:
-          type: string
-          format: date-time
-
     VendaListResponse:
       type: object
       properties:
@@ -500,14 +474,9 @@ components:
         frete_valor:
           type: number
           format: double
-        frete_pago:
-          type: number
-          format: double
         comissao_valor:
           type: number
           format: double
-        comissao_paga:
-          type: boolean
         observacoes:
           type: string
           nullable: true
@@ -527,11 +496,15 @@ components:
         receivable:
           type: number
           format: double
-          description: "RN-05 (AYD-004): GREATEST(total_venda − total_recebido, 0)"
+          description: "RN-05: em aberto da conta a receber da Sale (0 em Sale CANCELED) — AYD-007"
         freight_payable:
           type: number
           format: double
-          description: "RF-10 (AYD-004): GREATEST(frete_valor − frete_pago, 0)"
+          description: "RF-10: frete ainda a pagar (conta a pagar sem credor, abatida pelas quitações — AYD-007)"
+        commission_payable:
+          type: number
+          format: double
+          description: "Comissão ainda a pagar (conta do Partner; sem Partner, a conta sem credor — AYD-007)"
         lucro:
           type: number
           format: double
@@ -551,14 +524,16 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/ItemVendaResponse"
-            pagamentos:
+            warnings:
               type: array
               items:
-                $ref: "#/components/schemas/PagamentoResponse"
+                type: string
+                enum: [OVERSETTLED]
+              description: "OVERSETTLED: alguma conta da Sale ficou com quitado > valor (ex.: troca de Partner depois de pagar a comissão) — AYD-007 §2"
 
     VendaUpdateRequest:
       type: object
-      description: "Não aceita `status`/`delivery_status` (400) — use PATCH /vendas/{id}/delivery-status"
+      description: "Não aceita `status`/`delivery_status` (400) — use PATCH /vendas/{id}/delivery-status. `frete_pago` e `comissao_paga` foram removidos (400): pague frete e comissão quitando a conta (POST /settlements) — AYD-007."
       properties:
         vendedor_externo_id:
           type: string
@@ -573,19 +548,11 @@ components:
           format: double
           minimum: 0
           default: 0
-        frete_pago:
-          type: number
-          format: double
-          minimum: 0
-          default: 0
         comissao_valor:
           type: number
           format: double
           minimum: 0
           default: 0
-        comissao_paga:
-          type: boolean
-          default: false
         observacoes:
           type: string
           nullable: true
@@ -608,6 +575,7 @@ components:
 
     FinanceSummaryResponse:
       type: object
+      description: "AYD-007 §6"
       properties:
         period:
           type: object
@@ -624,18 +592,26 @@ components:
             freight: { type: number, format: double }
             commission: { type: number, format: double }
             profit: { type: number, format: double, description: "revenue − cost − freight − commission (RN-04)" }
-            received: { type: number, format: double, description: "Σ total_recebido dessas Sales (Receipts de qualquer data)" }
+            received: { type: number, format: double, description: "Σ quitações das contas RECEIVABLE dessas Sales (de qualquer data)" }
             receivable: { type: number, format: double }
         cash:
           type: object
+          description: "Movimentações do período (dinheiro executado). `outflow` é positivo; `by_category` traz o valor com sinal."
           properties:
-            received:
-              type: number
-              format: double
-              description: "Σ Receipts recebidos com data_pagamento no período (Receipt e Sale não excluídos; Sale não CANCELED)"
+            inflow: { type: number, format: double }
+            outflow: { type: number, format: double }
+            net: { type: number, format: double }
+            by_category:
+              type: array
+              items:
+                type: object
+                properties:
+                  category:
+                    $ref: "#/components/schemas/MovementCategory"
+                  amount: { type: number, format: double }
             received_by_method:
               type: array
-              description: "Mesma base; ordenado por amount desc; payment_method null = legado ('Não informado')"
+              description: "Entradas SALE_RECEIPT do período por forma de pagamento; ordenado por amount desc; null = 'Não informado'"
               items:
                 type: object
                 properties:
@@ -644,18 +620,259 @@ components:
                       - $ref: "#/components/schemas/PaymentMethod"
                     nullable: true
                   amount: { type: number, format: double }
-            paid_to_suppliers:
-              type: number
-              format: double
-              description: "Σ paid_amount das Purchases não excluídas com paid_at no período"
+        expenses:
+          type: object
+          description: "Movimentações SEM quitação de categoria de despesa (VEHICLE, TAXES, FIXED_COSTS, MARKETING, BANK_FEES, OTHER_EXPENSE e LABOR avulso); valores positivos"
+          properties:
+            total: { type: number, format: double }
+            by_category:
+              type: array
+              items:
+                type: object
+                properties:
+                  category:
+                    $ref: "#/components/schemas/MovementCategory"
+                  amount: { type: number, format: double }
+        result:
+          type: object
+          description: "RN-17: resultado do período = Profit das Sales do período − despesas"
+          properties:
+            sales_profit: { type: number, format: double }
+            expenses: { type: number, format: double }
+            net_result: { type: number, format: double }
         balances:
           type: object
-          description: "Saldos em aberto hoje (ignoram o período); Sales CANCELED excluídas"
+          description: "Σ open das contas hoje (ignoram o período); Sales CANCELED já têm conta com amount 0"
           properties:
             receivable: { type: number, format: double }
-            payable_to_suppliers: { type: number, format: double }
-            freight_payable: { type: number, format: double }
-            commission_payable: { type: number, format: double }
+            payable: { type: number, format: double }
+            payable_by_counterparty_kind:
+              type: array
+              description: "kind do Supplier (STONE, TRANSPORT, LABOR, TAX_AUTHORITY, OTHER), PARTNER (comissões) ou UNASSIGNED (conta sem credor)"
+              items:
+                type: object
+                properties:
+                  kind: { type: string }
+                  open: { type: number, format: double }
+
+    # --- Contas e movimentações (AYD-007 / SPEC-008) ---
+    ObligationDirection:
+      type: string
+      enum: [PAYABLE, RECEIVABLE]
+
+    ObligationStatus:
+      type: string
+      enum: [OPEN, PARTIAL, SETTLED]
+      description: "Calculado: quitado = 0 → OPEN; < valor → PARTIAL; ≥ valor → SETTLED"
+
+    InstallmentStatus:
+      type: string
+      enum: [OPEN, PARTIAL, COVERED]
+
+    MovementCategory:
+      type: string
+      enum: [SALE_RECEIPT, OTHER_INCOME, PURCHASE_PAYMENT, FREIGHT, LABOR, COMMISSION, VEHICLE, TAXES, FIXED_COSTS, MARKETING, BANK_FEES, OTHER_EXPENSE]
+      description: "Entradas (valor > 0): SALE_RECEIPT, OTHER_INCOME. Demais: saídas (valor < 0)."
+
+    Obligation:
+      type: object
+      description: "Conta a pagar/receber de UMA compra ou venda, por credor. Valor, quitado, em aberto e status são calculados."
+      properties:
+        id: { type: string, format: uuid }
+        direction: { $ref: "#/components/schemas/ObligationDirection" }
+        origin:
+          type: object
+          properties:
+            type: { type: string, enum: [SALE, PURCHASE] }
+            id: { type: string, format: uuid }
+            label: { type: string, example: "Compra 09/11 · Matheus RJ" }
+        counterparty:
+          type: object
+          nullable: true
+          description: "Credor (ou o Customer, no a receber); null = a definir"
+          properties:
+            type: { type: string, enum: [SUPPLIER, PARTNER, CUSTOMER] }
+            id: { type: string, format: uuid }
+            name: { type: string }
+        amount: { type: number, format: double, description: "Σ componentes do credor na origem (0 em Sale CANCELED)" }
+        settled: { type: number, format: double, description: "Σ quitações" }
+        open: { type: number, format: double, description: "GREATEST(amount − settled, 0)" }
+        status: { $ref: "#/components/schemas/ObligationStatus" }
+        due_date: { type: string, format: date, nullable: true, description: "Prazo final combinado (editável)" }
+        overdue:
+          type: boolean
+          description: "open > 0 e (parcela não coberta vencida ou due_date < hoje em America/Sao_Paulo)"
+        next_installment:
+          type: object
+          nullable: true
+          properties:
+            due_date: { type: string, format: date }
+            amount_open: { type: number, format: double }
+        warnings:
+          type: array
+          items: { type: string, enum: [OVERSETTLED] }
+        notes: { type: string, nullable: true }
+
+    ObligationDetail:
+      allOf:
+        - $ref: "#/components/schemas/Obligation"
+        - type: object
+          properties:
+            components:
+              type: array
+              description: "Transição (§7a): SALE_ITEMS, LEGACY_FREIGHT, LEGACY_COMMISSION, PURCHASE_ITEMS"
+              items:
+                type: object
+                properties:
+                  type: { type: string }
+                  id: { type: string, format: uuid }
+                  label: { type: string }
+                  amount: { type: number, format: double }
+            installments:
+              type: array
+              items:
+                $ref: "#/components/schemas/Installment"
+            settlements:
+              type: array
+              items:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  amount: { type: number, format: double }
+                  movement:
+                    $ref: "#/components/schemas/FinancialMovementSummary"
+
+    Installment:
+      type: object
+      description: "Plano (data + valor), não dinheiro. O quitado da conta cobre as parcelas em ordem de vencimento."
+      properties:
+        id: { type: string, format: uuid }
+        due_date: { type: string, format: date }
+        amount: { type: number, format: double }
+        payment_method:
+          allOf:
+            - $ref: "#/components/schemas/PaymentMethod"
+          nullable: true
+        notes: { type: string, nullable: true }
+        covered: { type: number, format: double }
+        status: { $ref: "#/components/schemas/InstallmentStatus" }
+        overdue: { type: boolean }
+
+    InstallmentsRequest:
+      type: object
+      required: [installments]
+      properties:
+        installments:
+          type: array
+          description: "Substitui o plano inteiro; Σ amount ≤ valor da conta (senão 400). Lista vazia limpa o plano."
+          items:
+            type: object
+            required: [due_date, amount]
+            properties:
+              due_date: { type: string, format: date }
+              amount: { type: number, format: double, exclusiveMinimum: true, minimum: 0 }
+              payment_method:
+                $ref: "#/components/schemas/PaymentMethod"
+              notes: { type: string, nullable: true }
+
+    InstallmentsGenerateRequest:
+      type: object
+      required: [count, first_due_date]
+      properties:
+        count: { type: integer, minimum: 2, maximum: 24 }
+        first_due_date: { type: string, format: date }
+        interval_months: { type: integer, default: 1, description: "Meses entre as parcelas; fim de mês limitado ao último dia" }
+        amount:
+          type: number
+          format: double
+          description: "Valor a parcelar (padrão: o aberto da conta; não pode passar do valor da conta). Parcelas iguais; centavos na ÚLTIMA."
+
+    FinancialMovementSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        occurred_on: { type: string, format: date }
+        amount: { type: number, format: double, description: "> 0 entrada, < 0 saída, ≠ 0" }
+        category: { $ref: "#/components/schemas/MovementCategory" }
+        payment_method:
+          allOf:
+            - $ref: "#/components/schemas/PaymentMethod"
+          nullable: true
+        counterparty_name: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+
+    FinancialMovement:
+      allOf:
+        - $ref: "#/components/schemas/FinancialMovementSummary"
+        - type: object
+          properties:
+            settlements:
+              type: array
+              items:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  obligation_id: { type: string, format: uuid }
+                  amount: { type: number, format: double }
+            unallocated: { type: number, format: double, description: "|amount| − Σ settlements (≥ 0)" }
+            created_at: { type: string, format: date-time }
+            corrected_at: { type: string, format: date-time, nullable: true }
+
+    FinancialMovementRequest:
+      type: object
+      required: [occurred_on, amount, category]
+      description: "Corpo do POST e do PUT (correção)"
+      properties:
+        occurred_on: { type: string, format: date }
+        amount: { type: number, format: double }
+        category: { $ref: "#/components/schemas/MovementCategory" }
+        payment_method:
+          allOf:
+            - $ref: "#/components/schemas/PaymentMethod"
+          nullable: true
+        counterparty_name: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+
+    SettleRequest:
+      type: object
+      properties:
+        movement_id:
+          type: string
+          format: uuid
+          description: "Usa uma movimentação já lançada (sinal/direção compatíveis e saldo livre suficiente). Exclusivo com `movement`."
+        movement:
+          type: object
+          description: "Cria a movimentação: amount = ±Σ allocations; category padrão: RECEIVABLE → SALE_RECEIPT; conta de compra → PURCHASE_PAYMENT; custo da venda → FREIGHT/COMMISSION/LABOR (misto → OTHER_EXPENSE)"
+          required: [occurred_on]
+          properties:
+            occurred_on: { type: string, format: date }
+            payment_method:
+              allOf:
+                - $ref: "#/components/schemas/PaymentMethod"
+              nullable: true
+            category: { $ref: "#/components/schemas/MovementCategory" }
+            description: { type: string, nullable: true }
+        allocations:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [obligation_id]
+            properties:
+              obligation_id: { type: string, format: uuid }
+              amount: { type: number, format: double, description: "Padrão: o aberto da conta" }
+
+    SettleResponse:
+      type: object
+      properties:
+        movement: { $ref: "#/components/schemas/FinancialMovement" }
+        obligations:
+          type: array
+          items: { $ref: "#/components/schemas/Obligation" }
+        warnings:
+          type: array
+          items: { type: string, enum: [MIXED_COUNTERPARTIES, OVERSETTLED] }
+
 
     Quote:
       type: object
@@ -720,87 +937,6 @@ components:
         open_deliveries:
           type: integer
           description: "Sales não excluídas com delivery_status = TO_DELIVER (hoje)"
-
-    # --- Pagamentos ---
-    PagamentoCreateRequest:
-      type: object
-      required:
-        - valor
-      properties:
-        valor:
-          type: number
-          format: double
-          minimum: 0.01
-          example: 150.00
-        data_pagamento:
-          type: string
-          format: date
-          nullable: true
-          description: |
-            Data em que o pagamento foi recebido.
-            Mutuamente exclusivo com `data_agendada`.
-            Com `data_pagamento` o Receipt nasce `recebido` e `payment_method` é obrigatório.
-            Sem nenhuma das duas datas nasce `pendente`.
-        data_agendada:
-          type: string
-          format: date
-          nullable: true
-          description: |
-            Data agendada para recebimento futuro.
-            Mutuamente exclusivo com `data_pagamento`.
-            Define status como `pendente`.
-        payment_method:
-          allOf:
-            - $ref: "#/components/schemas/PaymentMethod"
-          nullable: true
-          description: "Obrigatório quando o Receipt nasce `recebido` (400); opcional em `pendente` (forma combinada)"
-        observacoes:
-          type: string
-          nullable: true
-
-    PagamentoUpdateRequest:
-      type: object
-      required:
-        - valor
-        - status
-      properties:
-        valor:
-          type: number
-          format: double
-          minimum: 0.01
-        data_pagamento:
-          type: string
-          format: date
-          nullable: true
-        data_agendada:
-          type: string
-          format: date
-          nullable: true
-        status:
-          type: string
-          enum: [pendente, recebido]
-        payment_method:
-          allOf:
-            - $ref: "#/components/schemas/PaymentMethod"
-          nullable: true
-          description: "Obrigatório quando `status` = recebido (400)"
-        observacoes:
-          type: string
-          nullable: true
-
-    PagamentoConfirmarRequest:
-      type: object
-      properties:
-        data_pagamento:
-          type: string
-          format: date
-          nullable: true
-          description: "Se omitido, assume a data de hoje"
-        payment_method:
-          allOf:
-            - $ref: "#/components/schemas/PaymentMethod"
-          nullable: true
-          description: "Obrigatório, salvo se o Receipt pendente já tiver um (é mantido)"
 
     # --- Purchase (AYD-002) ---
     PurchaseKind:
@@ -942,22 +1078,19 @@ components:
           nullable: true
         payment_status:
           $ref: "#/components/schemas/SupplierPaymentStatus"
-        paid_amount:
-          type: number
-          format: double
-          nullable: true
-        paid_at:
-          type: string
-          format: date
-          nullable: true
+          description: "Derivado das contas da compra (AYD-007): PAID se não há nada em aberto"
         total_cost:
           type: number
           format: double
           description: "View: Σ quantidade × custo das linhas (Items de Sale ou linhas de reposição)"
-        to_pay:
+        paid:
           type: number
           format: double
-          description: "View: total_cost − COALESCE(paid_amount, 0) se PENDING; 0 se PAID"
+          description: "Σ quitado das contas da compra (AYD-007)"
+        payable:
+          type: number
+          format: double
+          description: "Σ em aberto das contas da compra (AYD-007)"
         line_count:
           type: integer
         created_at:
@@ -1052,43 +1185,6 @@ components:
           type: string
           format: date
           nullable: true
-
-    PurchasePaymentRequest:
-      type: object
-      required: [payment_status]
-      properties:
-        payment_status:
-          $ref: "#/components/schemas/SupplierPaymentStatus"
-        paid_amount:
-          type: number
-          format: double
-          nullable: true
-          description: "PAID: ≥ 0, default = total_cost. PENDING: ignorado (zerado)"
-        paid_at:
-          type: string
-          format: date
-          nullable: true
-          description: "PAID: default = hoje. PENDING: ignorado (zerado)"
-
-    PurchasePaymentResponse:
-      type: object
-      properties:
-        id:
-          type: string
-          format: uuid
-        payment_status:
-          $ref: "#/components/schemas/SupplierPaymentStatus"
-        paid_amount:
-          type: number
-          format: double
-          nullable: true
-        paid_at:
-          type: string
-          format: date
-          nullable: true
-        to_pay:
-          type: number
-          format: double
 
     # --- Stock (AYD-002) ---
     StockBalance:
@@ -1259,18 +1355,24 @@ components:
           format: uuid
         tipo:
           type: string
+          enum: [pagamento_vencendo, pagamento_vencido, conta_pagar_vencendo, conta_pagar_vencida]
           example: "pagamento_vencido"
         venda_id:
           type: string
           format: uuid
           nullable: true
-        pagamento_id:
+        obligation_id:
+          type: string
+          format: uuid
+          description: "Conta do alerta (AYD-007): o app abre a conta"
+        installment_id:
           type: string
           format: uuid
           nullable: true
-          description: Receipt do alerta (SPEC-006)
+          description: "Parcela, quando o alerta vem de parcela (null = prazo da conta)"
         cliente_nome:
           type: string
+          description: "Cliente (alertas a receber) ou credor / 'A definir' (alertas a pagar)"
         valor:
           type: number
           format: double
@@ -1805,8 +1907,14 @@ paths:
     get:
       tags:
         - Fornecedores
-      summary: Lista todos os fornecedores
+      summary: Lista todos os fornecedores e prestadores
       operationId: listFornecedores
+      parameters:
+        - name: kind
+          in: query
+          description: "Filtra por tipo (AYD-007)"
+          schema:
+            $ref: "#/components/schemas/SupplierKind"
       responses:
         "200":
           description: Lista de fornecedores ordenada por nome
@@ -2297,12 +2405,12 @@ paths:
           in: query
           schema:
             type: boolean
-          description: "Se `true`, só Sales com frete_valor > frete_pago, exceto CANCELED (AYD-004)"
+          description: "Se `true`, só Sales com frete ainda a pagar (`freight_payable` > 0), exceto CANCELED (AYD-004/AYD-007)"
         - name: commission_pending
           in: query
           schema:
             type: boolean
-          description: "Se `true`, só Sales com comissao_valor > 0 e comissao_paga = false, exceto CANCELED (AYD-004)"
+          description: "Se `true`, só Sales com comissão ainda a pagar (`commission_payable` > 0), exceto CANCELED (AYD-004/AYD-007)"
         - name: from
           in: query
           schema:
@@ -2352,7 +2460,7 @@ paths:
     get:
       tags:
         - Vendas
-      summary: Busca uma venda por ID com itens e pagamentos
+      summary: Busca uma venda por ID com itens
       operationId: getVenda
       responses:
         "200":
@@ -2690,277 +2798,393 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
 
   # ============================================================
-  # Pagamentos
+  # Contas e movimentações (AYD-007 / SPEC-008)
   # ============================================================
-  /api/v1/vendas/{id}/pagamentos:
-    parameters:
-      - name: id
-        in: path
-        required: true
-        description: UUID da venda
-        schema:
-          type: string
-          format: uuid
-
+  /api/v1/obligations:
     get:
       tags:
-        - Pagamentos
-      summary: Lista pagamentos de uma venda
-      description: "Retorna pagamentos ordenados: pendentes primeiro, depois por data."
-      operationId: listPagamentos
+        - Contas
+      summary: Lista contas a pagar e a receber
+      description: "Mais próximas do vencimento primeiro. `totals` cobre o conjunto filtrado (não só a página)."
+      operationId: listObligations
+      parameters:
+        - { name: direction, in: query, schema: { $ref: "#/components/schemas/ObligationDirection" } }
+        - { name: status, in: query, description: "Um ou mais (CSV): OPEN,PARTIAL", schema: { type: string } }
+        - { name: counterparty_type, in: query, schema: { type: string, enum: [SUPPLIER, PARTNER, CUSTOMER] } }
+        - { name: counterparty_id, in: query, schema: { type: string, format: uuid } }
+        - { name: origin_type, in: query, schema: { type: string, enum: [SALE, PURCHASE] } }
+        - { name: origin_id, in: query, schema: { type: string, format: uuid } }
+        - { name: overdue, in: query, schema: { type: boolean } }
+        - { name: due_to, in: query, description: "Vencimento (próxima parcela, ou prazo da conta) até esta data", schema: { type: string, format: date } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
       responses:
         "200":
-          description: Lista de pagamentos
+          description: Contas
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/PagamentoResponse"
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Obligation" }
+                  totals:
+                    type: object
+                    properties:
+                      amount: { type: number, format: double }
+                      settled: { type: number, format: double }
+                      open: { type: number, format: double }
+                  total: { type: integer }
+                  offset: { type: integer }
+                  has_more: { type: boolean }
         "400":
-          description: UUID inválido
+          description: Filtro inválido
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
         "401":
           description: Não autenticado
-        "404":
-          description: Venda não encontrada
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Erro interno
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
 
-    post:
+  /api/v1/obligations/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
       tags:
-        - Pagamentos
-      summary: Registra um pagamento para uma venda
-      description: |
-        Lógica de status automático:
-        - `data_agendada` fornecida → `status = pendente`
-        - `data_pagamento` fornecida → `status = recebido`
-        - Nenhuma data fornecida → `status = pendente`
-        - `status = recebido` exige `payment_method` (400 se ausente)
-        - Sale `CANCELED` → 409 `venda cancelada: recebimentos bloqueados` (vale para POST, PUT, confirmar e DELETE)
-        
-        **Regra:** `data_pagamento` e `data_agendada` são mutuamente exclusivos.
-      operationId: createPagamento
+        - Contas
+      summary: Detalhe da conta (componentes, parcelas e quitações)
+      operationId: getObligation
+      responses:
+        "200":
+          description: Conta
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ObligationDetail" }
+        "404":
+          description: Não encontrada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          description: Não autenticado
+    patch:
+      tags:
+        - Contas
+      summary: Altera o prazo final e as notas da conta
+      description: "Só `due_date` e `notes` (null limpa); valor, quitado e status são calculados."
+      operationId: patchObligation
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/PagamentoCreateRequest"
+              type: object
+              properties:
+                due_date: { type: string, format: date, nullable: true }
+                notes: { type: string, nullable: true }
       responses:
-        "201":
-          description: Pagamento registrado com sucesso
+        "200":
+          description: Conta atualizada
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/PagamentoResponse"
+              schema: { $ref: "#/components/schemas/ObligationDetail" }
         "400":
-          description: |
-            Dados inválidos:
-            - `valor` deve ser > 0
-            - `payment_method` ausente (Receipt recebido) ou fora do enum
-            - Não é permitido informar `data_pagamento` e `data_agendada` ao mesmo tempo
-            - Formato de data inválido (esperado YYYY-MM-DD)
+          description: Data inválida
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: Não encontrada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
         "401":
           description: Não autenticado
-        "404":
-          description: Venda não encontrada
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "409":
-          description: "Sale CANCELED: recebimentos bloqueados"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Erro interno
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
 
-  /api/v1/vendas/{id}/pagamentos/{pagId}:
+  /api/v1/obligations/{id}/installments:
     parameters:
-      - name: id
-        in: path
-        required: true
-        description: UUID da venda
-        schema:
-          type: string
-          format: uuid
-      - name: pagId
-        in: path
-        required: true
-        description: UUID do pagamento
-        schema:
-          type: string
-          format: uuid
-
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
     put:
       tags:
-        - Pagamentos
-      summary: Atualiza um pagamento
-      operationId: updatePagamento
+        - Contas
+      summary: Substitui o plano de parcelas da conta
+      operationId: putInstallments
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/PagamentoUpdateRequest"
+            schema: { $ref: "#/components/schemas/InstallmentsRequest" }
       responses:
         "200":
-          description: Pagamento atualizado com sucesso
+          description: Conta com o novo plano
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/PagamentoResponse"
+              schema: { $ref: "#/components/schemas/ObligationDetail" }
         "400":
-          description: Dados inválidos
+          description: "Parcela inválida ou Σ parcelas > valor da conta"
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: Não encontrada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
         "401":
           description: Não autenticado
-        "404":
-          description: Pagamento não encontrado
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "409":
-          description: "Sale CANCELED: recebimentos bloqueados"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Erro interno
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
 
-    delete:
-      tags:
-        - Pagamentos
-      summary: Remove um pagamento (soft-delete)
-      description: "Soft-delete (`deleted_at`, RN-08): o Receipt some de listas, totais, painel e alertas."
-      operationId: deletePagamento
-      responses:
-        "204":
-          description: Pagamento removido com sucesso
-        "400":
-          description: UUID inválido
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "401":
-          description: Não autenticado
-        "404":
-          description: Pagamento não encontrado
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "409":
-          description: "Sale CANCELED: recebimentos bloqueados"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Erro interno
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  /api/v1/vendas/{id}/pagamentos/{pagId}/confirmar:
+  /api/v1/obligations/{id}/installments/generate:
     parameters:
-      - name: id
-        in: path
-        required: true
-        description: UUID da venda
-        schema:
-          type: string
-          format: uuid
-      - name: pagId
-        in: path
-        required: true
-        description: UUID do pagamento
-        schema:
-          type: string
-          format: uuid
-
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
     post:
       tags:
-        - Pagamentos
-      summary: Confirma o recebimento de um pagamento pendente
-      description: |
-        Altera o status do pagamento de `pendente` para `recebido`.
-        Se `data_pagamento` não for fornecida no body, assume a data de hoje.
-        `payment_method` é obrigatório (400), salvo se o Receipt já tiver um.
-        Retorna 400 se o pagamento já estiver `recebido`.
-      operationId: confirmarPagamento
+        - Contas
+      summary: Gera parcelas iguais (centavos na última) e substitui o plano
+      operationId: generateInstallments
       requestBody:
-        required: false
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InstallmentsGenerateRequest" }
+      responses:
+        "200":
+          description: Conta com o novo plano
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ObligationDetail" }
+        "400":
+          description: "count fora de 2..24, datas ou valor inválidos"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: Não encontrada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          description: Não autenticado
+
+  /api/v1/obligations/{id}/settle:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags:
+        - Contas
+      summary: Paga ou recebe uma conta (atalho de POST /settlements com 1 conta)
+      operationId: settleObligation
+      requestBody:
+        required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/PagamentoConfirmarRequest"
+              type: object
+              required: [movement]
+              properties:
+                amount: { type: number, format: double, description: "Padrão: o aberto da conta" }
+                movement:
+                  $ref: "#/components/schemas/SettleRequest/properties/movement"
       responses:
-        "200":
-          description: Pagamento confirmado com sucesso
+        "201":
+          description: Quitação registrada
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/PagamentoResponse"
+              schema: { $ref: "#/components/schemas/SettleResponse" }
         "400":
-          description: Pagamento já confirmado ou data inválida
+          description: "Valor/forma/categoria inválidos"
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: Conta não encontrada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "409":
+          description: "valor acima do devido; venda cancelada: recebimentos bloqueados"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
         "401":
           description: Não autenticado
+
+  /api/v1/settlements:
+    post:
+      tags:
+        - Contas
+      summary: Paga ou recebe — uma movimentação, N contas
+      description: |
+        Um Pix pode quitar várias contas (todas na mesma direção). Contas de credores diferentes são
+        permitidas: responde **201** com `warnings: ["MIXED_COUNTERPARTIES"]`.
+      operationId: createSettlement
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SettleRequest" }
+      responses:
+        "201":
+          description: Movimentação (criada ou usada) e contas quitadas
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SettleResponse" }
+        "400":
+          description: "allocations vazio; amount ≤ 0; direções diferentes; sem movement/movement_id; sinal incoerente"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
         "404":
-          description: Pagamento não encontrado
+          description: Conta ou movimentação não encontrada
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
         "409":
-          description: "Sale CANCELED: recebimentos bloqueados"
+          description: "valor acima do devido; Σ acima do valor da movimentação; venda cancelada: recebimentos bloqueados"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          description: Não autenticado
+
+  /api/v1/settlements/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      tags:
+        - Contas
+      summary: Desfaz a quitação (a movimentação permanece)
+      operationId: deleteSettlement
+      responses:
+        "204":
+          description: Desfeita (soft-delete)
+        "404":
+          description: Não encontrada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          description: Não autenticado
+
+  /api/v1/financial-movements:
+    get:
+      tags:
+        - Movimentações
+      summary: Lista movimentações financeiras (dinheiro executado)
+      description: "Mais recentes primeiro. `totals.outflow` é positivo; `net = inflow − outflow`."
+      operationId: listFinancialMovements
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+        - { name: category, in: query, schema: { $ref: "#/components/schemas/MovementCategory" } }
+        - { name: direction, in: query, schema: { type: string, enum: [IN, OUT] } }
+        - { name: counterparty_type, in: query, schema: { type: string, enum: [SUPPLIER, PARTNER, CUSTOMER] } }
+        - { name: counterparty_id, in: query, schema: { type: string, format: uuid } }
+        - { name: unallocated_only, in: query, schema: { type: boolean } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        "200":
+          description: Movimentações
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Erro interno
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/FinancialMovement" }
+                  totals:
+                    type: object
+                    properties:
+                      inflow: { type: number, format: double }
+                      outflow: { type: number, format: double }
+                      net: { type: number, format: double }
+                  total: { type: integer }
+                  offset: { type: integer }
+                  has_more: { type: boolean }
+        "400":
+          description: Filtro inválido
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          description: Não autenticado
+    post:
+      tags:
+        - Movimentações
+      summary: Lança uma movimentação avulsa (despesa ou OTHER_INCOME)
+      operationId: createFinancialMovement
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FinancialMovementRequest" }
+      responses:
+        "201":
+          description: Criada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FinancialMovement" }
+        "400":
+          description: "amount = 0; sinal incoerente com a categoria; data/forma/categoria inválidas"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          description: Não autenticado
+
+  /api/v1/financial-movements/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      tags:
+        - Movimentações
+      summary: Correção da movimentação (carimba corrected_at)
+      description: "Corpo igual ao do POST (substituição completa)."
+      operationId: updateFinancialMovement
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FinancialMovementRequest" }
+      responses:
+        "200":
+          description: Corrigida
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FinancialMovement" }
+        "400":
+          description: Payload inválido
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: Não encontrada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "409":
+          description: "A correção deixaria Σ quitações > |amount| ou inverteria o sinal de uma movimentação que quita contas"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          description: Não autenticado
+    delete:
+      tags:
+        - Movimentações
+      summary: Anula a movimentação e desfaz as suas quitações
+      operationId: deleteFinancialMovement
+      responses:
+        "204":
+          description: Anulada (soft-delete da movimentação e das quitações)
+        "404":
+          description: Não encontrada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          description: Não autenticado
 
   # ============================================================
   # Purchases / Stock (AYD-002)
@@ -3430,50 +3654,6 @@ paths:
         "401":
           description: Não autenticado
 
-  /api/v1/purchases/{id}/payment:
-    parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
-    patch:
-      tags:
-        - Purchases
-      summary: Registra/desfaz o pagamento ao Supplier
-      operationId: updatePurchasePayment
-      description: |
-        Um pagamento por Purchase; independe do status. PAID: paid_amount default = total_cost, paid_at default = hoje.
-        PENDING: zera paid_amount e paid_at.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/PurchasePaymentRequest"
-      responses:
-        "200":
-          description: Pagamento atualizado
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PurchasePaymentResponse"
-        "400":
-          description: "Payload/parâmetro inválido"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "404":
-          description: "Não encontrado"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "401":
-          description: Não autenticado
-
   /api/v1/stock/balance:
     get:
       tags:
@@ -3689,9 +3869,10 @@ paths:
         - Financeiro
       summary: Painel financeiro (entra × sai) de um período
       description: |
-        AYD-004. `sales` = visão por competência (Sales com `data_venda` no período, não CANCELED);
-        `cash` = movimento datado no período (Receipts recebidos × pagamentos a Suppliers);
-        `balances` = saldos em aberto hoje (ignoram o período). Default: do 1º dia do mês corrente até hoje.
+        AYD-004 / AYD-007 §6. `sales` = visão por competência (Sales com `data_venda` no período, não CANCELED);
+        `cash` = dinheiro executado no período (movimentações); `expenses` = movimentações sem quitação de
+        categoria de despesa; `result` = lucro das Sales − despesas (RN-17); `balances` = Σ open das contas
+        hoje (ignoram o período). Default: do 1º dia do mês corrente até hoje.
       operationId: getFinanceSummary
       parameters:
         - name: from
@@ -3732,7 +3913,9 @@ paths:
         - Dashboard
       summary: Lista notificações não lidas
       description: |
-        Retorna até 50 notificações não lidas. Pagamentos vencidos aparecem primeiro.
+        Retorna até 50 notificações não lidas. Vencidos aparecem primeiro. Alertas por parcela não coberta ou
+        prazo de conta (janela de 5 dias): a receber → `pagamento_vencendo`/`pagamento_vencido`; a pagar →
+        `conta_pagar_vencendo`/`conta_pagar_vencida` (AYD-007 §6).
         Antes de ler, a API executa `gerar_notificacoes_pagamentos()` (idempotente; preserva
         `lida`) — sem `pg_cron` (AYD-004). Se a geração falhar, responde 500.
       operationId: getNotificacoes
@@ -4079,8 +4262,10 @@ tags:
     description: Gestão completa de vendas
   - name: Vendas / Itens
     description: Itens de uma venda
-  - name: Pagamentos
-    description: Pagamentos de clientes por venda
+  - name: Contas
+    description: Contas a pagar e a receber por credor, parcelas e quitações (AYD-007)
+  - name: Movimentações
+    description: Dinheiro executado — entradas, saídas e despesas avulsas (AYD-007)
   - name: Purchases
     description: Compras consolidadas por Supplier e pagamento ao Supplier (AYD-002)
   - name: Stock

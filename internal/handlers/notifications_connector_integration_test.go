@@ -1,15 +1,16 @@
 package handlers
 
-// SPEC-006: duas adições compatíveis em GET /dashboard/notificacoes usadas pelo Assistant
-// connector — `pagamento_id` (Receipt do alerta) e `only_unread=false` (inclui os lidos).
+// SPEC-006/SPEC-008: GET /dashboard/notificacoes usado pelo Assistant connector — traz
+// `obligation_id` / `installment_id` (AYD-007; antes `pagamento_id`) e `only_unread=false` (inclui os lidos).
 // Roda só com TEST_DATABASE_URL.
 import "testing"
 
-func TestIntegration_NotificationsExposeReceiptAndReadFilter(t *testing.T) {
+func TestIntegration_NotificationsExposeObligationAndReadFilter(t *testing.T) {
 	e := newFinanceEnv(t)
 	sale := e.simpleSale(1, 1000, 500)
-	_, rec := e.receipt(sale, map[string]any{"valor": 100, "data_agendada": dayStr(-1)})
-	recID := rec["id"].(string)
+	acc := e.api.receivable(sale)
+	_, plan := e.api.plan(acc, [2]any{dayStr(-1), 100.0})
+	instID := plan["installments"].([]any)[0].(map[string]any)["id"].(string)
 
 	find := func(query string) map[string]any {
 		t.Helper()
@@ -26,8 +27,11 @@ func TestIntegration_NotificationsExposeReceiptAndReadFilter(t *testing.T) {
 	}
 
 	n := find("")
-	if n == nil || n["pagamento_id"] != recID || n["lida"] != false {
-		t.Fatalf("alerta = %v, quero pagamento_id %s", n, recID)
+	if n == nil || n["obligation_id"] != acc || n["installment_id"] != instID || n["lida"] != false {
+		t.Fatalf("alerta = %v, quero obligation_id %s e installment_id %s", n, acc, instID)
+	}
+	if _, has := n["pagamento_id"]; has {
+		t.Error("pagamento_id foi substituído por obligation_id/installment_id")
 	}
 	if code, _ := e.api.do("POST", "/dashboard/notificacoes/"+n["id"].(string)+"/lida", nil); code != 204 {
 		t.Fatalf("marcar lida = %d", code)
