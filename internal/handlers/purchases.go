@@ -106,12 +106,13 @@ type purchaseSummaryResponse struct {
 }
 
 type purchaseSaleItemResponse struct {
-	ID           uuid.UUID `json:"id"`
-	SaleID       uuid.UUID `json:"sale_id"`
-	CustomerName string    `json:"customer_name"`
-	ProdutoNome  string    `json:"produto_nome"`
-	Quantidade   float64   `json:"quantidade"`
-	CustoUnit    float64   `json:"custo_unit"`
+	ID           uuid.UUID  `json:"id"`
+	SaleID       uuid.UUID  `json:"sale_id"`
+	CustomerName string     `json:"customer_name"`
+	ProdutoID    *uuid.UUID `json:"produto_id"`
+	ProdutoNome  string     `json:"produto_nome"`
+	Quantidade   float64    `json:"quantidade"`
+	CustoUnit    float64    `json:"custo_unit"`
 }
 
 type purchaseLineResponse struct {
@@ -222,7 +223,7 @@ func fetchPurchaseDetail(db *gorm.DB, id uuid.UUID) (*purchaseDetailResponse, er
 
 	saleItems := []purchaseSaleItemResponse{}
 	if err := db.Raw(`
-		SELECT i.id, i.venda_id AS sale_id, c.nome AS customer_name, i.produto_nome, i.quantidade, i.custo_unit
+		SELECT i.id, i.venda_id AS sale_id, c.nome AS customer_name, i.produto_id, i.produto_nome, i.quantidade, i.custo_unit
 		FROM itens_venda i
 		JOIN vendas v ON v.id = i.venda_id
 		JOIN clientes c ON c.id = v.cliente_id

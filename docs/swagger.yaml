@@ -858,6 +858,10 @@ components:
           format: uuid
         customer_name:
           type: string
+        produto_id:
+          type: string
+          format: uuid
+          nullable: true
         produto_nome:
           type: string
         quantidade:

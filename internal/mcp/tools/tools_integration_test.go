@@ -446,7 +446,7 @@ func TestIntegration_SalesProcurementStockReadTools(t *testing.T) {
 		}
 		d := obj(e.ok("get_purchase", map[string]any{"purchase_id": s.purchaseID})["purchase"])
 		si := obj(d["sale_items"].([]any)[0])
-		if d["id"] != s.purchaseID || si["id"] != s.saleQuickItem || si["customer_name"] != "João Silva" || si["quantity"] != float64(4) || si["product_name"] == nil || si["unit_cost"] == nil || si["quantidade"] != nil || si["produto_nome"] != nil || si["custo_unit"] != nil || len(d["items"].([]any)) != 0 {
+		if d["id"] != s.purchaseID || si["id"] != s.saleQuickItem || si["customer_name"] != "João Silva" || si["quantity"] != float64(4) || si["product_name"] == nil || si["product_id"] == nil || si["unit_cost"] == nil || si["quantidade"] != nil || si["produto_nome"] != nil || si["custo_unit"] != nil || len(d["items"].([]any)) != 0 {
 			t.Errorf("get_purchase = %v", d)
 		}
 		e.fail("get_purchase", map[string]any{"purchase_id": uuid.NewString()}, "NOT_FOUND", "")

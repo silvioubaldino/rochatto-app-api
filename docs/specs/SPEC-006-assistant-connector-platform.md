@@ -241,8 +241,8 @@ schema não aceita `null`). Tipos nomeados (`UUID`, `Date`, `Limit`, enums…) c
    `GET /dashboard/notificacoes`, para cumprir `receipt_id` e `only_unread` do AYD.
 2. **`get_purchase`**: os campos legados PT de `sale_items` são traduzidos no adaptador do conector
    (`produto_nome`→`product_name`, `quantidade`→`quantity`, `custo_unit`→`unit_cost`; AYD-006 §5,
-   "Pending purchase item"); a rota REST não muda. `product_id` fica ausente porque o REST não o
-   expõe em `sale_items`. **Pendência:** expor `produto_id` na rota REST (contrato AYD-002).
+   "Pending purchase item"); a rota REST não muda. `product_id` vem de `produto_id`, campo
+   aditivo de `sale_items` na rota REST.
 3. **`get_dashboard_kpis.quotes.conversion_rate`**: a rota devolve `null` sem Quotes no período;
    o schema do conector não aceita `null` (§ 3.2), então o campo fica **ausente**.
 4. **`tokens.scopes` (coluna extra na 009)**: o AYD exige que o `scope` do refresh só reduza, mas
