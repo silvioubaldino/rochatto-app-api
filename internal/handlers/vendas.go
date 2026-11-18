@@ -94,6 +94,7 @@ type vendaListResponse struct {
 	ClienteNome         string     `json:"cliente_nome"`
 	VendedorExternoID   *uuid.UUID `json:"vendedor_externo_id"`
 	VendedorExternoNome *string    `json:"vendedor_externo_nome"`
+	QuoteID             *uuid.UUID `json:"quote_id"`
 	Status              string     `json:"status"`
 	DataVenda           string     `json:"data_venda"`
 	DataEntregaPrevista *string    `json:"data_entrega_prevista"`
@@ -156,6 +157,7 @@ type vendaResumoRow struct {
 	Lucro               float64    `gorm:"column:lucro"`
 	ClienteNome         string     `gorm:"column:cliente_nome"`
 	VendedorExternoNome *string    `gorm:"column:vendedor_externo_nome"`
+	QuoteID             *uuid.UUID `gorm:"column:quote_id"`
 }
 
 func (row vendaResumoRow) toListResponse() vendaListResponse {
@@ -165,6 +167,7 @@ func (row vendaResumoRow) toListResponse() vendaListResponse {
 		ClienteNome:         row.ClienteNome,
 		VendedorExternoID:   row.VendedorExternoID,
 		VendedorExternoNome: row.VendedorExternoNome,
+		QuoteID:             row.QuoteID,
 		Status:              row.Status,
 		DataVenda:           row.DataVenda.Format("2006-01-02"),
 		FreteValor:          row.FreteValor,
@@ -212,7 +215,8 @@ func (h *VendasHandler) fetchVendaResumo(ctx context.Context, id uuid.UUID) (*ve
 	var row vendaResumoRow
 	result := h.db.WithContext(ctx).
 		Table("vw_vendas_resumo vr").
-		Select("vr.*, c.nome AS cliente_nome, ve.nome AS vendedor_externo_nome").
+		Select("vr.*, c.nome AS cliente_nome, ve.nome AS vendedor_externo_nome, vq.quote_id AS quote_id").
+		Joins("JOIN vendas vq ON vq.id = vr.id"). // quote_id não está na view (criada antes da 003)
 		Joins("JOIN clientes c ON c.id = vr.cliente_id").
 		Joins("LEFT JOIN vendedores_externos ve ON ve.id = vr.vendedor_externo_id").
 		Where("vr.id = ?", id).
@@ -303,7 +307,8 @@ func parseDate(s string) (time.Time, error) {
 func (h *VendasHandler) list(w http.ResponseWriter, r *http.Request) {
 	query := h.db.WithContext(r.Context()).
 		Table("vw_vendas_resumo vr").
-		Select("vr.*, c.nome AS cliente_nome, ve.nome AS vendedor_externo_nome").
+		Select("vr.*, c.nome AS cliente_nome, ve.nome AS vendedor_externo_nome, vq.quote_id AS quote_id").
+		Joins("JOIN vendas vq ON vq.id = vr.id"). // quote_id não está na view (criada antes da 003)
 		Joins("JOIN clientes c ON c.id = vr.cliente_id").
 		Joins("LEFT JOIN vendedores_externos ve ON ve.id = vr.vendedor_externo_id")
 

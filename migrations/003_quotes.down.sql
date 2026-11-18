@@ -1,0 +1,5 @@
+DROP VIEW IF EXISTS vw_quotes_resumo;
+ALTER TABLE vendas DROP COLUMN IF EXISTS quote_id;
+DROP TABLE IF EXISTS quote_items;
+DROP TABLE IF EXISTS quotes;
+DROP TYPE IF EXISTS quote_status;
