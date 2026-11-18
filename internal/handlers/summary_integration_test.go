@@ -215,3 +215,29 @@ func TestIntegration_DashboardNumbers(t *testing.T) {
 		t.Errorf("linha legada: produto_id=%v preco_medio=%v, want nil/2000", legacy["produto_id"], legacy["preco_medio"])
 	}
 }
+
+// RN-05: Sale entregue mas ainda devendo continua em "a receber"; pagamento a maior não abate
+// o saldo de outra Sale.
+func TestIntegration_DashboardAReceberIncludesDelivered(t *testing.T) {
+	api, db, cid := newSummaryEnv(t)
+	var day, month string
+	db.Raw("SELECT CURRENT_DATE::text").Scan(&day)
+	db.Raw("SELECT DATE_TRUNC('month', CURRENT_DATE)::date::text").Scan(&month)
+	before := takeSnapshot(t, api, day, month)
+
+	delivered := insertSale(t, db, cid, 0, 0)
+	mustExec(t, db, `UPDATE vendas SET status = 'ENTREGUE' WHERE id = ?`, delivered)
+	mustExec(t, db, `INSERT INTO itens_venda (venda_id, produto_nome, quantidade, preco_venda_unit, custo_unit)
+		VALUES (?, 'Granito', 1, 1000, 500)`, delivered)
+	mustExec(t, db, `INSERT INTO pagamentos_cliente (venda_id, valor, status) VALUES (?, 400, 'recebido')`, delivered)
+
+	overpaid := insertSale(t, db, cid, 0, 0)
+	mustExec(t, db, `INSERT INTO itens_venda (venda_id, produto_nome, quantidade, preco_venda_unit, custo_unit)
+		VALUES (?, 'Mármore', 1, 300, 100)`, overpaid)
+	mustExec(t, db, `INSERT INTO pagamentos_cliente (venda_id, valor, status) VALUES (?, 500, 'recebido')`, overpaid)
+
+	after := takeSnapshot(t, api, day, month)
+	if got := after.aReceber - before.aReceber; !approx(got, 600) {
+		t.Errorf("a receber delta = %v, want 600 (entregue devendo 600; pago a maior conta 0)", got)
+	}
+}

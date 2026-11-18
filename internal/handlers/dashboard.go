@@ -128,11 +128,11 @@ func (h *DashboardHandler) getResumo(w http.ResponseWriter, r *http.Request) {
 	// Totais por Sale vêm de vw_vendas_resumo (itens e recebimentos pré-agregados por Sale —
 	// sem fan-out; a view já exclui Sales com deleted_at).
 
-	// 1. Total a receber (vendas não entregues: total_venda - total_recebido, RN-05)
+	// 1. Total a receber (RN-05: total_venda − total_recebido de toda Sale, entregue ou não;
+	// pagamento a maior numa Sale não abate o saldo de outra)
 	err := h.db.WithContext(ctx).Raw(`
-		SELECT COALESCE(SUM(vr.total_venda - vr.total_recebido), 0)
+		SELECT COALESCE(SUM(GREATEST(vr.total_venda - vr.total_recebido, 0)), 0)
 		FROM vw_vendas_resumo vr
-		WHERE vr.status != 'ENTREGUE'
 	`).Scan(&resp.TotalAReceber).Error
 	if err != nil {
 		log.Printf("ERROR Dashboard total_a_receber: %v", err)
