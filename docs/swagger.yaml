@@ -858,6 +858,10 @@ components:
           format: uuid
         customer_name:
           type: string
+        produto_id:
+          type: string
+          format: uuid
+          nullable: true
         produto_nome:
           type: string
         quantidade:
@@ -1260,6 +1264,11 @@ components:
           type: string
           format: uuid
           nullable: true
+        pagamento_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Receipt do alerta (SPEC-006)
         cliente_nome:
           type: string
         valor:
@@ -3727,6 +3736,14 @@ paths:
         Antes de ler, a API executa `gerar_notificacoes_pagamentos()` (idempotente; preserva
         `lida`) — sem `pg_cron` (AYD-004). Se a geração falhar, responde 500.
       operationId: getNotificacoes
+      parameters:
+        - name: only_unread
+          in: query
+          required: false
+          description: "`false` inclui os alertas já lidos (SPEC-006). Padrão: só os não lidos."
+          schema:
+            type: boolean
+            default: true
       responses:
         "200":
           description: Lista de notificações
@@ -3920,7 +3937,134 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  # ============================================================
+  # Assistant connector (AYD-006): consentimento e Connections (Firebase + allowlist)
+  # ============================================================
+  /api/v1/oauth/authorization-requests/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [Assistant connector]
+      summary: Dados do pedido de conexão (tela /conectar)
+      description: |
+        Só existe com `MCP_ENABLED=true`. 404 para pedido inexistente, expirado (10 min) ou já decidido.
+      operationId: getAuthorizationRequest
+      responses:
+        "200":
+          description: Pedido pendente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: {type: string, format: uuid}
+                  client_name: {type: string}
+                  redirect_host: {type: string, description: Host do redirect_uri, para o dono conferir}
+                  scopes: {type: array, items: {type: string, enum: [read, write]}}
+                  expires_at: {type: string, format: date-time}
+        "404":
+          description: pedido de conexão expirado; refaça pelo Claude
+
+  /api/v1/oauth/authorization-requests/{id}/approve:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [Assistant connector]
+      summary: Aprova o pedido (cria a Connection e o code de uso único)
+      description: O corpo é ignorado (vazio ou `{}`).
+      operationId: approveAuthorizationRequest
+      responses:
+        "200":
+          description: URL para onde o web navega
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  redirect_to: {type: string, description: "redirect_uri?code=…&state=…"}
+        "404": {description: inexistente ou expirado}
+        "409": {description: já decidido}
+
+  /api/v1/oauth/authorization-requests/{id}/deny:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [Assistant connector]
+      summary: Nega o pedido
+      operationId: denyAuthorizationRequest
+      responses:
+        "200":
+          description: "redirect_to = redirect_uri?error=access_denied&state=…"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  redirect_to: {type: string}
+        "404": {description: inexistente ou expirado}
+        "409": {description: já decidido}
+
+  /api/v1/oauth/connections:
+    get:
+      tags: [Assistant connector]
+      summary: Lista as Connections ativas
+      description: Só não revogadas e já ativadas; ordem `last_used_at` desc.
+      operationId: listConnections
+      responses:
+        "200":
+          description: Connections
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: {type: string, format: uuid}
+                    client_name: {type: string}
+                    scopes: {type: array, items: {type: string}}
+                    created_at: {type: string, format: date-time}
+                    last_used_at: {type: string, format: date-time, nullable: true}
+
+  /api/v1/oauth/connections/{id}:
+    delete:
+      tags: [Assistant connector]
+      summary: Revoga uma Connection
+      operationId: revokeConnection
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204": {description: Revogada}
+        "404": {description: inexistente ou já revogada}
+
+  # Superfície pública (fora de /api/v1, sem Firebase), montada só com MCP_ENABLED=true:
+  # GET /.well-known/oauth-protected-resource[/mcp], GET /.well-known/oauth-authorization-server,
+  # POST /oauth/register (DCR), GET /oauth/authorize, POST /oauth/token, POST /oauth/revoke e
+  # POST /mcp (MCP Streamable HTTP stateless, Bearer). Contratos: AYD-006@context §1–§2.
+
 tags:
+  - name: Assistant connector
+    description: Consentimento e Connections do conector MCP (AYD-006)
   - name: Health
     description: Verificação de disponibilidade da API (público)
   - name: Clientes

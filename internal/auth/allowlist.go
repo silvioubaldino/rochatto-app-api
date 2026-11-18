@@ -60,6 +60,16 @@ func (a Allowlist) Check(claims jwt.MapClaims) error {
 	return nil
 }
 
+// AllowsEmail diz se o e-mail está na allowlist (lista vazia = aberta, só em desenvolvimento).
+// Usado pelo /mcp para rechecar a Connection a cada chamada (AYD-006 §1).
+func (a Allowlist) AllowsEmail(email string) bool {
+	if a.Empty() {
+		return true
+	}
+	_, ok := a.emails[normalizeEmail(email)]
+	return ok
+}
+
 func normalizeEmail(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
 
 // ErrAllowlistRequired: em produção a lista de e-mails é obrigatória.

@@ -9,6 +9,9 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/silvioubaldino/sales-backend/internal/auth"
 	"github.com/silvioubaldino/sales-backend/internal/handlers"
+	"github.com/silvioubaldino/sales-backend/internal/mcp"
+	"github.com/silvioubaldino/sales-backend/internal/mcp/gateway"
+	"github.com/silvioubaldino/sales-backend/internal/oauth"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -30,6 +33,12 @@ func main() {
 	}
 
 	allow := ownerAllowlist(env)
+	// Assistant connector (AYD-006): MCP_ENABLED=false (padrão) não monta nada; com true,
+	// PUBLIC_BASE_URL/WEB_APP_URL inválidas impedem a api de subir.
+	mcpCfg, err := oauth.LoadConfig(env, os.Getenv)
+	if err != nil {
+		log.Fatalf("configuração do Assistant connector: %v", err)
+	}
 	migrateOnStart(databaseURL)
 
 	db, err := gorm.Open(postgres.Open(databaseURL), &gorm.Config{})
@@ -53,6 +62,21 @@ func main() {
 
 	root := http.NewServeMux()
 	root.HandleFunc("GET /health", handlers.Health(env))
+	if mcpCfg.Enabled {
+		oauthServer := oauth.New(db, mcpCfg, allow)
+		oauthServer.RegisterAPI(apiMux)  // consentimento e Connections (atrás do Firebase + allowlist)
+		oauthServer.RegisterPublic(root) // discovery e /oauth/*
+		mcpHandler, err := mcp.NewHandler(mcp.Options{
+			Config:   mcpCfg,
+			Verifier: oauthServer,
+			Pipeline: mcp.PipelineOptions{Gateway: gateway.New(apiMux), Audit: mcp.NewDBAuditor(db)},
+		})
+		if err != nil {
+			log.Fatalf("Assistant connector: %v", err)
+		}
+		root.Handle("/mcp", mcpHandler)
+		log.Printf("Assistant connector habilitado em %s (catalog %s)", mcpCfg.Resource(), mcp.CatalogVersion)
+	}
 	root.Handle("/api/v1/", http.StripPrefix("/api/v1", auth.RequireAuth(firebaseProjectID, allow)(apiMux)))
 
 	handler := auth.CORS(frontendURL)(root)
