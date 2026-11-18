@@ -155,13 +155,16 @@ var getPurchase = toolkit.Define(toolkit.Meta{
 		"Pré-requisito: obtenha o purchase_id com list_purchases. Não altera dados.",
 	ReadOnly: true, Idempotent: true,
 }, func(ctx context.Context, gw toolkit.Gateway, in GetPurchaseIn) (GetPurchaseOut, error) {
-	p, err := get[PurchaseDetail](ctx, gw, "/purchases/"+pathID(string(in.PurchaseID)), nil)
+	r, err := get[restPurchaseDetail](ctx, gw, "/purchases/"+pathID(string(in.PurchaseID)), nil)
 	if err != nil {
 		return GetPurchaseOut{}, err
 	}
-	p.PurchaseSummary = p.PurchaseSummary.normalized()
-	if p.SaleItems == nil {
-		p.SaleItems = []PurchaseSaleItem{}
+	p := PurchaseDetail{PurchaseSummary: r.PurchaseSummary.normalized(), SaleItems: make([]PurchaseSaleItem, 0, len(r.SaleItems)), Items: r.Items}
+	for _, i := range r.SaleItems {
+		p.SaleItems = append(p.SaleItems, PurchaseSaleItem{
+			ID: i.ID, SaleID: i.SaleID, CustomerName: i.CustomerName, ProductID: i.ProdutoID,
+			ProductName: i.ProdutoNome, Quantity: i.Quantidade, UnitCost: i.CustoUnit,
+		})
 	}
 	if p.Items == nil {
 		p.Items = []PurchaseLine{}

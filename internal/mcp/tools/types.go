@@ -150,15 +150,34 @@ type PurchaseSummary struct {
 	CreatedAt     time.Time                     `json:"created_at"`
 }
 
-// PurchaseSaleItem e PurchaseLine seguem o PurchaseDetail do AYD-002 "sem alteração"
-// (AYD-006 §4.2) — inclusive os nomes legados de sale_items.
+// PurchaseSaleItem é o item de venda atendido por uma Purchase, com os campos legados PT
+// da rota REST traduzidos para EN (AYD-006 §4.2/§5, "Pending purchase item"). product_id
+// não vem do REST (que não o expõe em sale_items) e fica ausente.
 type PurchaseSaleItem struct {
 	ID           UUID    `json:"id"`
 	SaleID       UUID    `json:"sale_id"`
 	CustomerName string  `json:"customer_name"`
+	ProductID    *UUID   `json:"product_id,omitempty"`
+	ProductName  string  `json:"product_name"`
+	Quantity     float64 `json:"quantity"`
+	UnitCost     float64 `json:"unit_cost"`
+}
+
+// restPurchaseSaleItem espelha o JSON legado PT de sale_items na rota REST.
+type restPurchaseSaleItem struct {
+	ID           UUID    `json:"id"`
+	SaleID       UUID    `json:"sale_id"`
+	CustomerName string  `json:"customer_name"`
+	ProdutoID    *UUID   `json:"produto_id"`
 	ProdutoNome  string  `json:"produto_nome"`
 	Quantidade   float64 `json:"quantidade"`
 	CustoUnit    float64 `json:"custo_unit"`
+}
+
+type restPurchaseDetail struct {
+	PurchaseSummary
+	SaleItems []restPurchaseSaleItem `json:"sale_items"`
+	Items     []PurchaseLine         `json:"items"`
 }
 
 type PurchaseLine struct {

@@ -1722,13 +1722,17 @@
                     "customer_name": {
                       "type": "string"
                     },
-                    "produto_nome": {
+                    "product_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "product_name": {
                       "type": "string"
                     },
-                    "quantidade": {
+                    "quantity": {
                       "type": "number"
                     },
-                    "custo_unit": {
+                    "unit_cost": {
                       "type": "number"
                     }
                   },
@@ -1736,9 +1740,9 @@
                     "id",
                     "sale_id",
                     "customer_name",
-                    "produto_nome",
-                    "quantidade",
-                    "custo_unit"
+                    "product_name",
+                    "quantity",
+                    "unit_cost"
                   ],
                   "additionalProperties": false
                 }
