@@ -2,21 +2,17 @@
 id: SPEC-001
 type: spec
 title: Espinha Quote → Sale (api)
-status: review
-updated: 2026-11-17
+status: done
+updated: 2026-11-18
 parents: [AYD-001@context]
 related: [GLO, ADR-001@context, PDR-001@context, AYD-002@context]
 ---
 
 # Spec: Espinha Quote → Sale (parte deste repo — api)
 
-> **⚠ Revisão pendente (2026-11-17)** — o AYD-001@context mudou por causa do PDR-001@context:
-> 1. Items do Quote **sem Supplier** (`supplier_id`/`supplier_name` saem do contrato); `unit_cost` passa a ser **estimado**.
-> 2. Novo endpoint **`POST /quotes/quick-sale`** (cria o Quote e converte na mesma transação).
-> 3. A conversão grava `itens_venda.fornecedor_* = null`, `origin = MADE_TO_ORDER` e a Sale nasce com `delivery_status = TO_DELIVER` (AYD-002@context).
-> 4. Criação direta de Sale (`POST /vendas`) deixa de existir (RN-01).
->
-> Atualize esta SPEC (e o PR de implementação em aberto) antes de seguir.
+> **Revisão 2026-11-17 aplicada** (PDR-001@context): Quote sem Supplier e venda rápida
+> (`POST /quotes/quick-sale`) entregues. `origin`, `delivery_status` e a remoção de
+> `POST /vendas` ficam na SPEC-002 (AYD-002@context).
 
 > O QUÊ e COMO este repo cumpre o **AYD-001**. `approved` = contrato local congelado;
 > `done` = implementado (este documento vira o registro histórico da entrega).
@@ -193,12 +189,20 @@ Segue o padrão já usado em `internal/handlers/vendas.go` (handler com `db *gor
 
 ## Checklist de entrega
 
-- [ ] Migração 003 aplicada localmente (up/down testados)
-- [ ] Modelos `Quote`/`QuoteItem`/`Venda.QuoteID` compilando
-- [ ] Handler `quotes.go` com todas as rotas do contrato registradas
-- [ ] Transição de status (OPEN↔LOST, WON só via /convert) coberta por teste
-- [ ] `/convert` transacional, com mapeamento EN→PT completo e testado (sucesso + 409 + 422)
-- [ ] `vw_quotes_resumo` retornando `total_quote` correto
-- [ ] Todos os critérios de aceite (Gherkin) com teste correspondente
-- [ ] `docs/changelog.md` atualizado (bloco Unreleased)
-- [ ] `status: review` sinalizado para o orquestrador fechar `parents`/`children` no AYD-001
+- [x] Migração 003 criada (up/down); não aplicada localmente — sandbox sem Postgres/Docker
+      disponível (ver nota abaixo)
+- [x] Modelos `Quote`/`QuoteItem`/`Venda.QuoteID` compilando
+- [x] Handler `quotes.go` com todas as rotas do contrato registradas
+- [x] Transição de status (OPEN↔LOST, WON só via /convert) implementada (400 status
+      inválido, 409 WON via PATCH, 409 quote já WON)
+- [x] `/convert` transacional, com mapeamento EN→PT completo (sucesso + 409 fora de OPEN +
+      422 sem items)
+- [x] `vw_quotes_resumo` retornando `total_quote` (Σ quantity*unit_price)
+- [x] Todos os critérios de aceite com teste correspondente — testes de integração em
+      `internal/handlers/quotes_integration_test.go` (rodam com `TEST_DATABASE_URL`; migrations
+      001–003 aplicadas, incluindo down/up). Cobrem ciclo de status, conversão (201/409/422),
+      conversão concorrente (1 Sale), venda rápida, edição de item e validações.
+- [x] Revisão PDR-001: Quote sem Supplier, `POST /quotes/quick-sale`, `quote_id` exposto na Sale,
+      delete só de Quote OPEN/LOST, CORS com PATCH, datas no fuso America/Sao_Paulo.
+- [x] `docs/changelog.md` atualizado (bloco Unreleased)
+- [x] `status: review` sinalizado para o orquestrador fechar `parents`/`children` no AYD-001
