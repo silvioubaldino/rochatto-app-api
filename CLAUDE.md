@@ -10,7 +10,7 @@ Fornecer endpoints HTTP seguros, validados e tipados para:
 - Gerenciar o ciclo completo de vendas (criação, itens, status, entrega)
 - Controlar o fluxo financeiro (recebimentos, pagamentos a fornecedores, comissões, frete)
 - Manter cadastros de clientes, produtos, fornecedores e vendedores externos
-- Controlar entradas de estoque físico
+- Atender as vendas: origem do item (sob encomenda × de estoque), compras consolidadas por fornecedor (`/purchases`), saldo e ajustes de estoque (`/stock`), status de entrega da venda (SPEC-002)
 - Fornecer dados agregados para o dashboard e alertas de pagamentos
 
 ## Stack
@@ -36,7 +36,8 @@ cmd/server/                 → bootstrap: env, allowlist, migrations (opcional)
 cmd/migrate/                → CLI de migrations: up | down N | version | force N
 internal/
   auth/                     → middleware: Firebase JWT + allowlist do dono (ALLOWED_EMAILS); CORS
-  handlers/                 → um arquivo por recurso (clientes, vendas, quotes, etc.)
+  handlers/                 → um arquivo por recurso (clientes, vendas, quotes, purchases, stock, etc.)
+  fulfillment/              → regras puras do atendimento da Sale (transições, pagamento, cancelamento — SPEC-002)
   dbmigrate/                → golang-migrate sobre as migrations embutidas
   models/                   → structs GORM de domínio e tipos compartilhados
 migrations/                 → NNN_nome.{up,down}.sql + embed.go (package migrations)
@@ -67,7 +68,7 @@ docs/ops/                   → operação: baseline de migrations, backup, scri
 - Todas as PKs são `UUID` geradas pelo PostgreSQL (`gen_random_uuid()`)
 - Todas as entidades principais têm `created_at TIMESTAMPTZ` e `deleted_at TIMESTAMPTZ` (soft delete)
 - **Nunca deletar fisicamente** registros de vendas, clientes, produtos ou pagamentos
-- Campos calculados (total_venda, lucro, a_receber) **nunca são persistidos** — vêm da view `vw_vendas_resumo`
+- Campos calculados (total_venda, lucro, a_receber, payment_status, total_cost/to_pay, balance) **nunca são persistidos** — vêm das views `vw_vendas_resumo`, `vw_purchases_resumo` e `vw_stock_balance`
 - Valores monetários: `DECIMAL(12,2)` no banco, `float64` no Go
 
 ### Código Go
@@ -117,7 +118,7 @@ go vet ./... && TEST_DATABASE_URL=$DATABASE_URL go test ./...
 | 3 | `specs/phase-03-sales-core.md` | CRUD: vendas + itens de venda |
 | 4 | `specs/phase-04-financial.md` | Pagamentos do cliente, pagamentos a fornecedores, view calculada |
 | 5 | `specs/phase-05-dashboard.md` | Dashboard, notificações, relatórios e pg_cron |
-| 6 | `specs/phase-06-estoque.md` | Módulo de estoque físico |
+| 6 | `docs/specs/SPEC-002-sale-fulfillment.md` | Atendimento da Sale: Purchase, Stock (Balance/ajustes), delivery/payment status (substitui o antigo módulo `/estoque`) |
 
 ## Deploy (Google Cloud Run — free tier)
 

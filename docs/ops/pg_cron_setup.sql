@@ -7,11 +7,12 @@
 CREATE OR REPLACE FUNCTION gerar_notificacoes_pagamentos()
 RETURNS void AS $$
 BEGIN
-  -- Limpar notificacoes de pagamentos que ja foram confirmados
+  -- Limpar notificacoes de pagamentos que ja foram confirmados ou de Sales canceladas
   DELETE FROM notificacoes
   WHERE pagamento_id IN (
     SELECT id FROM pagamentos_cliente WHERE status = 'recebido'
-  );
+  )
+  OR venda_id IN (SELECT id FROM vendas WHERE delivery_status = 'CANCELED');
 
   -- Inserir/atualizar notificacoes para pagamentos pendentes
   -- nos proximos 5 dias ou vencidos
@@ -33,6 +34,7 @@ BEGIN
     AND p.data_agendada IS NOT NULL
     AND p.data_agendada <= CURRENT_DATE + 5
     AND v.deleted_at IS NULL
+    AND v.delivery_status <> 'CANCELED'   -- migration 006 (AYD-002): Sale cancelada não gera alerta
   ON CONFLICT (pagamento_id) DO UPDATE SET
     tipo = EXCLUDED.tipo,
     dias_restantes = EXCLUDED.dias_restantes,

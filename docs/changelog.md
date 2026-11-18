@@ -26,6 +26,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+- Sale fulfillment (SPEC-002): item origin (made-to-order / from stock), consolidated Purchases per Supplier with a to-buy queue and one supplier payment, Stock balance with statement and adjustments (replaces `/estoque`), Sale delivery status with cancellation and computed payment status; Sales are only created from Quotes; canceled Sales leave every total.
 - Fase 0 — base confiável: corrected Sale summary and dashboard numbers (no more totals multiplied by items × receipts; quantity-weighted average price/cost per Product; monthly Profit with Freight/Commission once per Sale), owner-only access (`ALLOWED_EMAILS`), embedded migrations with `cmd/migrate`, CI, Go 1.26 Docker image, ops/backup notes.
 - Commercial registries (SPEC-003): `/partners` with type replaces `/vendedores-externos`; Customer lead source (+ referring Partner); Product categories (`/product-categories`) and `category_id` on Products.
 - Quote → Sale hardening: quote without supplier, quick sale, Sale exposes its origin Quote, safer delete/convert, PATCH allowed by CORS, business-timezone dates, integration tests.

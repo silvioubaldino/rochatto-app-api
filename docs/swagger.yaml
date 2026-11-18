@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: Rochatto App API
   description: |
-    API de gestão de vendas, clientes, produtos, estoque, pagamentos e dashboard.
+    API de gestão de vendas, clientes, produtos, compras, estoque, pagamentos e dashboard.
 
     **Autenticação**: Todos os endpoints em `/api/v1/` exigem um token Firebase Bearer válido.
     O endpoint `GET /health` é público.
@@ -299,16 +299,19 @@ components:
           type: string
           description: Único entre categorias não excluídas (case-insensitive)
 
-    # --- Venda ---
-    VendaStatus:
+    # --- Venda (AYD-002: delivery_status manual + payment_status calculado) ---
+    SaleDeliveryStatus:
       type: string
-      enum:
-        - A_ENTREGAR
-        - A_ENTREGAR_DATA
-        - A_RETIRAR
-        - ENTREGUE_PARCIAL
-        - ENTREGUE
-      example: "A_ENTREGAR"
+      enum: [TO_DELIVER, DELIVERED, CANCELED]
+      description: Status de entrega da Sale (manual). CANCELED é terminal.
+    SalePaymentStatus:
+      type: string
+      enum: [PENDING, PARTIAL, PAID]
+      description: "Calculado dos Receipts (view): PENDING se recebido = 0; PARTIAL se 0 < recebido < total; PAID se recebido ≥ total"
+    ItemOrigin:
+      type: string
+      enum: [MADE_TO_ORDER, FROM_STOCK]
+      default: MADE_TO_ORDER
 
     ItemVendaRequest:
       type: object
@@ -320,16 +323,22 @@ components:
           type: string
           format: uuid
           nullable: true
+          description: Obrigatório quando origin = FROM_STOCK
         produto_nome:
           type: string
-          example: "Camiseta Básica"
+          example: "Granito São Gabriel"
         fornecedor_id:
           type: string
           format: uuid
           nullable: true
+          description: Necessário para o Item MADE_TO_ORDER entrar numa Purchase
         fornecedor_nome:
           type: string
           nullable: true
+        origin:
+          allOf:
+            - $ref: "#/components/schemas/ItemOrigin"
+          description: "Ausente: MADE_TO_ORDER no POST; mantém a atual no PUT"
         quantidade:
           type: number
           format: double
@@ -344,12 +353,11 @@ components:
           type: number
           format: double
           minimum: 0
-          example: 20.00
-        pago_fornecedor:
-          type: number
-          format: double
-          minimum: 0
-          example: 0
+          nullable: true
+          description: |
+            Ausente/null com origin FROM_STOCK → custo da última entrada do Product (RN-16).
+            Sem nenhuma entrada: custo atual do Item (PUT) ou custo de referência do Product (POST), senão 0.
+            Ausente/null em MADE_TO_ORDER → custo atual (PUT) ou custo de referência (POST).
 
     ItemVendaResponse:
       type: object
@@ -370,6 +378,18 @@ components:
         fornecedor_nome:
           type: string
           nullable: true
+        origin:
+          $ref: "#/components/schemas/ItemOrigin"
+        purchase_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Só leitura; setado pela Purchase
+        purchase_status:
+          allOf:
+            - $ref: "#/components/schemas/PurchaseStatus"
+          nullable: true
+          description: Só leitura; status da Purchase do Item (null se não está em Purchase)
         quantidade:
           type: number
           format: double
@@ -379,21 +399,27 @@ components:
         custo_unit:
           type: number
           format: double
-        pago_fornecedor:
-          type: number
-          format: double
         total_venda:
           type: number
           format: double
         total_custo:
           type: number
           format: double
-        a_pagar_fornecedor:
-          type: number
-          format: double
         created_at:
           type: string
           format: date-time
+
+    ItemVendaMutationResponse:
+      allOf:
+        - $ref: "#/components/schemas/ItemVendaResponse"
+        - type: object
+          properties:
+            warnings:
+              type: array
+              items:
+                type: string
+                enum: [INSUFFICIENT_STOCK]
+              description: Sempre presente em POST/PUT (pode ser vazio)
 
     PagamentoResponse:
       type: object
@@ -445,8 +471,15 @@ components:
         vendedor_externo_nome:
           type: string
           nullable: true
-        status:
-          $ref: "#/components/schemas/VendaStatus"
+        quote_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Quote de origem (AYD-001); null só em Sales anteriores aos Quotes
+        delivery_status:
+          $ref: "#/components/schemas/SaleDeliveryStatus"
+        payment_status:
+          $ref: "#/components/schemas/SalePaymentStatus"
         data_venda:
           type: string
           format: date
@@ -454,6 +487,7 @@ components:
           type: string
           format: date
           nullable: true
+          description: Prazo de entrega
         frete_valor:
           type: number
           format: double
@@ -492,9 +526,6 @@ components:
         - $ref: "#/components/schemas/VendaListResponse"
         - type: object
           properties:
-            a_pagar_fornecedor:
-              type: number
-              format: double
             a_pagar_frete:
               type: number
               format: double
@@ -507,74 +538,18 @@ components:
               items:
                 $ref: "#/components/schemas/PagamentoResponse"
 
-    VendaCreateRequest:
-      type: object
-      required:
-        - cliente_id
-        - status
-        - data_venda
-      properties:
-        cliente_id:
-          type: string
-          format: uuid
-        vendedor_externo_id:
-          type: string
-          format: uuid
-          nullable: true
-        status:
-          $ref: "#/components/schemas/VendaStatus"
-        data_venda:
-          type: string
-          format: date
-          example: "2026-04-14"
-        data_entrega_prevista:
-          type: string
-          format: date
-          nullable: true
-          example: "2026-04-20"
-          description: "Obrigatória quando status = A_ENTREGAR_DATA"
-        frete_valor:
-          type: number
-          format: double
-          minimum: 0
-          default: 0
-        frete_pago:
-          type: number
-          format: double
-          minimum: 0
-          default: 0
-        comissao_valor:
-          type: number
-          format: double
-          minimum: 0
-          default: 0
-        comissao_paga:
-          type: boolean
-          default: false
-        observacoes:
-          type: string
-          nullable: true
-        itens:
-          type: array
-          items:
-            $ref: "#/components/schemas/ItemVendaRequest"
-
     VendaUpdateRequest:
       type: object
-      required:
-        - status
+      description: "Não aceita `status`/`delivery_status` (400) — use PATCH /vendas/{id}/delivery-status"
       properties:
         vendedor_externo_id:
           type: string
           format: uuid
           nullable: true
-        status:
-          $ref: "#/components/schemas/VendaStatus"
         data_entrega_prevista:
           type: string
           format: date
           nullable: true
-          description: "Obrigatória quando status = A_ENTREGAR_DATA"
         frete_valor:
           type: number
           format: double
@@ -596,6 +571,22 @@ components:
         observacoes:
           type: string
           nullable: true
+
+    DeliveryStatusRequest:
+      type: object
+      required: [delivery_status]
+      properties:
+        delivery_status:
+          $ref: "#/components/schemas/SaleDeliveryStatus"
+
+    DeliveryStatusResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        delivery_status:
+          $ref: "#/components/schemas/SaleDeliveryStatus"
 
     # --- Pagamentos ---
     PagamentoCreateRequest:
@@ -662,119 +653,429 @@ components:
           nullable: true
           description: "Se omitido, assume a data de hoje"
 
-    # --- Estoque ---
-    EstoqueRequest:
+    # --- Purchase (AYD-002) ---
+    PurchaseKind:
+      type: string
+      enum: [MADE_TO_ORDER, STOCK_REPLENISHMENT]
+    PurchaseStatus:
+      type: string
+      enum: [OPEN, ORDERED, RECEIVED]
+    SupplierPaymentStatus:
+      type: string
+      enum: [PENDING, PAID]
+
+    PurchaseLineRequest:
       type: object
-      required:
-        - produto_nome
-        - quantidade_entrada
-        - data_entrada
+      required: [product_id, quantity, unit_cost]
       properties:
-        produto_id:
+        product_id:
           type: string
           format: uuid
-          nullable: true
-        produto_nome:
-          type: string
-          example: "Camiseta Básica"
-        fornecedor_id:
-          type: string
-          format: uuid
-          nullable: true
-        quantidade_entrada:
+        quantity:
           type: number
           format: double
           minimum: 0.001
-          example: 100
-        custo_unit:
+        unit_cost:
           type: number
           format: double
           minimum: 0
-          example: 20.00
-        data_entrada:
-          type: string
-          format: date
-          example: "2026-04-14"
-        observacoes:
-          type: string
-          nullable: true
 
-    EstoqueResponse:
+    PurchaseLine:
       type: object
       properties:
         id:
           type: string
           format: uuid
-        produto_id:
+        product_id:
           type: string
           format: uuid
-          nullable: true
+        product_name:
+          type: string
+        quantity:
+          type: number
+          format: double
+        unit_cost:
+          type: number
+          format: double
+
+    PurchaseSaleItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        sale_id:
+          type: string
+          format: uuid
+        customer_name:
+          type: string
         produto_nome:
           type: string
-        produto_catalogo_nome:
-          type: string
-          nullable: true
-          description: "Nome do produto no catálogo (join com tabela produtos)"
-        fornecedor_id:
-          type: string
-          format: uuid
-          nullable: true
-        fornecedor_nome_catalogo:
-          type: string
-          nullable: true
-          description: "Nome do fornecedor no catálogo (join com tabela fornecedores)"
-        quantidade_entrada:
+        quantidade:
           type: number
           format: double
         custo_unit:
           type: number
           format: double
-        data_entrada:
+
+    PurchaseCreateRequest:
+      type: object
+      required: [kind, supplier_id]
+      properties:
+        kind:
+          $ref: "#/components/schemas/PurchaseKind"
+        supplier_id:
+          type: string
+          format: uuid
+        expected_date:
           type: string
           format: date
-        observacoes:
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        sale_item_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: Só MADE_TO_ORDER (vazio aceito em STOCK_REPLENISHMENT)
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PurchaseLineRequest"
+          description: Só STOCK_REPLENISHMENT (vazio aceito em MADE_TO_ORDER)
+
+    PurchaseUpdateRequest:
+      type: object
+      properties:
+        expected_date:
+          type: string
+          format: date
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+
+    PurchaseSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          $ref: "#/components/schemas/PurchaseKind"
+        status:
+          $ref: "#/components/schemas/PurchaseStatus"
+        supplier_id:
+          type: string
+          format: uuid
+        supplier_name:
+          type: string
+        expected_date:
+          type: string
+          format: date
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        ordered_at:
+          type: string
+          format: date
+          nullable: true
+        received_at:
+          type: string
+          format: date
+          nullable: true
+        payment_status:
+          $ref: "#/components/schemas/SupplierPaymentStatus"
+        paid_amount:
+          type: number
+          format: double
+          nullable: true
+        paid_at:
+          type: string
+          format: date
+          nullable: true
+        total_cost:
+          type: number
+          format: double
+          description: "View: Σ quantidade × custo das linhas (Items de Sale ou linhas de reposição)"
+        to_pay:
+          type: number
+          format: double
+          description: "View: total_cost − COALESCE(paid_amount, 0) se PENDING; 0 se PAID"
+        line_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    PurchaseDetail:
+      allOf:
+        - $ref: "#/components/schemas/PurchaseSummary"
+        - type: object
+          properties:
+            sale_items:
+              type: array
+              items:
+                $ref: "#/components/schemas/PurchaseSaleItem"
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/PurchaseLine"
+
+    PendingSaleItemGroup:
+      type: object
+      properties:
+        supplier_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: null = Items MADE_TO_ORDER ainda sem Supplier (grupo sempre por último)
+        supplier_name:
+          type: string
+          nullable: true
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              sale_id:
+                type: string
+                format: uuid
+              customer_name:
+                type: string
+              produto_id:
+                type: string
+                format: uuid
+                nullable: true
+              produto_nome:
+                type: string
+              quantidade:
+                type: number
+                format: double
+              custo_unit:
+                type: number
+                format: double
+              sale_date:
+                type: string
+                format: date
+
+    SaleItemIDsRequest:
+      type: object
+      required: [sale_item_ids]
+      properties:
+        sale_item_ids:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: uuid
+
+    PurchaseStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: "#/components/schemas/PurchaseStatus"
+
+    PurchaseStatusResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/PurchaseStatus"
+        ordered_at:
+          type: string
+          format: date
+          nullable: true
+        received_at:
+          type: string
+          format: date
+          nullable: true
+
+    PurchasePaymentRequest:
+      type: object
+      required: [payment_status]
+      properties:
+        payment_status:
+          $ref: "#/components/schemas/SupplierPaymentStatus"
+        paid_amount:
+          type: number
+          format: double
+          nullable: true
+          description: "PAID: ≥ 0, default = total_cost. PENDING: ignorado (zerado)"
+        paid_at:
+          type: string
+          format: date
+          nullable: true
+          description: "PAID: default = hoje. PENDING: ignorado (zerado)"
+
+    PurchasePaymentResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        payment_status:
+          $ref: "#/components/schemas/SupplierPaymentStatus"
+        paid_amount:
+          type: number
+          format: double
+          nullable: true
+        paid_at:
+          type: string
+          format: date
+          nullable: true
+        to_pay:
+          type: number
+          format: double
+
+    # --- Stock (AYD-002) ---
+    StockBalance:
+      type: object
+      properties:
+        product_id:
+          type: string
+          format: uuid
+        product_name:
+          type: string
+        unit:
+          type: string
+          nullable: true
+        inflow_qty:
+          type: number
+          format: double
+          description: Σ linhas de Purchases STOCK_REPLENISHMENT RECEIVED
+        outflow_qty:
+          type: number
+          format: double
+          description: Σ Items FROM_STOCK de Sales não canceladas
+        adjustment_qty:
+          type: number
+          format: double
+        balance:
+          type: number
+          format: double
+          description: inflow − outflow + adjustment (pode ser negativo)
+        last_inflow_cost:
+          type: number
+          format: double
+          nullable: true
+        last_inflow_date:
+          type: string
+          format: date
+          nullable: true
+
+    StockMovement:
+      type: object
+      properties:
+        kind:
+          type: string
+          enum: [INFLOW, OUTFLOW, ADJUSTMENT]
+        date:
+          type: string
+          format: date
+        quantity:
+          type: number
+          format: double
+          description: Com sinal (efeito no Balance) — INFLOW positivo, OUTFLOW negativo, ADJUSTMENT o próprio sinal
+        unit_cost:
+          type: number
+          format: double
+          nullable: true
+        reference_id:
+          type: string
+          format: uuid
+          description: Purchase (INFLOW), Sale (OUTFLOW) ou ajuste (ADJUSTMENT)
+        description:
+          type: string
+
+    StockBalanceDetail:
+      allOf:
+        - $ref: "#/components/schemas/StockBalance"
+        - type: object
+          properties:
+            movements:
+              type: array
+              description: Ordenado por data desc
+              items:
+                $ref: "#/components/schemas/StockMovement"
+
+    StockAdjustmentRequest:
+      type: object
+      required: [product_id, quantity, reason]
+      properties:
+        product_id:
+          type: string
+          format: uuid
+        quantity:
+          type: number
+          format: double
+          description: "± (≠ 0)"
+        unit_cost:
+          type: number
+          format: double
+          nullable: true
+        reason:
+          type: string
+          enum: [INITIAL, COUNT, OTHER]
+        adjusted_at:
+          type: string
+          format: date
+          description: Default = hoje
+        notes:
+          type: string
+          nullable: true
+
+    StockAdjustment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        product_id:
+          type: string
+          format: uuid
+        product_name:
+          type: string
+        quantity:
+          type: number
+          format: double
+        unit_cost:
+          type: number
+          format: double
+          nullable: true
+        reason:
+          type: string
+          enum: [INITIAL, COUNT, OTHER]
+        adjusted_at:
+          type: string
+          format: date
+        notes:
           type: string
           nullable: true
         created_at:
           type: string
           format: date-time
 
-    ResumoEstoqueItem:
-      type: object
-      properties:
-        produto_nome:
-          type: string
-        produto_id:
-          type: string
-          format: uuid
-          nullable: true
-        total_entradas:
-          type: integer
-          description: "Número de lançamentos de entrada"
-        quantidade_total:
-          type: number
-          format: double
-        custo_medio:
-          type: number
-          format: double
-        valor_total_estoque:
-          type: number
-          format: double
-        ultima_entrada:
-          type: string
-          format: date
-
-    # --- Dashboard ---
     ResumoResponse:
       type: object
       properties:
         total_a_receber:
           type: number
           format: double
-          description: "Total a receber de vendas não-ENTREGUE"
+          description: "Σ (total_venda − total_recebido, mínimo 0) das Sales não canceladas"
         total_a_pagar_fornecedor:
           type: number
           format: double
+          description: "Σ to_pay das Purchases não excluídas (RN-06)"
         total_comissoes_pendentes:
           type: number
           format: double
@@ -786,7 +1087,7 @@ components:
           format: double
         vendas_abertas:
           type: integer
-          description: "Quantidade de vendas com status != ENTREGUE"
+          description: "Quantidade de Sales com delivery_status = TO_DELIVER (totais excluem Sales CANCELED)"
         periodo:
           type: object
           properties:
@@ -1788,11 +2089,16 @@ paths:
         Suporta múltiplos filtros opcionais.
       operationId: listVendas
       parameters:
-        - name: status
+        - name: delivery_status
           in: query
           schema:
-            $ref: "#/components/schemas/VendaStatus"
-          description: Filtra por status exato
+            type: string
+          description: "SaleDeliveryStatus; aceita vários separados por vírgula (ex.: TO_DELIVER,DELIVERED)"
+        - name: payment_status
+          in: query
+          schema:
+            type: string
+          description: "SalePaymentStatus; aceita vários separados por vírgula (ex.: PENDING,PARTIAL)"
         - name: data_inicio
           in: query
           schema:
@@ -1827,46 +2133,6 @@ paths:
                   $ref: "#/components/schemas/VendaListResponse"
         "400":
           description: "Parâmetro inválido (ex: cliente_id não é UUID)"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "401":
-          description: Não autenticado
-        "500":
-          description: Erro interno
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-    post:
-      tags:
-        - Vendas
-      summary: Cria uma nova venda (com itens opcionais)
-      operationId: createVenda
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/VendaCreateRequest"
-      responses:
-        "201":
-          description: Venda criada com sucesso (retorna detalhe completo)
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/VendaDetailResponse"
-        "400":
-          description: |
-            Dados inválidos. Possíveis erros:
-            - `cliente_id` obrigatório ou não encontrado
-            - `status` inválido
-            - `data_entrega_prevista` obrigatória para A_ENTREGAR_DATA
-            - `data_venda` obrigatória (formato YYYY-MM-DD)
-            - Valores monetários negativos
-            - Erros de validação dos itens (produto_nome, quantidade, preços)
           content:
             application/json:
               schema:
@@ -1989,6 +2255,56 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
 
   # --- Itens de Venda ---
+  /api/v1/vendas/{id}/delivery-status:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      tags:
+        - Vendas
+      summary: Altera o status de entrega da Sale
+      operationId: updateDeliveryStatus
+      description: |
+        Cancelar (CANCELED) só se nenhum Item estiver em Purchase ORDERED/RECEIVED; Items em Purchase OPEN
+        são liberados na mesma transação. CANCELED é terminal.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeliveryStatusRequest"
+      responses:
+        "200":
+          description: Status alterado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryStatusResponse"
+        "400":
+          description: "Payload/parâmetro inválido"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: "Não encontrado"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: "Sale já CANCELED ou com Item em Purchase ORDERED/RECEIVED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+
   /api/v1/vendas/{id}/itens:
     parameters:
       - name: id
@@ -2051,9 +2367,15 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ItemVendaResponse"
+                $ref: "#/components/schemas/ItemVendaMutationResponse"
         "400":
           description: Dados inválidos (produto_nome, quantidade > 0, preços >= 0)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: "Sale CANCELED, ou Item em Purchase (OPEN: remova-o antes; ORDERED/RECEIVED: origin/fornecedor_id/quantidade/custo_unit travados; DELETE sempre 409)"
           content:
             application/json:
               schema:
@@ -2107,9 +2429,15 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ItemVendaResponse"
+                $ref: "#/components/schemas/ItemVendaMutationResponse"
         "400":
           description: Dados inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: "Sale CANCELED, ou Item em Purchase (OPEN: remova-o antes; ORDERED/RECEIVED: origin/fornecedor_id/quantidade/custo_unit travados; DELETE sempre 409)"
           content:
             application/json:
               schema:
@@ -2143,6 +2471,12 @@ paths:
           description: Item removido com sucesso
         "400":
           description: UUID inválido ou tentativa de remover o último item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: "Sale CANCELED, ou Item em Purchase (OPEN: remova-o antes; ORDERED/RECEIVED: origin/fornecedor_id/quantidade/custo_unit travados; DELETE sempre 409)"
           content:
             application/json:
               schema:
@@ -2407,241 +2741,632 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
 
   # ============================================================
-  # Estoque
+  # Purchases / Stock (AYD-002)
   # ============================================================
-  /api/v1/estoque/resumo:
+  /api/v1/purchases:
     get:
       tags:
-        - Estoque
-      summary: Resumo do estoque agrupado por produto
-      operationId: getResumoEstoque
+        - Purchases
+      summary: Lista Purchases (sem linhas)
+      operationId: listPurchases
       parameters:
-        - name: produto_id
+        - name: kind
+          in: query
+          schema:
+            $ref: "#/components/schemas/PurchaseKind"
+          description: "Tipo"
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/PurchaseStatus"
+          description: "Status"
+        - name: payment_status
+          in: query
+          schema:
+            $ref: "#/components/schemas/SupplierPaymentStatus"
+          description: "Pagamento ao Supplier"
+        - name: supplier_id
           in: query
           schema:
             type: string
             format: uuid
-          description: Filtra por produto específico
+          description: "Supplier"
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date
+          description: "Data de criação ≥ (fuso America/Sao_Paulo)"
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date
+          description: "Data de criação ≤"
       responses:
         "200":
-          description: Resumo do estoque ordenado por quantidade_total DESC
+          description: Purchases não excluídas, created_at desc
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/ResumoEstoqueItem"
+                  $ref: "#/components/schemas/PurchaseSummary"
         "400":
-          description: produto_id inválido
+          description: "Payload/parâmetro inválido"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Não autenticado
-        "500":
-          description: Erro interno
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  /api/v1/estoque:
-    get:
-      tags:
-        - Estoque
-      summary: Lista lançamentos de entrada de estoque
-      operationId: listEstoque
-      parameters:
-        - name: produto_id
-          in: query
-          schema:
-            type: string
-            format: uuid
-          description: Filtra por produto
-        - name: data_inicio
-          in: query
-          schema:
-            type: string
-            format: date
-          description: "Filtra por data_entrada >= (formato: YYYY-MM-DD)"
-        - name: data_fim
-          in: query
-          schema:
-            type: string
-            format: date
-          description: "Filtra por data_entrada <= (formato: YYYY-MM-DD)"
-      responses:
-        "200":
-          description: Lista de lançamentos ordenada por data_entrada DESC
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/EstoqueResponse"
-        "400":
-          description: produto_id inválido
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "401":
-          description: Não autenticado
-        "500":
-          description: Erro interno
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
     post:
       tags:
-        - Estoque
-      summary: Registra uma entrada de estoque
-      operationId: createEstoque
+        - Purchases
+      summary: Cria Purchase OPEN
+      operationId: createPurchase
+      description: |
+        MADE_TO_ORDER: anexa `sale_item_ids` (mesmas regras de POST /purchases/{id}/sale-items).
+        STOCK_REPLENISHMENT: cria as `items` (linhas de reposição).
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/EstoqueRequest"
+              $ref: "#/components/schemas/PurchaseCreateRequest"
       responses:
         "201":
-          description: Entrada de estoque registrada com sucesso
+          description: Purchase criada
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/EstoqueResponse"
+                $ref: "#/components/schemas/PurchaseDetail"
         "400":
-          description: |
-            Dados inválidos:
-            - `produto_nome` obrigatório
-            - `quantidade_entrada` deve ser > 0
-            - `custo_unit` não pode ser negativo
-            - `data_entrada` obrigatória (formato: YYYY-MM-DD)
+          description: "Payload inválido, fornecedor/produto inexistente, ou lista do outro tipo não vazia"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: "Item de Sale inexistente"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: "Item de outro Supplier, já em outra Purchase, FROM_STOCK ou de Sale cancelada"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Não autenticado
-        "500":
-          description: Erro interno
+
+  /api/v1/purchases/pending-sale-items:
+    get:
+      tags:
+        - Purchases
+      summary: Fila de Items a comprar por Supplier (RF-31)
+      operationId: pendingSaleItems
+      description: |
+        Items MADE_TO_ORDER sem Purchase de Sales não canceladas/excluídas, agrupados por Supplier
+        (por nome); o grupo sem Supplier (supplier_id null) vem por último.
+      responses:
+        "200":
+          description: Grupos
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                type: array
+                items:
+                  $ref: "#/components/schemas/PendingSaleItemGroup"
+        "401":
+          description: Não autenticado
 
-  /api/v1/estoque/{id}:
+  /api/v1/purchases/{id}:
     parameters:
       - name: id
         in: path
         required: true
-        description: UUID do lançamento de estoque
         schema:
           type: string
           format: uuid
-
     get:
       tags:
-        - Estoque
-      summary: Busca um lançamento de estoque por ID
-      operationId: getEstoque
+        - Purchases
+      summary: Detalhe da Purchase
+      operationId: getPurchase
       responses:
         "200":
-          description: Lançamento de estoque encontrado
+          description: Purchase + linhas + totais
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/EstoqueResponse"
-        "400":
-          description: UUID inválido
+                $ref: "#/components/schemas/PurchaseDetail"
+        "404":
+          description: "Não encontrado"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Não autenticado
-        "404":
-          description: Registro não encontrado
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Erro interno
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
     put:
       tags:
-        - Estoque
-      summary: Atualiza um lançamento de estoque
-      operationId: updateEstoque
+        - Purchases
+      summary: Edita expected_date e notes
+      operationId: updatePurchase
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/EstoqueRequest"
+              $ref: "#/components/schemas/PurchaseUpdateRequest"
       responses:
         "200":
-          description: Lançamento atualizado com sucesso
+          description: Atualizada
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/EstoqueResponse"
+                $ref: "#/components/schemas/PurchaseDetail"
         "400":
-          description: Dados inválidos
+          description: "Payload/parâmetro inválido"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: "Não encontrado"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Não autenticado
-        "404":
-          description: Registro não encontrado
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Erro interno
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
     delete:
       tags:
-        - Estoque
-      summary: Remove um lançamento de estoque (hard delete)
-      description: "⚠️ Diferente dos outros recursos, este é um **hard delete** (remoção física)."
-      operationId: deleteEstoque
+        - Purchases
+      summary: Soft-delete (só OPEN); libera os Items de Sale
+      operationId: deletePurchase
       responses:
         "204":
-          description: Lançamento removido com sucesso
-        "400":
-          description: UUID inválido
+          description: Excluída
+        "404":
+          description: "Não encontrado"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: "Purchase ≠ OPEN"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Não autenticado
-        "500":
-          description: Erro interno
+
+  /api/v1/purchases/{id}/sale-items:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags:
+        - Purchases
+      summary: Anexa Items de Sale (só OPEN, kind MADE_TO_ORDER)
+      operationId: attachSaleItems
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaleItemIDsRequest"
+      responses:
+        "200":
+          description: Purchase atualizada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseDetail"
+        "400":
+          description: "Payload/parâmetro inválido"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: "Purchase ou Item inexistente"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: "Purchase ≠ OPEN ou kind ≠ MADE_TO_ORDER; Item de outro Supplier/sem Supplier, já em outra Purchase, FROM_STOCK ou de Sale cancelada"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
 
-  # ============================================================
-  # Dashboard
-  # ============================================================
+  /api/v1/purchases/{id}/sale-items/{saleItemId}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: saleItemId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      tags:
+        - Purchases
+      summary: Desanexa Item de Sale (só OPEN)
+      operationId: detachSaleItem
+      responses:
+        "204":
+          description: Desanexado (volta à fila)
+        "404":
+          description: "Purchase inexistente ou Item não está nela"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: "Purchase ≠ OPEN"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+
+  /api/v1/purchases/{id}/items:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags:
+        - Purchases
+      summary: Adiciona linha de reposição (só OPEN, kind STOCK_REPLENISHMENT)
+      operationId: createPurchaseLine
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchaseLineRequest"
+      responses:
+        "201":
+          description: Linha criada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseLine"
+        "400":
+          description: "Payload/parâmetro inválido"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: "Não encontrado"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: "Purchase ≠ OPEN ou kind ≠ STOCK_REPLENISHMENT"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+
+  /api/v1/purchases/{id}/items/{itemId}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: itemId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    put:
+      tags:
+        - Purchases
+      summary: Edita linha de reposição (só OPEN)
+      operationId: updatePurchaseLine
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchaseLineRequest"
+      responses:
+        "200":
+          description: Linha atualizada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseLine"
+        "400":
+          description: "Payload/parâmetro inválido"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: "Não encontrado"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: "Purchase ≠ OPEN"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+    delete:
+      tags:
+        - Purchases
+      summary: Remove linha de reposição (só OPEN)
+      operationId: deletePurchaseLine
+      responses:
+        "204":
+          description: Removida
+        "404":
+          description: "Não encontrado"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: "Purchase ≠ OPEN"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+
+  /api/v1/purchases/{id}/status:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      tags:
+        - Purchases
+      summary: Transição de status
+      operationId: updatePurchaseStatus
+      description: |
+        Só OPEN→ORDERED (carimba ordered_at), ORDERED→OPEN (limpa ordered_at) e ORDERED→RECEIVED
+        (carimba received_at). RECEIVED é terminal.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchaseStatusRequest"
+      responses:
+        "200":
+          description: Status alterado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseStatusResponse"
+        "400":
+          description: "Payload/parâmetro inválido"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: "Não encontrado"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: "Transição ilegal"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: "Purchase sem linhas ao ir para ORDERED"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+
+  /api/v1/purchases/{id}/payment:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      tags:
+        - Purchases
+      summary: Registra/desfaz o pagamento ao Supplier
+      operationId: updatePurchasePayment
+      description: |
+        Um pagamento por Purchase; independe do status. PAID: paid_amount default = total_cost, paid_at default = hoje.
+        PENDING: zera paid_amount e paid_at.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasePaymentRequest"
+      responses:
+        "200":
+          description: Pagamento atualizado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasePaymentResponse"
+        "400":
+          description: "Payload/parâmetro inválido"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: "Não encontrado"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+
+  /api/v1/stock/balance:
+    get:
+      tags:
+        - Stock
+      summary: Balance por Product
+      operationId: listStockBalance
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: "Trecho do nome do Product"
+        - name: only_negative
+          in: query
+          schema:
+            type: boolean
+          description: "Se true, só Balance < 0"
+      responses:
+        "200":
+          description: Products não excluídos, por nome
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/StockBalance"
+        "401":
+          description: Não autenticado
+
+  /api/v1/stock/balance/{productId}:
+    parameters:
+      - name: productId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags:
+        - Stock
+      summary: Balance + extrato do Product
+      operationId: getStockBalance
+      responses:
+        "200":
+          description: Balance e movimentos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockBalanceDetail"
+        "404":
+          description: "Não encontrado"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+
+  /api/v1/stock/adjustments:
+    get:
+      tags:
+        - Stock
+      summary: Lista ajustes
+      operationId: listStockAdjustments
+      parameters:
+        - name: product_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: "Filtra por Product"
+      responses:
+        "200":
+          description: adjusted_at desc
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/StockAdjustment"
+        "400":
+          description: "Payload/parâmetro inválido"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+    post:
+      tags:
+        - Stock
+      summary: Cria ajuste manual (imutável)
+      operationId: createStockAdjustment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StockAdjustmentRequest"
+      responses:
+        "201":
+          description: Ajuste criado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockAdjustment"
+        "400":
+          description: "quantity = 0, reason inválido, produto inexistente ou data inválida"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+
   /api/v1/dashboard/resumo:
     get:
       tags:
@@ -2887,8 +3612,10 @@ tags:
     description: Itens de uma venda
   - name: Pagamentos
     description: Pagamentos de clientes por venda
-  - name: Estoque
-    description: Controle de entradas de estoque
+  - name: Purchases
+    description: Compras consolidadas por Supplier e pagamento ao Supplier (AYD-002)
+  - name: Stock
+    description: Balance por Product, extrato e ajustes (AYD-002)
   - name: Dashboard
     description: Indicadores financeiros e notificações
   - name: Relatórios

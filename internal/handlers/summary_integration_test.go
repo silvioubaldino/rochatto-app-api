@@ -79,8 +79,8 @@ func TestIntegration_SaleSummaryNoFanOut(t *testing.T) {
 	api, db, cid := newSummaryEnv(t)
 
 	saleID := insertSale(t, db, cid, 400, 100)
-	mustExec(t, db, `INSERT INTO itens_venda (venda_id, produto_nome, quantidade, preco_venda_unit, custo_unit, pago_fornecedor)
-		VALUES (?, 'Granito', 2, 1000, 600, 500), (?, 'Mármore', 1.5, 2000, 1200, 0)`, saleID, saleID)
+	mustExec(t, db, `INSERT INTO itens_venda (venda_id, produto_nome, quantidade, preco_venda_unit, custo_unit)
+		VALUES (?, 'Granito', 2, 1000, 600), (?, 'Mármore', 1.5, 2000, 1200)`, saleID, saleID)
 	mustExec(t, db, `INSERT INTO pagamentos_cliente (venda_id, valor, status)
 		VALUES (?, 1000, 'recebido'), (?, 1500, 'recebido'), (?, 800, 'pendente')`, saleID, saleID, saleID)
 
@@ -89,12 +89,11 @@ func TestIntegration_SaleSummaryNoFanOut(t *testing.T) {
 		t.Fatalf("GET venda = %d", code)
 	}
 	want := map[string]float64{
-		"total_venda":        5000, // 2×1000 + 1.5×2000
-		"total_custo":        3000, // 2×600 + 1.5×1200
-		"total_recebido":     2500, // só os recebidos
-		"a_receber":          2500,
-		"a_pagar_fornecedor": 2500, // 3000 − 500
-		"lucro":              1500, // 5000 − 3000 − 400 − 100 (RN-04)
+		"total_venda":    5000, // 2×1000 + 1.5×2000
+		"total_custo":    3000, // 2×600 + 1.5×1200
+		"total_recebido": 2500, // só os recebidos
+		"a_receber":      2500,
+		"lucro":          1500, // 5000 − 3000 − 400 − 100 (RN-04)
 	}
 	for k, v := range want {
 		if got, _ := sale[k].(float64); !approx(got, v) {
@@ -144,8 +143,8 @@ func TestIntegration_DashboardNumbers(t *testing.T) {
 
 	// Sale 1: 2 Items, 2 Receipts recebidos + 1 pendente, Freight 400, Commission 100.
 	s1 := insertSale(t, db, cid, 400, 100)
-	mustExec(t, db, `INSERT INTO itens_venda (venda_id, produto_id, produto_nome, quantidade, preco_venda_unit, custo_unit, pago_fornecedor)
-		VALUES (?, ?, 'Quartzito nome antigo', 2, 1000, 600, 500)`, s1, productID)
+	mustExec(t, db, `INSERT INTO itens_venda (venda_id, produto_id, produto_nome, quantidade, preco_venda_unit, custo_unit)
+		VALUES (?, ?, 'Quartzito nome antigo', 2, 1000, 600)`, s1, productID)
 	mustExec(t, db, `INSERT INTO itens_venda (venda_id, produto_nome, quantidade, preco_venda_unit, custo_unit)
 		VALUES (?, ?, 1.5, 2000, 1200)`, s1, legacyName)
 	mustExec(t, db, `INSERT INTO pagamentos_cliente (venda_id, valor, status)
@@ -226,7 +225,7 @@ func TestIntegration_DashboardAReceberIncludesDelivered(t *testing.T) {
 	before := takeSnapshot(t, api, day, month)
 
 	delivered := insertSale(t, db, cid, 0, 0)
-	mustExec(t, db, `UPDATE vendas SET status = 'ENTREGUE' WHERE id = ?`, delivered)
+	mustExec(t, db, `UPDATE vendas SET delivery_status = 'DELIVERED' WHERE id = ?`, delivered)
 	mustExec(t, db, `INSERT INTO itens_venda (venda_id, produto_nome, quantidade, preco_venda_unit, custo_unit)
 		VALUES (?, 'Granito', 1, 1000, 500)`, delivered)
 	mustExec(t, db, `INSERT INTO pagamentos_cliente (venda_id, valor, status) VALUES (?, 400, 'recebido')`, delivered)
