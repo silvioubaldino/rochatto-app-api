@@ -110,7 +110,7 @@ Com `MCP_ENABLED=true` e `PUBLIC_BASE_URL`/`WEB_APP_URL` ausentes ou inválidas 
 
 Testes de integração: `TEST_DATABASE_URL` (banco descartável com migrations aplicadas; os testes do conector — `oauth`, `mcp`, migração 009 — criam um banco próprio por teste e exigem permissão de `CREATE DATABASE`, senão são pulados).
 
-Catálogo do Assistant connector (`catalog_version` **1.1.0** = `CatalogVersion` em `internal/mcp/registry.go`, publicada em `serverInfo.version`; 39 ferramentas: 20 de leitura + 19 de escrita; mudança de catálogo muda a versão — AYD-006 §3.9): `internal/mcp/testdata/catalog.golden.json` é contrato — mudou ferramenta,
+Catálogo do Assistant connector (`catalog_version` **1.0.0** = `CatalogVersion` em `internal/mcp/registry.go`, publicada em `serverInfo.version`; 36 ferramentas: 20 de leitura + 16 de escrita; mudança de catálogo muda a versão — AYD-006 §3.9): `internal/mcp/testdata/catalog.golden.json` é contrato — mudou ferramenta,
 schema ou anotação? Atualize o AYD-006 no repo de contexto e regenere com
 `go test ./internal/mcp -run TestCatalogGolden -update` no mesmo PR.
 
@@ -144,7 +144,7 @@ go vet ./... && TEST_DATABASE_URL=$DATABASE_URL go test ./...
 | 8 | `docs/specs/SPEC-005-dashboard.md` | Dashboard: `GET /dashboard/kpis` (ticket médio, conversão Quote → Sale, saldos), `quotes.quick_sale`, `/relatorios/vendas` com N meses exatos e `/relatorios/produtos` com `from`/`to` e `unit` |
 | 9 | `docs/specs/SPEC-006-assistant-connector-platform.md` | Assistant connector: migração 009, OAuth 2.1, `/mcp`, pipeline/extensão e ferramentas de leitura |
 | 10 | `docs/specs/SPEC-007-assistant-connector-write-tools.md` | Assistant connector: 16 ferramentas de escrita, deduplicação de criações (120 s, `allow_duplicate`), scope `write` e catálogo completo `1.0.0` (34 ferramentas) |
-| 11 | `docs/specs/SPEC-008-obligations-and-movements.md` | Contas e movimentações (AYD-007): `fornecedores.kind`, Obligation/Installment/Settlement/Financial movement, migração 010 (substitui Receipts e `purchases.paid_*`), `/finance/summary` com cash/despesas/resultado, alertas a pagar, catálogo do connector `1.1.0` (39 ferramentas) |
+| 11 | `docs/specs/SPEC-008-obligations-and-movements.md` | Contas e movimentações (AYD-007): `fornecedores.kind`, Obligation/Installment/Settlement/Financial movement, migração 010 (substitui Receipts e `purchases.paid_*`), `/finance/summary` com cash/despesas/resultado, alertas a pagar, catálogo do connector `1.0.0` (36 ferramentas) |
 
 ## Deploy (Google Cloud Run — free tier)
 

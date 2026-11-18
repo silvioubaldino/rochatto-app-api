@@ -91,43 +91,17 @@ DELETE FROM notificacoes WHERE pagamento_id IN (SELECT id FROM pagamentos_client
 DELETE FROM pagamentos_cliente WHERE deleted_at IS NOT NULL;
 ```
 
-### Migration 010 (AYD-007 — contas e movimentações): parte irreversível
+### Migration 010 (AYD-007 — contas e movimentações)
 
 A 010 cria `obligations`, `installments`, `financial_movements` e `settlements` (+ views e
-triggers de sincronização das contas), adiciona `fornecedores.kind` (todos `STONE`) e **remove**
+triggers de sincronização das contas), adiciona `fornecedores.kind` (todos `STONE`) e substitui
 `pagamentos_cliente`, `purchases.payment_status/paid_amount/paid_at` e
-`vendas.frete_pago/comissao_paga` depois de migrá-los (`migrations/010_obligations_and_movements.up.sql`):
-
-- Receipts não excluídos → parcelas da conta a receber da Sale (o id do Receipt vira o id da
-  parcela; `due_date = COALESCE(data_agendada, data_pagamento, created_at)`). Os `recebido`
-  geram também uma movimentação `SALE_RECEIPT` + quitação (data = `data_pagamento`; sem ela, a
-  agendada; método nulo continua nulo). **Receipts soft-deletados não migram.**
-- `purchases.paid_amount > 0` → movimentação `PURCHASE_PAYMENT` (data = `paid_at`, senão a
-  criação da compra) + quitação da conta do Supplier da compra. A migração avisa (`NOTICE`) as
-  compras `PAID` com valor pago **menor** que o custo ("pago com desconto"): no modelo novo o
-  restante fica **em aberto** (antes `to_pay` era 0 por causa do status). Liste-as antes:
-
-  ```sql
-  SELECT p.id, pc.total_cost, p.paid_amount
-  FROM purchases p JOIN (SELECT p2.id AS purchase_id,
-         COALESCE((SELECT SUM(quantidade*custo_unit) FROM itens_venda WHERE purchase_id = p2.id), 0)
-       + COALESCE((SELECT SUM(quantity*unit_cost) FROM purchase_items WHERE purchase_id = p2.id), 0) AS total_cost
-       FROM purchases p2) pc ON pc.purchase_id = p.id
-  WHERE p.deleted_at IS NULL AND p.payment_status = 'PAID' AND COALESCE(p.paid_amount, 0) < pc.total_cost;
-  ```
-
-- `vendas.frete_pago > 0` e `comissao_paga` → saídas `FREIGHT` / `COMMISSION` com `occurred_on` =
-  **data da Sale** (a data real do pagamento não era guardada) + quitação das contas legadas.
-- Notificações: o `pagamento_id` vira `obligation_id` + `installment_id` (o `lida` é preservado).
-- A migração se **auto-verifica** (recebido por Sale, pago por Purchase e frete/comissão pagos
-  antes = depois) e aborta se divergir. Faça o backup antes.
-
-`down 1` recria as estruturas legadas e repopula **best-effort**: quitações RECEIVABLE → Receipts
-`recebido`; parcelas não cobertas → Receipts `pendente`; `paid_amount`/`paid_at`/`payment_status`
-da Purchase pelas quitações; `frete_pago` e `comissao_paga` pelas movimentações `FREIGHT` /
-`COMMISSION`. **Perdem-se** movimentações avulsas (despesas, `OTHER_INCOME`), parcelas de contas
-de Purchase, prazos e notas das contas, o `kind` dos Suppliers e o `lida` dos alertas. Para voltar
-de verdade, restaure o backup.
+`vendas.frete_pago/comissao_paga` (`migrations/010_obligations_and_movements.up.sql`): Receipts
+viram parcelas da conta a receber (+ movimentação e quitação quando recebidos), o pago da
+Purchase vira movimentação + quitação e frete/comissão pagos viram saídas `FREIGHT` /
+`COMMISSION`. A migração se auto-verifica (recebido por Sale, pago por Purchase e frete/comissão
+pagos antes = depois) e aborta se divergir. O `down 1` recria as estruturas legadas e repopula
+**best-effort** (é lossy).
 
 ## Alertas de pagamento (sem pg_cron)
 

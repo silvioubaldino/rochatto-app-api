@@ -175,7 +175,7 @@ var nullableInputs = map[string]map[string]bool{
 	"set_installments": {"due_date": true},
 }
 
-// As 19 escritas e suas anotações esperadas (AYD-006 §4.1): D = destructive, I = idempotent, dd = dedupe.
+// As 16 escritas e suas anotações esperadas (AYD-006 §4.1): D = destructive, I = idempotent, dd = dedupe.
 var writeTools = map[string]struct{ D, I, DD bool }{
 	"create_customer":            {false, false, true},
 	"create_quote":               {false, false, true},
@@ -186,26 +186,23 @@ var writeTools = map[string]struct{ D, I, DD bool }{
 	"update_sale_item":           {false, true, false},
 	"set_sale_delivery_status":   {false, true, false},
 	"cancel_sale":                {true, true, false},
-	"record_receipt":             {false, false, true},
-	"confirm_receipt":            {false, true, false},
 	"create_purchase":            {false, false, true},
 	"add_sale_items_to_purchase": {false, false, false},
 	"set_purchase_status":        {false, true, false},
-	"record_supplier_payment":    {false, true, false},
 	"create_stock_adjustment":    {false, false, true},
 	"settle_obligations":         {false, false, true}, // AYD-007
 	"record_expense":             {false, false, true}, // AYD-007
 	"set_installments":           {false, true, false}, // AYD-007
 }
 
-// Catálogo completo como contrato (SPEC-007 + SPEC-008): 39 ferramentas, 20 R + 19 não R, versão 1.1.0.
+// Catálogo completo como contrato (SPEC-007 + SPEC-008): 36 ferramentas, 20 R + 16 não R, versão 1.0.0.
 func TestCatalogComplete(t *testing.T) {
-	if CatalogVersion != "1.1.0" {
-		t.Errorf("catalog_version = %s, quero 1.1.0", CatalogVersion)
+	if CatalogVersion != "1.0.0" {
+		t.Errorf("catalog_version = %s, quero 1.0.0", CatalogVersion)
 	}
 	cat := Catalog()
-	if len(cat) != 39 {
-		t.Fatalf("catálogo tem %d ferramentas, quero 39", len(cat))
+	if len(cat) != 36 {
+		t.Fatalf("catálogo tem %d ferramentas, quero 36", len(cat))
 	}
 	reads, writes := 0, map[string]bool{}
 	for _, tool := range cat {
@@ -226,8 +223,8 @@ func TestCatalogComplete(t *testing.T) {
 			t.Errorf("%s: anotações %+v dedupe=%v, esperado %+v", m.Name, a, m.Dedupe, want)
 		}
 	}
-	if reads != 20 || len(writes) != 19 {
-		t.Errorf("leituras=%d escritas=%d, quero 20 e 19", reads, len(writes))
+	if reads != 20 || len(writes) != 16 {
+		t.Errorf("leituras=%d escritas=%d, quero 20 e 16", reads, len(writes))
 	}
 	for name := range writeTools {
 		if !writes[name] {
@@ -252,21 +249,16 @@ func TestInstructionsCanonical(t *testing.T) {
 	}
 }
 
-// AYD-007 §8: as 3 ferramentas descontinuadas continuam no catálogo (1.1.0), avisam na descrição e
-// só saem na 2.0.0; as 5 novas existem com as anotações do AYD.
+// AYD-007 §8: as 5 ferramentas novas existem com as anotações do AYD; as antigas de recebimento e
+// pagamento ao Supplier não fazem parte do catálogo 1.0.0.
 func TestCatalogDeprecatedAndNewTools(t *testing.T) {
 	byName := map[string]toolkit.Entry{}
 	for _, tool := range Catalog() {
 		byName[tool.Meta.Name] = tool.Entry()
 	}
 	for _, name := range []string{"record_receipt", "confirm_receipt", "record_supplier_payment"} {
-		e, ok := byName[name]
-		if !ok {
-			t.Errorf("%s deve continuar no catálogo 1.1.0", name)
-			continue
-		}
-		if !strings.HasPrefix(e.Description, "[DESCONTINUADA — use settle_obligations / set_installments]") {
-			t.Errorf("%s sem o aviso de descontinuada: %q", name, e.Description)
+		if _, ok := byName[name]; ok {
+			t.Errorf("%s não faz parte do catálogo", name)
 		}
 	}
 	for name, readOnly := range map[string]bool{

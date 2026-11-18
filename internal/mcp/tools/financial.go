@@ -9,14 +9,12 @@ import (
 )
 
 // FinancialTools: finanças, contas, quitações e movimentações (AYD-006 §4.1 — módulo Financial;
-// AYD-007 §8). record_receipt e confirm_receipt são DESCONTINUADAS: continuam funcionando,
-// traduzidas para parcela/quitação, até a 2.0.0.
+// AYD-007 §8).
 func FinancialTools() []toolkit.Tool {
 	return []toolkit.Tool{
 		getFinanceSummary, listPaymentAlerts,
 		listObligations, listFinancialMovements,
 		settleObligations, recordExpense, setInstallments,
-		recordReceipt, confirmReceipt,
 	}
 }
 
@@ -657,7 +655,7 @@ func (d ObligationDetail) normalized() ObligationDetail {
 	return d
 }
 
-// --- Receipts derivados da conta a receber (get_sale, record_receipt, confirm_receipt) ---
+// --- Receipts derivados da conta a receber (get_sale) ---
 
 // saleReceivable devolve a conta a receber da Sale (nil se a venda ainda não tem Items).
 func saleReceivable(ctx context.Context, gw toolkit.Gateway, saleID UUID) (*ObligationDetail, error) {
@@ -711,190 +709,3 @@ func sign(v float64) float64 {
 	}
 	return 1
 }
-
-// --- record_receipt (W · dd) e confirm_receipt (W · I) — DESCONTINUADAS (AYD-007) ---
-
-type RecordReceiptIn struct {
-	SaleID        UUID                  `json:"sale_id" jsonschema:"id da venda (obtenha com list_sales)"`
-	Amount        toolkit.PosMoney      `json:"amount" jsonschema:"valor do recebimento em BRL (> 0)"`
-	PaidAt        Date                  `json:"paid_at,omitempty" jsonschema:"data em que foi pago; com ela o recebimento nasce RECEIVED e payment_method é obrigatório"`
-	ScheduledDate Date                  `json:"scheduled_date,omitempty" jsonschema:"data agendada de uma parcela futura (sem paid_at nasce PENDING)"`
-	PaymentMethod toolkit.PaymentMethod `json:"payment_method,omitempty" jsonschema:"forma de pagamento: PIX, CASH, CARD, BOLETO ou TRANSFER"`
-	Notes         string                `json:"notes,omitempty" jsonschema:"observações"`
-	toolkit.Dedupable
-}
-
-type ReceiptOut struct {
-	Receipt  Receipt     `json:"receipt"`
-	Sale     SaleSummary `json:"sale"`
-	Warnings []string    `json:"warnings"`
-}
-
-type RecordReceiptOut struct {
-	Receipt      Receipt     `json:"receipt"`
-	Sale         SaleSummary `json:"sale"`
-	Warnings     []string    `json:"warnings"`
-	Deduplicated bool        `json:"deduplicated,omitempty"`
-}
-
-// errSaleCanceled é a mensagem da API para recebimentos de Sale cancelada (AYD-007 §5).
-const errSaleCanceled = "venda cancelada: recebimentos bloqueados"
-
-// saleSummary relê a Sale para devolver o novo receivable.
-func saleSummary(ctx context.Context, gw toolkit.Gateway, saleID UUID) (SaleSummary, error) {
-	s, err := get[legacySale](ctx, gw, "/vendas/"+pathID(string(saleID)), nil)
-	if err != nil {
-		return SaleSummary{}, err
-	}
-	return s.toEN(), nil
-}
-
-var recordReceipt = toolkit.Define(toolkit.Meta{
-	Name:  "record_receipt",
-	Title: "Registrar recebimento",
-	Description: "[DESCONTINUADA — use settle_obligations / set_installments] Registra um recebimento de uma Sale " +
-		"(venda): com paid_at é uma quitação da conta a receber (RECEIVED; exige payment_method); sem paid_at é " +
-		"uma parcela agendada (PENDING; scheduled_date, padrão hoje) no plano da conta. Continua funcionando, " +
-		"traduzida para parcela/quitação; será removida na 2.0.0. Pré-requisito: sale_id de list_sales. " +
-		"Devolve o recebimento e a venda com o novo a receber. Venda cancelada não aceita recebimentos.",
-	Dedupe: true,
-}, func(ctx context.Context, gw toolkit.Gateway, in RecordReceiptIn) (RecordReceiptOut, error) {
-	if err := checkMoney("amount", float64(in.Amount)); err != nil {
-		return RecordReceiptOut{}, err
-	}
-	sale0, err := get[legacySale](ctx, gw, "/vendas/"+pathID(string(in.SaleID)), nil) // 404 "venda não encontrada"
-	if err != nil {
-		return RecordReceiptOut{}, err
-	}
-	if sale0.DeliveryStatus == "CANCELED" {
-		return RecordReceiptOut{}, &toolkit.APIError{Status: 409, Message: errSaleCanceled}
-	}
-	if in.PaidAt != "" && in.ScheduledDate != "" {
-		return RecordReceiptOut{}, invalid("informe paid_at ou scheduled_date, não os dois")
-	}
-	acc, err := saleReceivable(ctx, gw, in.SaleID)
-	if err != nil {
-		return RecordReceiptOut{}, err
-	}
-	if acc == nil {
-		return RecordReceiptOut{}, toolkit.NewToolError(toolkit.CodeInvalidInput, "a venda não tem valor a receber (sem itens)")
-	}
-	var receipt Receipt
-	if in.PaidAt != "" {
-		if in.PaymentMethod == "" {
-			return RecordReceiptOut{}, invalid("campo 'payment_method' é obrigatório para recebimento")
-		}
-		r, err := send[settleResult](ctx, gw, "POST", "/obligations/"+pathID(string(acc.ID))+"/settle", map[string]any{
-			"amount":   float64(in.Amount),
-			"movement": map[string]any{"occurred_on": in.PaidAt, "payment_method": in.PaymentMethod, "description": optStr(in.Notes)},
-		})
-		if err != nil {
-			return RecordReceiptOut{}, err
-		}
-		paid := r.Movement.OccurredOn
-		id := r.Movement.ID
-		if len(r.Movement.Settlements) > 0 {
-			id = r.Movement.Settlements[0].ID
-		}
-		receipt = Receipt{ID: id, Amount: float64(in.Amount), Status: "RECEIVED", PaidAt: &paid,
-			PaymentMethod: r.Movement.PaymentMethod, Notes: opt(r.Movement.Description)}
-	} else {
-		due := string(in.ScheduledDate)
-		if due == "" {
-			due = todaySP()
-		}
-		plan := make([]map[string]any, 0, len(acc.Installments)+1)
-		for _, i := range acc.Installments {
-			plan = append(plan, map[string]any{"due_date": i.DueDate, "amount": i.Amount, "payment_method": i.PaymentMethod, "notes": i.Notes})
-		}
-		plan = append(plan, map[string]any{"due_date": due, "amount": float64(in.Amount), "payment_method": optStr(string(in.PaymentMethod)), "notes": optStr(in.Notes)})
-		d, err := send[ObligationDetail](ctx, gw, "PUT", "/obligations/"+pathID(string(acc.ID))+"/installments", map[string]any{"installments": plan})
-		if err != nil {
-			return RecordReceiptOut{}, err
-		}
-		// O PUT recria o plano: a parcela nova é a última com a data e o valor pedidos.
-		for _, i := range d.Installments {
-			if string(i.DueDate) == due && i.Amount == float64(in.Amount) {
-				d0 := i.DueDate
-				receipt = Receipt{ID: i.ID, Amount: i.Amount, Status: "PENDING", ScheduledDate: &d0, PaymentMethod: i.PaymentMethod, Notes: opt(i.Notes)}
-			}
-		}
-	}
-	sale, err := saleSummary(ctx, gw, in.SaleID)
-	if err != nil {
-		return RecordReceiptOut{}, afterWrite(err)
-	}
-	return RecordReceiptOut{Receipt: receipt, Sale: sale, Warnings: noWarnings()}, nil
-})
-
-type ConfirmReceiptIn struct {
-	SaleID        UUID                  `json:"sale_id" jsonschema:"id da venda (obtenha com list_sales)"`
-	ReceiptID     UUID                  `json:"receipt_id" jsonschema:"id do recebimento PENDING (obtenha com get_sale)"`
-	PaidAt        Date                  `json:"paid_at,omitempty" jsonschema:"data do pagamento (padrão: hoje em São Paulo)"`
-	PaymentMethod toolkit.PaymentMethod `json:"payment_method,omitempty" jsonschema:"forma de pagamento; obrigatória se o recebimento ainda não tiver uma"`
-}
-
-var confirmReceipt = toolkit.Define(toolkit.Meta{
-	Name:  "confirm_receipt",
-	Title: "Confirmar recebimento",
-	Description: "[DESCONTINUADA — use settle_obligations / set_installments] Confirma o recebimento PENDING " +
-		"(parcela agendada) de uma Sale (venda): quita o que falta da parcela, com a data do pagamento (padrão: " +
-		"hoje) e a forma de pagamento, obrigatória se a parcela ainda não tiver uma. Continua funcionando, " +
-		"traduzida para a quitação da conta; será removida na 2.0.0. Pré-requisitos: sale_id e receipt_id " +
-		"(get_sale). Devolve o recebimento e a venda com o novo a receber. Não desfaz confirmações.",
-	Idempotent: true,
-}, func(ctx context.Context, gw toolkit.Gateway, in ConfirmReceiptIn) (ReceiptOut, error) {
-	sale0, err := get[legacySale](ctx, gw, "/vendas/"+pathID(string(in.SaleID)), nil)
-	if err != nil {
-		return ReceiptOut{}, err
-	}
-	if sale0.DeliveryStatus == "CANCELED" {
-		return ReceiptOut{}, &toolkit.APIError{Status: 409, Message: errSaleCanceled}
-	}
-	acc, err := saleReceivable(ctx, gw, in.SaleID)
-	if err != nil {
-		return ReceiptOut{}, err
-	}
-	var inst *Installment
-	if acc != nil {
-		for i := range acc.Installments {
-			if acc.Installments[i].ID == in.ReceiptID {
-				inst = &acc.Installments[i]
-			}
-		}
-	}
-	if inst == nil {
-		return ReceiptOut{}, toolkit.NewToolError(toolkit.CodeNotFound, "pagamento não encontrado")
-	}
-	if inst.Status == "COVERED" {
-		return ReceiptOut{}, invalid("pagamento já confirmado")
-	}
-	method := in.PaymentMethod
-	if method == "" && inst.PaymentMethod != nil {
-		method = *inst.PaymentMethod
-	}
-	if method == "" {
-		return ReceiptOut{}, invalid("campo 'payment_method' é obrigatório para recebimento")
-	}
-	paidAt := string(in.PaidAt)
-	if paidAt == "" {
-		paidAt = todaySP()
-	}
-	amount := round2(inst.Amount - inst.Covered)
-	if amount > acc.Open {
-		amount = acc.Open
-	}
-	if _, err := send[settleResult](ctx, gw, "POST", "/obligations/"+pathID(string(acc.ID))+"/settle", map[string]any{
-		"amount": amount, "movement": map[string]any{"occurred_on": paidAt, "payment_method": method},
-	}); err != nil {
-		return ReceiptOut{}, err
-	}
-	sale, err := saleSummary(ctx, gw, in.SaleID)
-	if err != nil {
-		return ReceiptOut{}, afterWrite(err)
-	}
-	paid := Date(paidAt)
-	pm := method
-	return ReceiptOut{Receipt: Receipt{ID: inst.ID, Amount: amount, Status: "RECEIVED", PaidAt: &paid, PaymentMethod: &pm,
-		Notes: opt(inst.Notes)}, Sale: sale, Warnings: noWarnings()}, nil
-})

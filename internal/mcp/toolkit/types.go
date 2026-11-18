@@ -47,7 +47,7 @@ type (
 	AlertKind             string
 	MovementKind          string
 
-	// AYD-007 (catálogo 1.1.0): contas, parcelas e movimentações financeiras.
+	// AYD-007 (catálogo 1.0.0): contas, parcelas e movimentações financeiras.
 	SupplierKind        string // STONE | TRANSPORT | LABOR | TAX_AUTHORITY | OTHER
 	ObligationDirection string // PAYABLE | RECEIVABLE
 	ObligationStatus    string // OPEN | PARTIAL | SETTLED
