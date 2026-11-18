@@ -167,9 +167,9 @@ func TestIntegration_WriteDedupeLimits(t *testing.T) {
 		if withResult != 0 {
 			t.Errorf("chamadas com erro não guardam result (%d)", withResult)
 		}
-		before := e.movementCount("OTHER")
-		bad["category"] = "OTHER"
-		if out := e.ok("record_expense", bad); out["deduplicated"] != nil || e.movementCount("OTHER") != before+1 {
+		before := e.movementCount("OTHER_EXPENSE")
+		bad["category"] = "OTHER_EXPENSE"
+		if out := e.ok("record_expense", bad); out["deduplicated"] != nil || e.movementCount("OTHER_EXPENSE") != before+1 {
 			t.Errorf("corrigido deve criar: %v", out)
 		}
 	})
@@ -443,8 +443,8 @@ func TestIntegration_WriteRequiresWriteScope(t *testing.T) {
 	}
 	var n int64
 	e.db.Raw(`SELECT COUNT(*) FROM mcp_tool_calls WHERE connection_id = ? AND outcome = 'ERROR' AND error_code = 'FORBIDDEN'`, ro.ConnectionID).Scan(&n)
-	if n != 16 {
-		t.Errorf("auditoria FORBIDDEN = %d, quero 16", n)
+	if n != 17 {
+		t.Errorf("auditoria FORBIDDEN = %d, quero 17", n)
 	}
 	_ = context.Background
 }

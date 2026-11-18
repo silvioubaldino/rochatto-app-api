@@ -168,9 +168,24 @@ type Purchase struct {
 	OrderedAt    *time.Time `gorm:"column:ordered_at;type:date"                                    json:"ordered_at"`
 	ReceivedAt   *time.Time `gorm:"column:received_at;type:date"                                   json:"received_at"`
 	Notes        *string    `gorm:"column:notes"                                                   json:"notes"`
+	// AllocationMethod: rateio dos custos adicionais entre as linhas (AYD-008) — BY_QUANTITY | BY_VALUE.
+	AllocationMethod string `gorm:"column:allocation_method;type:allocation_method;not null;default:'BY_QUANTITY'" json:"allocation_method"`
 }
 
 func (Purchase) TableName() string { return "purchases" }
+
+// PurchaseCharge — custo adicional da compra (AYD-008): frete de compra, descarga, imposto, outros.
+// PayeeSupplierID nulo = credor "a definir". Rateio e custo de entrada são calculados (view).
+type PurchaseCharge struct {
+	Base
+	PurchaseID      uuid.UUID  `gorm:"column:purchase_id;type:uuid;not null"                json:"purchase_id"`
+	Kind            string     `gorm:"column:kind;type:purchase_charge_kind;not null"       json:"kind"`
+	Amount          float64    `gorm:"column:amount;type:decimal(12,2);not null"            json:"amount"`
+	Description     *string    `gorm:"column:description"                                   json:"description"`
+	PayeeSupplierID *uuid.UUID `gorm:"column:payee_supplier_id;type:uuid"                   json:"payee_supplier_id"`
+}
+
+func (PurchaseCharge) TableName() string { return "purchase_charges" }
 
 // PurchaseItem — linha de reposição de Stock (só Purchases STOCK_REPLENISHMENT).
 type PurchaseItem struct {

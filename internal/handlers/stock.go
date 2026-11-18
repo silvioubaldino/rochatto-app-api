@@ -7,12 +7,14 @@ package handlers
 import (
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/silvioubaldino/sales-backend/internal/fulfillment"
 	"github.com/silvioubaldino/sales-backend/internal/models"
+	"github.com/silvioubaldino/sales-backend/internal/obligations"
 	"gorm.io/gorm"
 )
 
@@ -43,6 +45,7 @@ type stockBalanceRow struct {
 	Balance        float64    `gorm:"column:balance"`
 	LastInflowCost *float64   `gorm:"column:last_inflow_cost"`
 	LastInflowDate *time.Time `gorm:"column:last_inflow_date"`
+	StockValue     float64    `gorm:"column:stock_value"`
 }
 
 type stockBalanceResponse struct {
@@ -55,6 +58,15 @@ type stockBalanceResponse struct {
 	Balance        float64   `json:"balance"`
 	LastInflowCost *float64  `json:"last_inflow_cost"`
 	LastInflowDate *string   `json:"last_inflow_date"`
+	StockValue     float64   `json:"stock_value"` // GREATEST(balance, 0) × last_inflow_cost (custo de entrada — AYD-008)
+}
+
+func round2Ptr(v *float64) *float64 {
+	if v == nil {
+		return nil
+	}
+	r := obligations.Round2(*v)
+	return &r
 }
 
 func (r stockBalanceRow) toResponse() stockBalanceResponse {
@@ -66,8 +78,9 @@ func (r stockBalanceRow) toResponse() stockBalanceResponse {
 		OutflowQty:     r.OutflowQty,
 		AdjustmentQty:  r.AdjustmentQty,
 		Balance:        r.Balance,
-		LastInflowCost: r.LastInflowCost,
+		LastInflowCost: round2Ptr(r.LastInflowCost),
 		LastInflowDate: formatDate(r.LastInflowDate),
+		StockValue:     obligations.Round2(r.StockValue),
 	}
 }
 
@@ -162,9 +175,14 @@ func (h *StockHandler) listBalance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := make([]stockBalanceResponse, 0, len(rows))
+	var totalValue float64
 	for _, row := range rows {
 		out = append(out, row.toResponse())
+		totalValue += row.StockValue
 	}
+	// O corpo segue sendo a lista (AYD-002); o total do valor em estoque (AYD-008) vai no
+	// cabeçalho X-Total-Stock-Value e nasce da soma dos stock_value do conjunto filtrado.
+	w.Header().Set("X-Total-Stock-Value", strconv.FormatFloat(obligations.Round2(totalValue), 'f', 2, 64))
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -198,10 +216,11 @@ func (h *StockHandler) getBalance(w http.ResponseWriter, r *http.Request) {
 	var mrows []movementRow
 	err = db.Raw(`
 		SELECT * FROM (
-			SELECT 'INFLOW' AS kind, p.received_at AS date, pi.quantity, pi.unit_cost,
+			SELECT 'INFLOW' AS kind, p.received_at AS date, pi.quantity, lc.landed_unit_cost AS unit_cost,
 			       p.id::text AS reference_id, 'Compra — ' || f.nome AS description, pi.created_at
 			FROM purchase_items pi
 			JOIN purchases p ON p.id = pi.purchase_id
+			JOIN vw_purchase_line_costs lc ON lc.line_type = 'STOCK_ITEM' AND lc.line_id = pi.id
 			JOIN fornecedores f ON f.id = p.supplier_id
 			WHERE pi.product_id = @pid AND p.deleted_at IS NULL
 			  AND p.kind = 'STOCK_REPLENISHMENT' AND p.status = 'RECEIVED'
@@ -228,7 +247,7 @@ func (h *StockHandler) getBalance(w http.ResponseWriter, r *http.Request) {
 	movements := make([]stockMovement, 0, len(mrows))
 	for _, m := range mrows {
 		movements = append(movements, stockMovement{
-			Kind: m.Kind, Date: m.Date.Format("2006-01-02"), Quantity: m.Quantity, UnitCost: m.UnitCost,
+			Kind: m.Kind, Date: m.Date.Format("2006-01-02"), Quantity: m.Quantity, UnitCost: round2Ptr(m.UnitCost),
 			ReferenceID: m.ReferenceID, Description: m.Description,
 		})
 	}

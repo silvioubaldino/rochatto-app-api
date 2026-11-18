@@ -6,10 +6,11 @@ import (
 )
 
 // CatalogVersion é a catalog_version (SemVer, AYD-006 §3.9), publicada em serverInfo.version.
-// 1.0.0: catálogo completo — 36 ferramentas (20 de leitura + 16 de escrita, com deduplicação),
+// 1.0.0: catálogo completo — 37 ferramentas (20 de leitura + 17 de escrita, com deduplicação),
 // incluindo as de contas e movimentações (AYD-007 / SPEC-008): list_obligations,
 // list_financial_movements, settle_obligations, record_expense e set_installments; kind no
-// Supplier; get_finance_summary e list_payment_alerts no formato de contas e movimentações.
+// Supplier; add_purchase_charge e get_purchase/get_stock_balance com composição da compra e custo de
+// entrada (AYD-008 / SPEC-009); get_finance_summary e list_payment_alerts no formato de contas e movimentações.
 // Mudar o catálogo muda esta versão (§3.9) e o golden.
 const CatalogVersion = "1.0.0"
 

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"math"
 	"net/url"
 
 	"github.com/silvioubaldino/sales-backend/internal/mcp/toolkit"
@@ -24,13 +25,17 @@ type GetStockBalanceOut struct {
 	Offset  *int                `json:"offset,omitempty"`
 	HasMore *bool               `json:"has_more,omitempty"`
 	Balance *StockBalanceDetail `json:"balance,omitempty"`
+	// TotalStockValue: Σ stock_value dos produtos do filtro (lista; AYD-008).
+	TotalStockValue *float64 `json:"total_stock_value,omitempty"`
 }
 
 var getStockBalance = toolkit.Define(toolkit.Meta{
 	Name:  "get_stock_balance",
 	Title: "Ver saldo de estoque",
 	Description: "Mostra o Balance (saldo) de Stock (estoque) por Product (produto): entradas, saídas, " +
-		"ajustes e saldo atual, com o custo e a data da última entrada. Sem product_id, lista os " +
+		"ajustes e saldo atual, com o custo (de entrada, já com frete e demais custos adicionais da compra) " +
+		"e a data da última entrada e o valor em estoque (stock_value = saldo positivo × custo de entrada; " +
+		"na lista, total_stock_value soma todos os produtos do filtro). Sem product_id, lista os " +
 		"produtos (paginado), com filtros opcionais por nome e só saldos negativos. Com product_id, " +
 		"devolve o saldo daquele produto e o extrato de movimentos (INFLOW entrada, OUTFLOW saída, " +
 		"ADJUSTMENT ajuste). Itens sob encomenda não movimentam o estoque. Não altera dados.",
@@ -55,8 +60,13 @@ var getStockBalance = toolkit.Define(toolkit.Meta{
 	if err != nil {
 		return GetStockBalanceOut{}, err
 	}
+	var totalValue float64
+	for _, r := range rows {
+		totalValue += r.StockValue
+	}
+	totalValue = math.Round(totalValue*100) / 100
 	p := toolkit.Paginate(rows, in.Page)
-	return GetStockBalanceOut{Items: &p.Items, Total: &p.Total, Offset: &p.Offset, HasMore: &p.HasMore}, nil
+	return GetStockBalanceOut{Items: &p.Items, Total: &p.Total, Offset: &p.Offset, HasMore: &p.HasMore, TotalStockValue: &totalValue}, nil
 })
 
 // --- create_stock_adjustment (W · dd) ---

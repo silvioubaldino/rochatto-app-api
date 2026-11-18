@@ -189,20 +189,21 @@ var writeTools = map[string]struct{ D, I, DD bool }{
 	"create_purchase":            {false, false, true},
 	"add_sale_items_to_purchase": {false, false, false},
 	"set_purchase_status":        {false, true, false},
+	"add_purchase_charge":        {false, false, true}, // AYD-008
 	"create_stock_adjustment":    {false, false, true},
 	"settle_obligations":         {false, false, true}, // AYD-007
 	"record_expense":             {false, false, true}, // AYD-007
 	"set_installments":           {false, true, false}, // AYD-007
 }
 
-// Catálogo completo como contrato (SPEC-007 + SPEC-008): 36 ferramentas, 20 R + 16 não R, versão 1.0.0.
+// Catálogo completo como contrato (SPEC-007 + SPEC-008 + SPEC-009): 37 ferramentas, 20 R + 17 não R, versão 1.0.0.
 func TestCatalogComplete(t *testing.T) {
 	if CatalogVersion != "1.0.0" {
 		t.Errorf("catalog_version = %s, quero 1.0.0", CatalogVersion)
 	}
 	cat := Catalog()
-	if len(cat) != 36 {
-		t.Fatalf("catálogo tem %d ferramentas, quero 36", len(cat))
+	if len(cat) != 37 {
+		t.Fatalf("catálogo tem %d ferramentas, quero 37", len(cat))
 	}
 	reads, writes := 0, map[string]bool{}
 	for _, tool := range cat {
@@ -223,8 +224,8 @@ func TestCatalogComplete(t *testing.T) {
 			t.Errorf("%s: anotações %+v dedupe=%v, esperado %+v", m.Name, a, m.Dedupe, want)
 		}
 	}
-	if reads != 20 || len(writes) != 16 {
-		t.Errorf("leituras=%d escritas=%d, quero 20 e 16", reads, len(writes))
+	if reads != 20 || len(writes) != 17 {
+		t.Errorf("leituras=%d escritas=%d, quero 20 e 17", reads, len(writes))
 	}
 	for name := range writeTools {
 		if !writes[name] {

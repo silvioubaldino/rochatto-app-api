@@ -208,10 +208,16 @@ type restPurchaseSaleItem struct {
 	CustoUnit    float64 `json:"custo_unit"`
 }
 
+// restPurchaseDetail espelha o PurchaseDetail do REST (AYD-002 + AYD-008).
 type restPurchaseDetail struct {
 	restPurchaseSummary
-	SaleItems []restPurchaseSaleItem `json:"sale_items"`
-	Items     []PurchaseLine         `json:"items"`
+	AllocationMethod toolkit.AllocationMethod `json:"allocation_method"`
+	Composition      PurchaseComposition      `json:"composition"`
+	Obligations      []ObligationSummary      `json:"obligations"`
+	Open             float64                  `json:"open"`
+	Lines            []PurchaseCostLine       `json:"lines"`
+	SaleItems        []restPurchaseSaleItem   `json:"sale_items"`
+	Items            []PurchaseLine           `json:"items"`
 }
 
 type PurchaseLine struct {
@@ -222,10 +228,66 @@ type PurchaseLine struct {
 	UnitCost    float64 `json:"unit_cost"`
 }
 
+// PurchaseCharge é o custo adicional da compra (frete de compra, descarga, imposto, outros).
+type PurchaseCharge struct {
+	ID              UUID                       `json:"id"`
+	PurchaseID      UUID                       `json:"purchase_id"`
+	Kind            toolkit.PurchaseChargeKind `json:"kind"`
+	Amount          float64                    `json:"amount"`
+	Description     *string                    `json:"description,omitempty"`
+	PayeeSupplierID *UUID                      `json:"payee_supplier_id,omitempty"`
+	PayeeName       *string                    `json:"payee_name,omitempty"`
+	ObligationID    *UUID                      `json:"obligation_id,omitempty"`
+	CreatedAt       time.Time                  `json:"created_at"`
+}
+
+// PurchaseComposition: do que é feito o custo da compra (pedras + custos adicionais).
+type PurchaseComposition struct {
+	GoodsTotal   float64          `json:"goods_total"`
+	Charges      []PurchaseCharge `json:"charges"`
+	ChargesTotal float64          `json:"charges_total"`
+	Total        float64          `json:"total"`
+}
+
+// PurchaseCostLine é a linha da compra com rateio e custo de entrada (landed cost).
+type PurchaseCostLine struct {
+	LineType         toolkit.PurchaseLineType `json:"line_type"`
+	LineID           UUID                     `json:"line_id"`
+	ProductID        *UUID                    `json:"product_id,omitempty"`
+	ProductName      string                   `json:"product_name"`
+	Unit             *string                  `json:"unit,omitempty"`
+	Quantity         float64                  `json:"quantity"`
+	UnitCost         float64                  `json:"unit_cost"`
+	BaseCost         float64                  `json:"base_cost"`
+	AllocatedCharges float64                  `json:"allocated_charges"`
+	LandedTotal      float64                  `json:"landed_total"`
+	LandedUnitCost   float64                  `json:"landed_unit_cost"`
+}
+
+// PurchaseDetail é a compra completa (AYD-002 + AYD-008): composição, contas por credor, linhas com
+// custo de entrada. payable/paid/open = Σ das contas da compra (payable e open = o que falta).
 type PurchaseDetail struct {
-	PurchaseSummary
-	SaleItems []PurchaseSaleItem `json:"sale_items"`
-	Items     []PurchaseLine     `json:"items"`
+	ID               UUID                     `json:"id"`
+	Kind             toolkit.PurchaseKind     `json:"kind"`
+	Status           toolkit.PurchaseStatus   `json:"status"`
+	SupplierID       UUID                     `json:"supplier_id"`
+	SupplierName     string                   `json:"supplier_name"`
+	ExpectedDate     *Date                    `json:"expected_date,omitempty"`
+	Notes            *string                  `json:"notes,omitempty"`
+	OrderedAt        *Date                    `json:"ordered_at,omitempty"`
+	ReceivedAt       *Date                    `json:"received_at,omitempty"`
+	AllocationMethod toolkit.AllocationMethod `json:"allocation_method"`
+	TotalCost        float64                  `json:"total_cost"` // Σ das pedras (= composition.goods_total)
+	LineCount        int                      `json:"line_count"`
+	CreatedAt        time.Time                `json:"created_at"`
+	Composition      PurchaseComposition      `json:"composition"`
+	Obligations      []ObligationSummary      `json:"obligations"`
+	Payable          float64                  `json:"payable"`
+	Paid             float64                  `json:"paid"`
+	Open             float64                  `json:"open"`
+	Lines            []PurchaseCostLine       `json:"lines"`
+	SaleItems        []PurchaseSaleItem       `json:"sale_items"`
+	Items            []PurchaseLine           `json:"items"`
 }
 
 // StockBalanceRow é a linha de GET /stock/balance (AYD-002, já EN).
@@ -239,6 +301,7 @@ type StockBalanceRow struct {
 	Balance        float64  `json:"balance"`
 	LastInflowCost *float64 `json:"last_inflow_cost,omitempty"`
 	LastInflowDate *Date    `json:"last_inflow_date,omitempty"`
+	StockValue     float64  `json:"stock_value"` // GREATEST(balance, 0) × custo de entrada (AYD-008)
 }
 
 type StockMovement struct {

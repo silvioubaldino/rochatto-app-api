@@ -3069,7 +3069,7 @@
     {
       "name": "get_purchase",
       "title": "Ver compra",
-      "description": "Mostra uma Purchase (compra) completa: fornecedor, status, datas, pagamento ao fornecedor, custo total, valor a pagar (to_pay), os itens de venda atendidos (sale_items, no caso de compra sob encomenda) e as linhas de reposição (items, no caso de reposição de estoque). Pré-requisito: obtenha o purchase_id com list_purchases. Não altera dados.",
+      "description": "Mostra uma Purchase (compra) completa: fornecedor, status, datas, método de rateio (allocation_method), a composição do custo (composition: pedras + custos adicionais como frete de compra, descarga e imposto, cada um com seu credor), as contas por credor (obligations), o total devido, pago e em aberto (payable, paid, open), as linhas com rateio e custo de entrada (lines: allocated_charges, landed_total, landed_unit_cost), os itens de venda atendidos (sale_items, compra sob encomenda) e as linhas de reposição (items). Pré-requisito: obtenha o purchase_id com list_purchases. Não altera dados.",
       "scope": "read",
       "annotations": {
         "readOnlyHint": true,
@@ -3141,25 +3141,14 @@
                 "description": "YYYY-MM-DD",
                 "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
               },
-              "payment_status": {
+              "allocation_method": {
                 "type": "string",
                 "enum": [
-                  "PENDING",
-                  "PAID"
+                  "BY_QUANTITY",
+                  "BY_VALUE"
                 ]
               },
-              "paid_amount": {
-                "type": "number"
-              },
-              "paid_at": {
-                "type": "string",
-                "description": "YYYY-MM-DD",
-                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
-              },
               "total_cost": {
-                "type": "number"
-              },
-              "to_pay": {
                 "type": "number"
               },
               "line_count": {
@@ -3167,6 +3156,281 @@
               },
               "created_at": {
                 "type": "string"
+              },
+              "composition": {
+                "type": "object",
+                "properties": {
+                  "goods_total": {
+                    "type": "number"
+                  },
+                  "charges": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "purchase_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "FREIGHT",
+                            "UNLOADING",
+                            "TAX",
+                            "OTHER"
+                          ]
+                        },
+                        "amount": {
+                          "type": "number"
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "payee_supplier_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "payee_name": {
+                          "type": "string"
+                        },
+                        "obligation_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "created_at": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "purchase_id",
+                        "kind",
+                        "amount",
+                        "created_at"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "charges_total": {
+                    "type": "number"
+                  },
+                  "total": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "goods_total",
+                  "charges",
+                  "charges_total",
+                  "total"
+                ],
+                "additionalProperties": false
+              },
+              "obligations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "direction": {
+                      "type": "string",
+                      "enum": [
+                        "PAYABLE",
+                        "RECEIVABLE"
+                      ]
+                    },
+                    "origin": {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "SALE",
+                            "PURCHASE"
+                          ]
+                        },
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "label": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "id",
+                        "label"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "counterparty": {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "SUPPLIER",
+                            "PARTNER",
+                            "CUSTOMER"
+                          ]
+                        },
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "id",
+                        "name"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "amount": {
+                      "type": "number"
+                    },
+                    "settled": {
+                      "type": "number"
+                    },
+                    "open": {
+                      "type": "number"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "OPEN",
+                        "PARTIAL",
+                        "SETTLED"
+                      ]
+                    },
+                    "due_date": {
+                      "type": "string",
+                      "description": "YYYY-MM-DD",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "overdue": {
+                      "type": "boolean"
+                    },
+                    "next_installment": {
+                      "type": "object",
+                      "properties": {
+                        "due_date": {
+                          "type": "string",
+                          "description": "YYYY-MM-DD",
+                          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                        },
+                        "amount_open": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "due_date",
+                        "amount_open"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "notes": {
+                      "type": "string"
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "direction",
+                    "origin",
+                    "amount",
+                    "settled",
+                    "open",
+                    "status",
+                    "overdue"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "payable": {
+                "type": "number"
+              },
+              "paid": {
+                "type": "number"
+              },
+              "open": {
+                "type": "number"
+              },
+              "lines": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "line_type": {
+                      "type": "string",
+                      "enum": [
+                        "STOCK_ITEM",
+                        "SALE_ITEM"
+                      ]
+                    },
+                    "line_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "product_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "product_name": {
+                      "type": "string"
+                    },
+                    "unit": {
+                      "type": "string"
+                    },
+                    "quantity": {
+                      "type": "number"
+                    },
+                    "unit_cost": {
+                      "type": "number"
+                    },
+                    "base_cost": {
+                      "type": "number"
+                    },
+                    "allocated_charges": {
+                      "type": "number"
+                    },
+                    "landed_total": {
+                      "type": "number"
+                    },
+                    "landed_unit_cost": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "line_type",
+                    "line_id",
+                    "product_name",
+                    "quantity",
+                    "unit_cost",
+                    "base_cost",
+                    "allocated_charges",
+                    "landed_total",
+                    "landed_unit_cost"
+                  ],
+                  "additionalProperties": false
+                }
               },
               "sale_items": {
                 "type": "array",
@@ -3249,11 +3513,16 @@
               "status",
               "supplier_id",
               "supplier_name",
-              "payment_status",
+              "allocation_method",
               "total_cost",
-              "to_pay",
               "line_count",
               "created_at",
+              "composition",
+              "obligations",
+              "payable",
+              "paid",
+              "open",
+              "lines",
               "sale_items",
               "items"
             ],
@@ -3402,25 +3671,14 @@
                 "description": "YYYY-MM-DD",
                 "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
               },
-              "payment_status": {
+              "allocation_method": {
                 "type": "string",
                 "enum": [
-                  "PENDING",
-                  "PAID"
+                  "BY_QUANTITY",
+                  "BY_VALUE"
                 ]
               },
-              "paid_amount": {
-                "type": "number"
-              },
-              "paid_at": {
-                "type": "string",
-                "description": "YYYY-MM-DD",
-                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
-              },
               "total_cost": {
-                "type": "number"
-              },
-              "to_pay": {
                 "type": "number"
               },
               "line_count": {
@@ -3428,6 +3686,281 @@
               },
               "created_at": {
                 "type": "string"
+              },
+              "composition": {
+                "type": "object",
+                "properties": {
+                  "goods_total": {
+                    "type": "number"
+                  },
+                  "charges": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "purchase_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "FREIGHT",
+                            "UNLOADING",
+                            "TAX",
+                            "OTHER"
+                          ]
+                        },
+                        "amount": {
+                          "type": "number"
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "payee_supplier_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "payee_name": {
+                          "type": "string"
+                        },
+                        "obligation_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "created_at": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "purchase_id",
+                        "kind",
+                        "amount",
+                        "created_at"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "charges_total": {
+                    "type": "number"
+                  },
+                  "total": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "goods_total",
+                  "charges",
+                  "charges_total",
+                  "total"
+                ],
+                "additionalProperties": false
+              },
+              "obligations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "direction": {
+                      "type": "string",
+                      "enum": [
+                        "PAYABLE",
+                        "RECEIVABLE"
+                      ]
+                    },
+                    "origin": {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "SALE",
+                            "PURCHASE"
+                          ]
+                        },
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "label": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "id",
+                        "label"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "counterparty": {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "SUPPLIER",
+                            "PARTNER",
+                            "CUSTOMER"
+                          ]
+                        },
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "id",
+                        "name"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "amount": {
+                      "type": "number"
+                    },
+                    "settled": {
+                      "type": "number"
+                    },
+                    "open": {
+                      "type": "number"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "OPEN",
+                        "PARTIAL",
+                        "SETTLED"
+                      ]
+                    },
+                    "due_date": {
+                      "type": "string",
+                      "description": "YYYY-MM-DD",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "overdue": {
+                      "type": "boolean"
+                    },
+                    "next_installment": {
+                      "type": "object",
+                      "properties": {
+                        "due_date": {
+                          "type": "string",
+                          "description": "YYYY-MM-DD",
+                          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                        },
+                        "amount_open": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "due_date",
+                        "amount_open"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "notes": {
+                      "type": "string"
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "direction",
+                    "origin",
+                    "amount",
+                    "settled",
+                    "open",
+                    "status",
+                    "overdue"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "payable": {
+                "type": "number"
+              },
+              "paid": {
+                "type": "number"
+              },
+              "open": {
+                "type": "number"
+              },
+              "lines": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "line_type": {
+                      "type": "string",
+                      "enum": [
+                        "STOCK_ITEM",
+                        "SALE_ITEM"
+                      ]
+                    },
+                    "line_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "product_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "product_name": {
+                      "type": "string"
+                    },
+                    "unit": {
+                      "type": "string"
+                    },
+                    "quantity": {
+                      "type": "number"
+                    },
+                    "unit_cost": {
+                      "type": "number"
+                    },
+                    "base_cost": {
+                      "type": "number"
+                    },
+                    "allocated_charges": {
+                      "type": "number"
+                    },
+                    "landed_total": {
+                      "type": "number"
+                    },
+                    "landed_unit_cost": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "line_type",
+                    "line_id",
+                    "product_name",
+                    "quantity",
+                    "unit_cost",
+                    "base_cost",
+                    "allocated_charges",
+                    "landed_total",
+                    "landed_unit_cost"
+                  ],
+                  "additionalProperties": false
+                }
               },
               "sale_items": {
                 "type": "array",
@@ -3510,11 +4043,16 @@
               "status",
               "supplier_id",
               "supplier_name",
-              "payment_status",
+              "allocation_method",
               "total_cost",
-              "to_pay",
               "line_count",
               "created_at",
+              "composition",
+              "obligations",
+              "payable",
+              "paid",
+              "open",
+              "lines",
               "sale_items",
               "items"
             ],
@@ -3623,25 +4161,14 @@
                 "description": "YYYY-MM-DD",
                 "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
               },
-              "payment_status": {
+              "allocation_method": {
                 "type": "string",
                 "enum": [
-                  "PENDING",
-                  "PAID"
+                  "BY_QUANTITY",
+                  "BY_VALUE"
                 ]
               },
-              "paid_amount": {
-                "type": "number"
-              },
-              "paid_at": {
-                "type": "string",
-                "description": "YYYY-MM-DD",
-                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
-              },
               "total_cost": {
-                "type": "number"
-              },
-              "to_pay": {
                 "type": "number"
               },
               "line_count": {
@@ -3649,6 +4176,281 @@
               },
               "created_at": {
                 "type": "string"
+              },
+              "composition": {
+                "type": "object",
+                "properties": {
+                  "goods_total": {
+                    "type": "number"
+                  },
+                  "charges": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "purchase_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "FREIGHT",
+                            "UNLOADING",
+                            "TAX",
+                            "OTHER"
+                          ]
+                        },
+                        "amount": {
+                          "type": "number"
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "payee_supplier_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "payee_name": {
+                          "type": "string"
+                        },
+                        "obligation_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "created_at": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "purchase_id",
+                        "kind",
+                        "amount",
+                        "created_at"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "charges_total": {
+                    "type": "number"
+                  },
+                  "total": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "goods_total",
+                  "charges",
+                  "charges_total",
+                  "total"
+                ],
+                "additionalProperties": false
+              },
+              "obligations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "direction": {
+                      "type": "string",
+                      "enum": [
+                        "PAYABLE",
+                        "RECEIVABLE"
+                      ]
+                    },
+                    "origin": {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "SALE",
+                            "PURCHASE"
+                          ]
+                        },
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "label": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "id",
+                        "label"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "counterparty": {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "SUPPLIER",
+                            "PARTNER",
+                            "CUSTOMER"
+                          ]
+                        },
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "id",
+                        "name"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "amount": {
+                      "type": "number"
+                    },
+                    "settled": {
+                      "type": "number"
+                    },
+                    "open": {
+                      "type": "number"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "OPEN",
+                        "PARTIAL",
+                        "SETTLED"
+                      ]
+                    },
+                    "due_date": {
+                      "type": "string",
+                      "description": "YYYY-MM-DD",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "overdue": {
+                      "type": "boolean"
+                    },
+                    "next_installment": {
+                      "type": "object",
+                      "properties": {
+                        "due_date": {
+                          "type": "string",
+                          "description": "YYYY-MM-DD",
+                          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                        },
+                        "amount_open": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "due_date",
+                        "amount_open"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "notes": {
+                      "type": "string"
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "direction",
+                    "origin",
+                    "amount",
+                    "settled",
+                    "open",
+                    "status",
+                    "overdue"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "payable": {
+                "type": "number"
+              },
+              "paid": {
+                "type": "number"
+              },
+              "open": {
+                "type": "number"
+              },
+              "lines": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "line_type": {
+                      "type": "string",
+                      "enum": [
+                        "STOCK_ITEM",
+                        "SALE_ITEM"
+                      ]
+                    },
+                    "line_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "product_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "product_name": {
+                      "type": "string"
+                    },
+                    "unit": {
+                      "type": "string"
+                    },
+                    "quantity": {
+                      "type": "number"
+                    },
+                    "unit_cost": {
+                      "type": "number"
+                    },
+                    "base_cost": {
+                      "type": "number"
+                    },
+                    "allocated_charges": {
+                      "type": "number"
+                    },
+                    "landed_total": {
+                      "type": "number"
+                    },
+                    "landed_unit_cost": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "line_type",
+                    "line_id",
+                    "product_name",
+                    "quantity",
+                    "unit_cost",
+                    "base_cost",
+                    "allocated_charges",
+                    "landed_total",
+                    "landed_unit_cost"
+                  ],
+                  "additionalProperties": false
+                }
               },
               "sale_items": {
                 "type": "array",
@@ -3731,11 +4533,16 @@
               "status",
               "supplier_id",
               "supplier_name",
-              "payment_status",
+              "allocation_method",
               "total_cost",
-              "to_pay",
               "line_count",
               "created_at",
+              "composition",
+              "obligations",
+              "payable",
+              "paid",
+              "open",
+              "lines",
               "sale_items",
               "items"
             ],
@@ -3832,9 +4639,570 @@
       }
     },
     {
+      "name": "add_purchase_charge",
+      "title": "Lançar custo adicional da compra",
+      "description": "Lança um Purchase charge (custo adicional da compra) numa Purchase: frete de compra (FREIGHT), descarga (UNLOADING), imposto (TAX) ou outros (OTHER), com valor e credor (por padrão, o fornecedor da compra; informe payee_supplier_id para outro, ex.: o Jairo da descarga ou o órgão do imposto). Pode ser lançado em qualquer status da compra (o frete costuma chegar depois do pedido). O custo entra na conta a pagar do credor e é rateado entre as linhas (custo de entrada). Pré-requisitos: purchase_id (list_purchases) e, se houver, payee_supplier_id (search_suppliers). Devolve o custo lançado e a compra atualizada. Não paga nada (use settle_obligations) e não é o frete de entrega ao cliente.",
+      "scope": "write",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "dedupe": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "purchase_id": {
+            "type": "string",
+            "description": "id da compra (obtenha com list_purchases); qualquer status",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "description": "FREIGHT (frete de compra), UNLOADING (descarga), TAX (imposto, ex.: ICMS) ou OTHER (outros)",
+            "enum": [
+              "FREIGHT",
+              "UNLOADING",
+              "TAX",
+              "OTHER"
+            ]
+          },
+          "amount": {
+            "type": "number",
+            "description": "valor do custo adicional em BRL (\u003e 0)",
+            "exclusiveMinimum": 0
+          },
+          "description": {
+            "type": "string",
+            "description": "descrição curta (ex.: ICMS MS)"
+          },
+          "payee_supplier_id": {
+            "type": "string",
+            "description": "credor: id do fornecedor ou prestador (search_suppliers); padrão: o fornecedor da compra",
+            "format": "uuid"
+          },
+          "allow_duplicate": {
+            "type": "boolean",
+            "description": "true força a criação mesmo que o mesmo lançamento tenha acabado de ser feito (padrão false: repetições em 120 s são ignoradas)"
+          }
+        },
+        "required": [
+          "purchase_id",
+          "kind",
+          "amount"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "charge": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "purchase_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "FREIGHT",
+                  "UNLOADING",
+                  "TAX",
+                  "OTHER"
+                ]
+              },
+              "amount": {
+                "type": "number"
+              },
+              "description": {
+                "type": "string"
+              },
+              "payee_supplier_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "payee_name": {
+                "type": "string"
+              },
+              "obligation_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "created_at": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "purchase_id",
+              "kind",
+              "amount",
+              "created_at"
+            ],
+            "additionalProperties": false
+          },
+          "purchase": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "MADE_TO_ORDER",
+                  "STOCK_REPLENISHMENT"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "OPEN",
+                  "ORDERED",
+                  "RECEIVED"
+                ]
+              },
+              "supplier_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "supplier_name": {
+                "type": "string"
+              },
+              "expected_date": {
+                "type": "string",
+                "description": "YYYY-MM-DD",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "notes": {
+                "type": "string"
+              },
+              "ordered_at": {
+                "type": "string",
+                "description": "YYYY-MM-DD",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "received_at": {
+                "type": "string",
+                "description": "YYYY-MM-DD",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "allocation_method": {
+                "type": "string",
+                "enum": [
+                  "BY_QUANTITY",
+                  "BY_VALUE"
+                ]
+              },
+              "total_cost": {
+                "type": "number"
+              },
+              "line_count": {
+                "type": "integer"
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "composition": {
+                "type": "object",
+                "properties": {
+                  "goods_total": {
+                    "type": "number"
+                  },
+                  "charges": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "purchase_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "FREIGHT",
+                            "UNLOADING",
+                            "TAX",
+                            "OTHER"
+                          ]
+                        },
+                        "amount": {
+                          "type": "number"
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "payee_supplier_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "payee_name": {
+                          "type": "string"
+                        },
+                        "obligation_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "created_at": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "purchase_id",
+                        "kind",
+                        "amount",
+                        "created_at"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "charges_total": {
+                    "type": "number"
+                  },
+                  "total": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "goods_total",
+                  "charges",
+                  "charges_total",
+                  "total"
+                ],
+                "additionalProperties": false
+              },
+              "obligations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "direction": {
+                      "type": "string",
+                      "enum": [
+                        "PAYABLE",
+                        "RECEIVABLE"
+                      ]
+                    },
+                    "origin": {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "SALE",
+                            "PURCHASE"
+                          ]
+                        },
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "label": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "id",
+                        "label"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "counterparty": {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "SUPPLIER",
+                            "PARTNER",
+                            "CUSTOMER"
+                          ]
+                        },
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "id",
+                        "name"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "amount": {
+                      "type": "number"
+                    },
+                    "settled": {
+                      "type": "number"
+                    },
+                    "open": {
+                      "type": "number"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "OPEN",
+                        "PARTIAL",
+                        "SETTLED"
+                      ]
+                    },
+                    "due_date": {
+                      "type": "string",
+                      "description": "YYYY-MM-DD",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "overdue": {
+                      "type": "boolean"
+                    },
+                    "next_installment": {
+                      "type": "object",
+                      "properties": {
+                        "due_date": {
+                          "type": "string",
+                          "description": "YYYY-MM-DD",
+                          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                        },
+                        "amount_open": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "due_date",
+                        "amount_open"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "notes": {
+                      "type": "string"
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "direction",
+                    "origin",
+                    "amount",
+                    "settled",
+                    "open",
+                    "status",
+                    "overdue"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "payable": {
+                "type": "number"
+              },
+              "paid": {
+                "type": "number"
+              },
+              "open": {
+                "type": "number"
+              },
+              "lines": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "line_type": {
+                      "type": "string",
+                      "enum": [
+                        "STOCK_ITEM",
+                        "SALE_ITEM"
+                      ]
+                    },
+                    "line_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "product_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "product_name": {
+                      "type": "string"
+                    },
+                    "unit": {
+                      "type": "string"
+                    },
+                    "quantity": {
+                      "type": "number"
+                    },
+                    "unit_cost": {
+                      "type": "number"
+                    },
+                    "base_cost": {
+                      "type": "number"
+                    },
+                    "allocated_charges": {
+                      "type": "number"
+                    },
+                    "landed_total": {
+                      "type": "number"
+                    },
+                    "landed_unit_cost": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "line_type",
+                    "line_id",
+                    "product_name",
+                    "quantity",
+                    "unit_cost",
+                    "base_cost",
+                    "allocated_charges",
+                    "landed_total",
+                    "landed_unit_cost"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "sale_items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "sale_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "customer_name": {
+                      "type": "string"
+                    },
+                    "product_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "product_name": {
+                      "type": "string"
+                    },
+                    "quantity": {
+                      "type": "number"
+                    },
+                    "unit_cost": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "sale_id",
+                    "customer_name",
+                    "product_name",
+                    "quantity",
+                    "unit_cost"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "product_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "product_name": {
+                      "type": "string"
+                    },
+                    "quantity": {
+                      "type": "number"
+                    },
+                    "unit_cost": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "product_id",
+                    "product_name",
+                    "quantity",
+                    "unit_cost"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "id",
+              "kind",
+              "status",
+              "supplier_id",
+              "supplier_name",
+              "allocation_method",
+              "total_cost",
+              "line_count",
+              "created_at",
+              "composition",
+              "obligations",
+              "payable",
+              "paid",
+              "open",
+              "lines",
+              "sale_items",
+              "items"
+            ],
+            "additionalProperties": false
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "deduplicated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "charge",
+          "purchase",
+          "warnings"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "get_stock_balance",
       "title": "Ver saldo de estoque",
-      "description": "Mostra o Balance (saldo) de Stock (estoque) por Product (produto): entradas, saídas, ajustes e saldo atual, com o custo e a data da última entrada. Sem product_id, lista os produtos (paginado), com filtros opcionais por nome e só saldos negativos. Com product_id, devolve o saldo daquele produto e o extrato de movimentos (INFLOW entrada, OUTFLOW saída, ADJUSTMENT ajuste). Itens sob encomenda não movimentam o estoque. Não altera dados.",
+      "description": "Mostra o Balance (saldo) de Stock (estoque) por Product (produto): entradas, saídas, ajustes e saldo atual, com o custo (de entrada, já com frete e demais custos adicionais da compra) e a data da última entrada e o valor em estoque (stock_value = saldo positivo × custo de entrada; na lista, total_stock_value soma todos os produtos do filtro). Sem product_id, lista os produtos (paginado), com filtros opcionais por nome e só saldos negativos. Com product_id, devolve o saldo daquele produto e o extrato de movimentos (INFLOW entrada, OUTFLOW saída, ADJUSTMENT ajuste). Itens sob encomenda não movimentam o estoque. Não altera dados.",
       "scope": "read",
       "annotations": {
         "readOnlyHint": true,
@@ -3909,6 +5277,9 @@
                   "type": "string",
                   "description": "YYYY-MM-DD",
                   "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "stock_value": {
+                  "type": "number"
                 }
               },
               "required": [
@@ -3917,7 +5288,8 @@
                 "inflow_qty",
                 "outflow_qty",
                 "adjustment_qty",
-                "balance"
+                "balance",
+                "stock_value"
               ],
               "additionalProperties": false
             }
@@ -3963,6 +5335,9 @@
                 "type": "string",
                 "description": "YYYY-MM-DD",
                 "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "stock_value": {
+                "type": "number"
               },
               "movements": {
                 "type": "array",
@@ -4013,9 +5388,13 @@
               "outflow_qty",
               "adjustment_qty",
               "balance",
+              "stock_value",
               "movements"
             ],
             "additionalProperties": false
+          },
+          "total_stock_value": {
+            "type": "number"
           }
         },
         "additionalProperties": false
@@ -4161,6 +5540,9 @@
                 "type": "string",
                 "description": "YYYY-MM-DD",
                 "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "stock_value": {
+                "type": "number"
               }
             },
             "required": [
@@ -4169,7 +5551,8 @@
               "inflow_qty",
               "outflow_qty",
               "adjustment_qty",
-              "balance"
+              "balance",
+              "stock_value"
             ],
             "additionalProperties": false
           },

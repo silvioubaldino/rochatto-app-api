@@ -103,6 +103,19 @@ Purchase vira movimentação + quitação e frete/comissão pagos viram saídas 
 pagos antes = depois) e aborta se divergir. O `down 1` recria as estruturas legadas e repopula
 **best-effort** (é lossy).
 
+### Migration 011 (AYD-008 — composição da compra)
+
+A 011 cria `purchase_charges` (custos adicionais da compra, com credor), `purchases.allocation_method`
+(default `BY_QUANTITY`) e `vw_purchase_line_costs` (rateio e custo de entrada), acrescenta o
+componente `PURCHASE_CHARGE` a `vw_obligation_components`, os triggers de sincronização das contas
+em `purchase_charges` e na troca de Supplier, e recria `vw_purchases_resumo`, `vw_vendas_resumo` e
+`vw_stock_balance` (custo de entrada, `stock_value`, rateio no custo dos Items sob encomenda). Não há
+backfill: sem custos adicionais, os valores são idênticos aos da 010. O `down 1` remove
+`purchase_charges` e `allocation_method` e restaura as views — **lossy** (custos adicionais e
+credores se perdem; as contas voltam a ter só o valor das linhas). Um cliente com conexões pgx
+abertas e statements preparados antes da migração pode ver `cached plan must not change result
+type`: reinicie o serviço após migrar.
+
 ## Alertas de pagamento (sem pg_cron)
 
 Desde a 007 a função `gerar_notificacoes_pagamentos()` é **migration** (idempotente; "hoje" =

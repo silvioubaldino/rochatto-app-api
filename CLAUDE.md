@@ -39,6 +39,7 @@ internal/
   auth/                     → middleware: Firebase JWT + allowlist do dono (ALLOWED_EMAILS); CORS
   handlers/                 → um arquivo por recurso (clientes, vendas, quotes, purchases, stock, obligations, settlements, financial_movements etc.)
   fulfillment/              → regras puras do atendimento da Sale (transições, cancelamento — SPEC-002)
+  purchasing/               → regras puras da composição da compra (SPEC-009): tipos/métodos, rateio (`Allocate`), unidades, rótulo
   obligations/              → contas, parcelas, quitações e movimentações (SPEC-008): regras puras (`rules.go`: categoria × sinal, categoria padrão, geração/validação/cobertura de parcelas, alocação) + acesso a dados transacional (`store.go`, `movements.go`, `summary.go`)
   dbmigrate/                → golang-migrate sobre as migrations embutidas
   models/                   → structs GORM de domínio e tipos compartilhados
@@ -76,7 +77,7 @@ docs/ops/                   → operação: baseline de migrations, backup, nota
 - Todas as PKs são `UUID` geradas pelo PostgreSQL (`gen_random_uuid()`)
 - Todas as entidades principais têm `created_at TIMESTAMPTZ` e `deleted_at TIMESTAMPTZ` (soft delete)
 - **Nunca deletar fisicamente** registros de vendas, clientes, produtos ou pagamentos
-- Campos calculados (total_venda, lucro, a_receber, payment_status, total_cost/paid/payable, balance, valor/quitado/em aberto/status das contas, cobertura das parcelas) **nunca são persistidos** — vêm das views `vw_vendas_resumo` (inclui `receivable`, `freight_payable`, `commission_payable`), `vw_purchases_resumo`, `vw_obligations`, `vw_installment_coverage`, `vw_movement_allocation` e `vw_stock_balance`. As contas são mantidas por **triggers** (`sp_sync_obligations`) a partir dos componentes (`vw_obligation_components`)
+- Campos calculados (total_venda, lucro, a_receber, payment_status, total_cost/paid/payable, balance, valor/quitado/em aberto/status das contas, cobertura das parcelas) **nunca são persistidos** — vêm das views `vw_vendas_resumo` (inclui `receivable`, `freight_payable`, `commission_payable`; custo com o rateio dos custos adicionais da compra), `vw_purchases_resumo`, `vw_purchase_line_costs` (rateio e custo de entrada), `vw_obligations`, `vw_installment_coverage`, `vw_movement_allocation` e `vw_stock_balance` (custo da última entrada = custo de entrada; `stock_value`). As contas são mantidas por **triggers** (`sp_sync_obligations`) a partir dos componentes (`vw_obligation_components`)
 - Valores monetários: `DECIMAL(12,2)` no banco, `float64` no Go
 
 ### Código Go
@@ -110,7 +111,7 @@ Com `MCP_ENABLED=true` e `PUBLIC_BASE_URL`/`WEB_APP_URL` ausentes ou inválidas 
 
 Testes de integração: `TEST_DATABASE_URL` (banco descartável com migrations aplicadas; os testes do conector — `oauth`, `mcp`, migração 009 — criam um banco próprio por teste e exigem permissão de `CREATE DATABASE`, senão são pulados).
 
-Catálogo do Assistant connector (`catalog_version` **1.0.0** = `CatalogVersion` em `internal/mcp/registry.go`, publicada em `serverInfo.version`; 36 ferramentas: 20 de leitura + 16 de escrita; mudança de catálogo muda a versão — AYD-006 §3.9): `internal/mcp/testdata/catalog.golden.json` é contrato — mudou ferramenta,
+Catálogo do Assistant connector (`catalog_version` **1.0.0** = `CatalogVersion` em `internal/mcp/registry.go`, publicada em `serverInfo.version`; 37 ferramentas: 20 de leitura + 17 de escrita; mudança de catálogo muda a versão — AYD-006 §3.9): `internal/mcp/testdata/catalog.golden.json` é contrato — mudou ferramenta,
 schema ou anotação? Atualize o AYD-006 no repo de contexto e regenere com
 `go test ./internal/mcp -run TestCatalogGolden -update` no mesmo PR.
 
@@ -145,6 +146,7 @@ go vet ./... && TEST_DATABASE_URL=$DATABASE_URL go test ./...
 | 9 | `docs/specs/SPEC-006-assistant-connector-platform.md` | Assistant connector: migração 009, OAuth 2.1, `/mcp`, pipeline/extensão e ferramentas de leitura |
 | 10 | `docs/specs/SPEC-007-assistant-connector-write-tools.md` | Assistant connector: 16 ferramentas de escrita, deduplicação de criações (120 s, `allow_duplicate`), scope `write` e catálogo completo `1.0.0` (34 ferramentas) |
 | 11 | `docs/specs/SPEC-008-obligations-and-movements.md` | Contas e movimentações (AYD-007): `fornecedores.kind`, Obligation/Installment/Settlement/Financial movement, migração 010 (substitui Receipts e `purchases.paid_*`), `/finance/summary` com cash/despesas/resultado, alertas a pagar, catálogo do connector `1.0.0` (36 ferramentas) |
+| 12 | `docs/specs/SPEC-009-purchase-composition.md` | Composição da compra (AYD-008): `purchase_charges` (frete de compra, descarga, imposto, outros, com credor), `allocation_method`, rateio e custo de entrada (`vw_purchase_line_costs`), migração 011, `stock_value`, rateio no Profit dos Items sob encomenda, `add_purchase_charge` no connector (catálogo `1.0.0`, 37 ferramentas) |
 
 ## Deploy (Google Cloud Run — free tier)
 

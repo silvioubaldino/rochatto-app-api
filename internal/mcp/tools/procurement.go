@@ -13,7 +13,7 @@ import (
 func ProcurementTools() []toolkit.Tool {
 	return []toolkit.Tool{
 		listPendingPurchaseItems, listPurchases, getPurchase,
-		createPurchase, addSaleItemsToPurchase, setPurchaseStatus,
+		createPurchase, addSaleItemsToPurchase, setPurchaseStatus, addPurchaseCharge,
 	}
 }
 
@@ -148,10 +148,13 @@ type GetPurchaseOut struct {
 var getPurchase = toolkit.Define(toolkit.Meta{
 	Name:  "get_purchase",
 	Title: "Ver compra",
-	Description: "Mostra uma Purchase (compra) completa: fornecedor, status, datas, pagamento ao fornecedor, " +
-		"custo total, valor a pagar (to_pay), os itens de venda atendidos (sale_items, no caso de " +
-		"compra sob encomenda) e as linhas de reposição (items, no caso de reposição de estoque). " +
-		"Pré-requisito: obtenha o purchase_id com list_purchases. Não altera dados.",
+	Description: "Mostra uma Purchase (compra) completa: fornecedor, status, datas, método de rateio " +
+		"(allocation_method), a composição do custo (composition: pedras + custos adicionais como frete de " +
+		"compra, descarga e imposto, cada um com seu credor), as contas por credor (obligations), o total " +
+		"devido, pago e em aberto (payable, paid, open), as linhas com rateio e custo de entrada (lines: " +
+		"allocated_charges, landed_total, landed_unit_cost), os itens de venda atendidos (sale_items, " +
+		"compra sob encomenda) e as linhas de reposição (items). Pré-requisito: obtenha o purchase_id com " +
+		"list_purchases. Não altera dados.",
 	ReadOnly: true, Idempotent: true,
 }, func(ctx context.Context, gw toolkit.Gateway, in GetPurchaseIn) (GetPurchaseOut, error) {
 	r, err := get[restPurchaseDetail](ctx, gw, "/purchases/"+pathID(string(in.PurchaseID)), nil)
@@ -163,8 +166,17 @@ var getPurchase = toolkit.Define(toolkit.Meta{
 })
 
 // toEN traduz o PurchaseDetail do REST (sale_items com campos PT) para o contrato EN (§4.2/§5).
+// Sem payment_status/paid_amount/paid_at/to_pay: a compra traz payable/paid/open das contas (AYD-008).
 func (r restPurchaseDetail) toEN() PurchaseDetail {
-	p := PurchaseDetail{PurchaseSummary: r.restPurchaseSummary.toEN(), SaleItems: make([]PurchaseSaleItem, 0, len(r.SaleItems)), Items: r.Items}
+	s := r.restPurchaseSummary
+	p := PurchaseDetail{
+		ID: s.ID, Kind: s.Kind, Status: s.Status, SupplierID: s.SupplierID, SupplierName: s.SupplierName,
+		ExpectedDate: optDate(s.ExpectedDate), Notes: opt(s.Notes), OrderedAt: optDate(s.OrderedAt), ReceivedAt: optDate(s.ReceivedAt),
+		AllocationMethod: r.AllocationMethod, TotalCost: s.TotalCost, LineCount: s.LineCount, CreatedAt: s.CreatedAt,
+		Composition: r.Composition, Obligations: r.Obligations,
+		Payable: s.Payable, Paid: s.Paid, Open: r.Open, Lines: r.Lines,
+		SaleItems: make([]PurchaseSaleItem, 0, len(r.SaleItems)), Items: r.Items,
+	}
 	for _, i := range r.SaleItems {
 		p.SaleItems = append(p.SaleItems, PurchaseSaleItem{
 			ID: i.ID, SaleID: i.SaleID, CustomerName: i.CustomerName, ProductID: i.ProdutoID,
@@ -173,6 +185,15 @@ func (r restPurchaseDetail) toEN() PurchaseDetail {
 	}
 	if p.Items == nil {
 		p.Items = []PurchaseLine{}
+	}
+	if p.Lines == nil {
+		p.Lines = []PurchaseCostLine{}
+	}
+	if p.Obligations == nil {
+		p.Obligations = []ObligationSummary{}
+	}
+	if p.Composition.Charges == nil {
+		p.Composition.Charges = []PurchaseCharge{}
 	}
 	return p
 }
@@ -301,4 +322,61 @@ var setPurchaseStatus = toolkit.Define(toolkit.Meta{
 		return SetPurchaseStatusOut{}, err
 	}
 	return SetPurchaseStatusOut{PurchaseID: r.ID, Status: r.Status, OrderedAt: optDate(r.OrderedAt), ReceivedAt: optDate(r.ReceivedAt), Warnings: noWarnings()}, nil
+})
+
+// --- add_purchase_charge (W · dd) ---
+
+type AddPurchaseChargeIn struct {
+	PurchaseID      UUID                       `json:"purchase_id" jsonschema:"id da compra (obtenha com list_purchases); qualquer status"`
+	Kind            toolkit.PurchaseChargeKind `json:"kind" jsonschema:"FREIGHT (frete de compra), UNLOADING (descarga), TAX (imposto, ex.: ICMS) ou OTHER (outros)"`
+	Amount          toolkit.PosMoney           `json:"amount" jsonschema:"valor do custo adicional em BRL (> 0)"`
+	Description     string                     `json:"description,omitempty" jsonschema:"descrição curta (ex.: ICMS MS)"`
+	PayeeSupplierID UUID                       `json:"payee_supplier_id,omitempty" jsonschema:"credor: id do fornecedor ou prestador (search_suppliers); padrão: o fornecedor da compra"`
+	toolkit.Dedupable
+}
+
+type AddPurchaseChargeOut struct {
+	Charge       PurchaseCharge `json:"charge"`
+	Purchase     PurchaseDetail `json:"purchase"`
+	Warnings     []string       `json:"warnings"`
+	Deduplicated bool           `json:"deduplicated,omitempty"`
+}
+
+var addPurchaseCharge = toolkit.Define(toolkit.Meta{
+	Name:  "add_purchase_charge",
+	Title: "Lançar custo adicional da compra",
+	Description: "Lança um Purchase charge (custo adicional da compra) numa Purchase: frete de compra (FREIGHT), " +
+		"descarga (UNLOADING), imposto (TAX) ou outros (OTHER), com valor e credor (por padrão, o fornecedor " +
+		"da compra; informe payee_supplier_id para outro, ex.: o Jairo da descarga ou o órgão do imposto). " +
+		"Pode ser lançado em qualquer status da compra (o frete costuma chegar depois do pedido). O custo " +
+		"entra na conta a pagar do credor e é rateado entre as linhas (custo de entrada). Pré-requisitos: " +
+		"purchase_id (list_purchases) e, se houver, payee_supplier_id (search_suppliers). Devolve o custo " +
+		"lançado e a compra atualizada. Não paga nada (use settle_obligations) e não é o frete de entrega " +
+		"ao cliente.",
+	Dedupe: true,
+}, func(ctx context.Context, gw toolkit.Gateway, in AddPurchaseChargeIn) (AddPurchaseChargeOut, error) {
+	if err := checkMoney("amount", float64(in.Amount)); err != nil {
+		return AddPurchaseChargeOut{}, err
+	}
+	body := map[string]any{"kind": in.Kind, "amount": in.Amount, "description": optStr(in.Description)}
+	if in.PayeeSupplierID != "" {
+		body["payee_supplier_id"] = in.PayeeSupplierID
+	}
+	base := "/purchases/" + pathID(string(in.PurchaseID))
+	r, err := send[struct {
+		PurchaseCharge
+		Warnings []string `json:"warnings"`
+	}](ctx, gw, "POST", base+"/charges", body)
+	if err != nil {
+		return AddPurchaseChargeOut{}, err
+	}
+	pd, err := get[restPurchaseDetail](ctx, gw, base, nil)
+	if err != nil {
+		return AddPurchaseChargeOut{}, afterWrite(err)
+	}
+	warnings := r.Warnings
+	if warnings == nil {
+		warnings = noWarnings()
+	}
+	return AddPurchaseChargeOut{Charge: r.PurchaseCharge, Purchase: pd.toEN(), Warnings: warnings}, nil
 })

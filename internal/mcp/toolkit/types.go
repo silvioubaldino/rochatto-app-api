@@ -57,6 +57,11 @@ type (
 	MovementCategory    string // as 12 categorias de movimentação
 	ExpenseCategory     string // categorias aceitas por record_expense (despesa ou receita avulsa)
 	MovementDirection   string // IN (entrada) | OUT (saída)
+
+	// AYD-008 (catálogo 1.0.0): composição da compra.
+	PurchaseChargeKind string // FREIGHT | UNLOADING | TAX | OTHER
+	AllocationMethod   string // BY_QUANTITY | BY_VALUE
+	PurchaseLineType   string // STOCK_ITEM | SALE_ITEM
 )
 
 // Valores de enum (fonte para os schemas e para os adaptadores).
@@ -85,6 +90,10 @@ var Enums = map[reflect.Type][]string{
 		"VEHICLE", "TAXES", "FIXED_COSTS", "MARKETING", "BANK_FEES", "OTHER_EXPENSE"},
 	reflect.TypeFor[ExpenseCategory]():   {"VEHICLE", "TAXES", "FIXED_COSTS", "MARKETING", "BANK_FEES", "LABOR", "OTHER_EXPENSE", "OTHER_INCOME"},
 	reflect.TypeFor[MovementDirection](): {"IN", "OUT"},
+
+	reflect.TypeFor[PurchaseChargeKind](): {"FREIGHT", "UNLOADING", "TAX", "OTHER"},
+	reflect.TypeFor[AllocationMethod]():   {"BY_QUANTITY", "BY_VALUE"},
+	reflect.TypeFor[PurchaseLineType]():   {"STOCK_ITEM", "SALE_ITEM"},
 
 	reflect.TypeFor[SettableQuoteStatus]():    {"OPEN", "LOST"},
 	reflect.TypeFor[SettableDeliveryStatus](): {"TO_DELIVER", "DELIVERED"},

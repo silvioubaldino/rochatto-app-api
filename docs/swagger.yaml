@@ -1023,6 +1023,8 @@ components:
         notes:
           type: string
           nullable: true
+        allocation_method:
+          $ref: "#/components/schemas/AllocationMethod"
         sale_item_ids:
           type: array
           items:
@@ -1045,6 +1047,12 @@ components:
         notes:
           type: string
           nullable: true
+        allocation_method:
+          $ref: "#/components/schemas/AllocationMethod"
+        supplier_id:
+          type: string
+          format: uuid
+          description: "Só compra OPEN sem Items de venda (409 senão); custos com o credor padrão acompanham"
 
     PurchaseSummary:
       type: object
@@ -1091,17 +1099,162 @@ components:
           type: number
           format: double
           description: "Σ em aberto das contas da compra (AYD-007)"
+        open:
+          type: number
+          format: double
+          description: "Σ em aberto das contas da compra (= payable) — AYD-008"
+        allocation_method:
+          $ref: "#/components/schemas/AllocationMethod"
         line_count:
           type: integer
         created_at:
           type: string
           format: date-time
 
+    AllocationMethod:
+      type: string
+      enum: [BY_QUANTITY, BY_VALUE]
+      description: "Rateio dos custos adicionais entre as linhas (AYD-008); padrão BY_QUANTITY"
+
+    PurchaseChargeKind:
+      type: string
+      enum: [FREIGHT, UNLOADING, TAX, OTHER]
+
+    PurchaseChargeRequest:
+      type: object
+      required: [kind, amount]
+      properties:
+        kind:
+          $ref: "#/components/schemas/PurchaseChargeKind"
+        amount:
+          type: number
+          format: double
+          description: "> 0"
+        description:
+          type: string
+          nullable: true
+        payee_supplier_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: "Ausente = fornecedor da compra; null explícito = credor a definir"
+
+    PurchaseCharge:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        purchase_id:
+          type: string
+          format: uuid
+        kind:
+          $ref: "#/components/schemas/PurchaseChargeKind"
+        amount:
+          type: number
+          format: double
+        description:
+          type: string
+          nullable: true
+        payee_supplier_id:
+          type: string
+          format: uuid
+          nullable: true
+        payee_name:
+          type: string
+          nullable: true
+        obligation_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: "Conta (AYD-007) onde o custo caiu"
+        created_at:
+          type: string
+          format: date-time
+
+    PurchaseChargeMutation:
+      allOf:
+        - $ref: "#/components/schemas/PurchaseCharge"
+        - type: object
+          properties:
+            warnings:
+              type: array
+              items:
+                type: string
+              description: "[] ou [\"OVERSETTLED\"]"
+
+    PurchaseCostLine:
+      type: object
+      description: "Linha com rateio e custo de entrada (vw_purchase_line_costs); arredondado a 2 casas só na exibição"
+      properties:
+        line_type:
+          type: string
+          enum: [STOCK_ITEM, SALE_ITEM]
+        line_id:
+          type: string
+          format: uuid
+        product_id:
+          type: string
+          format: uuid
+          nullable: true
+        product_name:
+          type: string
+        unit:
+          type: string
+          nullable: true
+        quantity:
+          type: number
+          format: double
+        unit_cost:
+          type: number
+          format: double
+        base_cost:
+          type: number
+          format: double
+        allocated_charges:
+          type: number
+          format: double
+        landed_total:
+          type: number
+          format: double
+        landed_unit_cost:
+          type: number
+          format: double
+
     PurchaseDetail:
       allOf:
         - $ref: "#/components/schemas/PurchaseSummary"
         - type: object
           properties:
+            composition:
+              type: object
+              properties:
+                goods_total:
+                  type: number
+                  format: double
+                charges:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/PurchaseCharge"
+                charges_total:
+                  type: number
+                  format: double
+                total:
+                  type: number
+                  format: double
+            obligations:
+              type: array
+              description: "Contas a pagar da compra (uma por credor) — resumo do AYD-007"
+              items:
+                type: object
+            lines:
+              type: array
+              items:
+                $ref: "#/components/schemas/PurchaseCostLine"
+            warnings:
+              type: array
+              items:
+                type: string
             sale_items:
               type: array
               items:
@@ -1213,6 +1366,10 @@ components:
           type: number
           format: double
           description: inflow − outflow + adjustment (pode ser negativo)
+        stock_value:
+          type: number
+          format: double
+          description: "GREATEST(balance, 0) × last_inflow_cost (custo de entrada, com rateio dos custos adicionais) — AYD-008"
         last_inflow_cost:
           type: number
           format: double
@@ -3229,6 +3386,16 @@ paths:
             type: string
             format: date
           description: "Data de criação ≤"
+        - name: open_only
+          in: query
+          schema:
+            type: boolean
+          description: "true = só compras com valor em aberto (open > 0) — AYD-008"
+        - name: overdue
+          in: query
+          schema:
+            type: boolean
+          description: "true = só compras com alguma conta vencida — AYD-008"
       responses:
         "200":
           description: Purchases não excluídas, created_at desc
@@ -3597,6 +3764,117 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Não autenticado
+
+  /api/v1/purchases/{id}/charges:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags:
+        - Purchases
+      summary: Custos adicionais da compra
+      operationId: listPurchaseCharges
+      responses:
+        "200":
+          description: Custos adicionais (não excluídos)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PurchaseCharge"
+        "404":
+          description: Compra não encontrada
+    post:
+      tags:
+        - Purchases
+      summary: Lança custo adicional (frete de compra, descarga, imposto, outros)
+      operationId: createPurchaseCharge
+      description: |
+        Qualquer status da compra. Credor: `payee_supplier_id` (ausente = fornecedor da compra;
+        null = a definir). O custo entra na conta do credor (AYD-007) e é rateado entre as linhas.
+        400 amount ≤ 0 / kind inválido · 404 compra ou fornecedor · 409 compra excluída ·
+        422 BY_QUANTITY com unidades diferentes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchaseChargeRequest"
+      responses:
+        "201":
+          description: Custo lançado (+ warnings)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseChargeMutation"
+        "400":
+          description: Payload inválido
+        "404":
+          description: Compra ou fornecedor não encontrado
+        "409":
+          description: Compra excluída
+        "422":
+          description: BY_QUANTITY com unidades diferentes — use rateio por valor
+
+  /api/v1/purchases/{id}/charges/{chargeId}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: chargeId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    put:
+      tags:
+        - Purchases
+      summary: Substitui um custo adicional
+      operationId: updatePurchaseCharge
+      description: "200 com warnings (OVERSETTLED se uma conta ficou com quitado > devido)."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchaseChargeRequest"
+      responses:
+        "200":
+          description: Custo atualizado (+ warnings)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseChargeMutation"
+        "400":
+          description: Payload inválido
+        "404":
+          description: Não encontrado
+        "409":
+          description: Compra excluída
+        "422":
+          description: BY_QUANTITY com unidades diferentes
+    delete:
+      tags:
+        - Purchases
+      summary: Exclui (soft-delete) um custo adicional
+      operationId: deletePurchaseCharge
+      description: "O OVERSETTLED eventual aparece em GET /purchases/{id}.warnings."
+      responses:
+        "204":
+          description: Excluído
+        "404":
+          description: Não encontrado
+        "409":
+          description: Compra excluída
 
   /api/v1/purchases/{id}/status:
     parameters:
