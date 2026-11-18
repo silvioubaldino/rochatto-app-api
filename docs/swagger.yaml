@@ -2211,12 +2211,12 @@ paths:
           in: query
           schema:
             type: boolean
-          description: "Se `true`, só Sales com frete_valor > frete_pago (AYD-004)"
+          description: "Se `true`, só Sales com frete_valor > frete_pago, exceto CANCELED (AYD-004)"
         - name: commission_pending
           in: query
           schema:
             type: boolean
-          description: "Se `true`, só Sales com comissao_valor > 0 e comissao_paga = false (AYD-004)"
+          description: "Se `true`, só Sales com comissao_valor > 0 e comissao_paga = false, exceto CANCELED (AYD-004)"
         - name: from
           in: query
           schema:

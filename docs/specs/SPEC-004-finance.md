@@ -99,9 +99,9 @@ além disso é exposto. OpenAPI: `docs/swagger.yaml`.
    o default de `data_pagamento` em "confirmar" também usa esse dia.
 3. **`a_receber` legado mantido** (`total_venda − total_recebido`, pode ser negativo) ao lado do
    novo `receivable` (≥ 0); `a_pagar_frete` do detalhe passou a valer `freight_payable`.
-4. **`freight_pending`/`commission_pending` seguem a definição literal do AYD** e **não excluem
-   Sales CANCELED**, enquanto `balances.*` as excluem. Para o drill-down bater com o saldo, o web
-   deve combinar com `delivery_status=TO_DELIVER,DELIVERED` (o mesmo vale para `payment_status`).
+4. **`freight_pending`/`commission_pending` excluem Sales CANCELED** (AYD-004 ajustado), para o
+   drill-down bater com `balances.*`. O link de `payment_status=PENDING,PARTIAL` (AYD-002) não
+   exclui canceladas — uma Sale cancelada com saldo aparece na lista com o badge cinza.
 5. **`paid_to_suppliers`** soma `paid_amount` das Purchases não excluídas com `paid_at` no período,
    sem exigir `payment_status = PAID` (`paid_at` só é carimbado ao pagar — SPEC-002).
 6. **404 antes de 409/400 em escrita de Receipt**: Sale inexistente/excluída → 404; Sale cancelada

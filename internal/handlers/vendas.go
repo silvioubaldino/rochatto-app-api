@@ -386,11 +386,12 @@ func (h *VendasHandler) list(w http.ResponseWriter, r *http.Request) {
 		}
 		query = query.Where("vr.data_venda "+f.op+" ?", d)
 	}
+	// AYD-004: os filtros de pendência excluem Sales canceladas, como os saldos do painel.
 	if q.Get("freight_pending") == "true" {
-		query = query.Where("vr.frete_valor > vr.frete_pago")
+		query = query.Where("vr.frete_valor > vr.frete_pago AND vr.delivery_status <> 'CANCELED'")
 	}
 	if q.Get("commission_pending") == "true" {
-		query = query.Where("vr.comissao_valor > 0 AND vr.comissao_paga = FALSE")
+		query = query.Where("vr.comissao_valor > 0 AND vr.comissao_paga = FALSE AND vr.delivery_status <> 'CANCELED'")
 	}
 	if q.Get("pendente") == "true" {
 		// "a receber" exclui Sales canceladas (AYD-002).
