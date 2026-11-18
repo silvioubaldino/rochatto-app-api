@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -36,11 +37,99 @@ type clienteRequest struct {
 	Endereco    *string `json:"endereco"`
 	Cidade      *string `json:"cidade"`
 	Observacoes *string `json:"observacoes"`
+	// AYD-003 (campos novos em inglês)
+	LeadSource *string    `json:"lead_source"`
+	ReferrerID *uuid.UUID `json:"referrer_id"`
+}
+
+// --- LeadSource (AYD-003) ---
+
+var validLeadSources = map[string]bool{
+	"REFERRAL":  true,
+	"INSTAGRAM": true,
+	"PARTNER":   true,
+	"OTHER":     true,
+}
+
+// validateLeadSource normaliza lead_source (trim; "" → null) e aplica a regra do AYD-003:
+// referrer_id é obrigatório se lead_source = PARTNER e proibido caso contrário (inclusive
+// com lead_source null). Devolve a mensagem de erro ("" quando válido). A existência do
+// Partner é checada no banco à parte.
+func validateLeadSource(req *clienteRequest) string {
+	req.LeadSource = nullIfBlank(req.LeadSource)
+	if req.LeadSource != nil && !validLeadSources[*req.LeadSource] {
+		return "campo 'lead_source' inválido (REFERRAL, INSTAGRAM, PARTNER ou OTHER)"
+	}
+	isPartner := req.LeadSource != nil && *req.LeadSource == "PARTNER"
+	if isPartner && req.ReferrerID == nil {
+		return "campo 'referrer_id' é obrigatório quando lead_source = PARTNER"
+	}
+	if !isPartner && req.ReferrerID != nil {
+		return "campo 'referrer_id' só pode ser preenchido quando lead_source = PARTNER"
+	}
+	return ""
+}
+
+// baseQuery lê clientes com o nome do Partner (referrer_name). O JOIN não filtra Partners
+// excluídos: um Customer indicado por um Partner já excluído continua mostrando o nome.
+func (h *ClientesHandler) baseQuery(ctx context.Context) *gorm.DB {
+	return h.db.WithContext(ctx).
+		Model(&models.Cliente{}).
+		Select("clientes.*, ve.nome AS referrer_name").
+		Joins("LEFT JOIN vendedores_externos ve ON ve.id = clientes.referrer_id")
+}
+
+func (h *ClientesHandler) fetch(ctx context.Context, id uuid.UUID) (models.Cliente, error) {
+	var c models.Cliente
+	err := h.baseQuery(ctx).Where("clientes.id = ?", id).Take(&c).Error
+	return c, err
+}
+
+// checkReferrer valida lead_source/referrer_id; current é o referrer_id já gravado (nil
+// na criação). Um referrer_id novo precisa apontar para um Partner existente e não
+// excluído; manter o mesmo referrer_id de um Partner já excluído é permitido (o vínculo
+// histórico é preservado). Escreve a resposta e devolve false quando inválido.
+func (h *ClientesHandler) checkReferrer(w http.ResponseWriter, ctx context.Context, req *clienteRequest, current *uuid.UUID) bool {
+	if msg := validateLeadSource(req); msg != "" {
+		models.WriteError(w, http.StatusBadRequest, msg)
+		return false
+	}
+	if req.ReferrerID == nil || (current != nil && *current == *req.ReferrerID) {
+		return true
+	}
+	var p models.Partner
+	if err := h.db.WithContext(ctx).First(&p, "id = ?", *req.ReferrerID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			models.WriteError(w, http.StatusBadRequest, "referrer não encontrado")
+			return false
+		}
+		log.Printf("ERROR checkReferrer: %v", err)
+		models.WriteError(w, http.StatusInternalServerError, "erro interno")
+		return false
+	}
+	return true
 }
 
 func (h *ClientesHandler) list(w http.ResponseWriter, r *http.Request) {
+	query := h.baseQuery(r.Context())
+	if ls := r.URL.Query().Get("lead_source"); ls != "" {
+		if !validLeadSources[ls] {
+			models.WriteError(w, http.StatusBadRequest, "lead_source inválido")
+			return
+		}
+		query = query.Where("clientes.lead_source = ?", ls)
+	}
+	if ref := r.URL.Query().Get("referrer_id"); ref != "" {
+		refID, err := uuid.Parse(ref)
+		if err != nil {
+			models.WriteError(w, http.StatusBadRequest, "referrer_id inválido")
+			return
+		}
+		query = query.Where("clientes.referrer_id = ?", refID)
+	}
+
 	var clientes []models.Cliente
-	if err := h.db.WithContext(r.Context()).Order("nome asc").Find(&clientes).Error; err != nil {
+	if err := query.Order("clientes.nome asc").Find(&clientes).Error; err != nil {
 		log.Printf("ERROR ListClientes: %v", err)
 		models.WriteError(w, http.StatusInternalServerError, "erro interno")
 		return
@@ -58,8 +147,8 @@ func (h *ClientesHandler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var c models.Cliente
-	if err := h.db.WithContext(r.Context()).First(&c, "id = ?", id).Error; err != nil {
+	c, err := h.fetch(r.Context(), id)
+	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			models.WriteError(w, http.StatusNotFound, "registro não encontrado")
 			return
@@ -83,6 +172,9 @@ func (h *ClientesHandler) create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !h.checkReferrer(w, r.Context(), &req, nil) {
+		return
+	}
 
 	c := models.Cliente{
 		Nome:        nome,
@@ -91,6 +183,8 @@ func (h *ClientesHandler) create(w http.ResponseWriter, r *http.Request) {
 		Endereco:    req.Endereco,
 		Cidade:      req.Cidade,
 		Observacoes: req.Observacoes,
+		LeadSource:  req.LeadSource,
+		ReferrerID:  req.ReferrerID,
 	}
 
 	if err := h.db.WithContext(r.Context()).Create(&c).Error; err != nil {
@@ -99,7 +193,7 @@ func (h *ClientesHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, c)
+	h.respond(w, r.Context(), http.StatusCreated, c.ID)
 }
 
 func (h *ClientesHandler) update(w http.ResponseWriter, r *http.Request) {
@@ -130,6 +224,9 @@ func (h *ClientesHandler) update(w http.ResponseWriter, r *http.Request) {
 		models.WriteError(w, http.StatusInternalServerError, "erro interno")
 		return
 	}
+	if !h.checkReferrer(w, r.Context(), &req, c.ReferrerID) {
+		return
+	}
 
 	c.Nome = nome
 	c.Telefone = req.Telefone
@@ -137,6 +234,8 @@ func (h *ClientesHandler) update(w http.ResponseWriter, r *http.Request) {
 	c.Endereco = req.Endereco
 	c.Cidade = req.Cidade
 	c.Observacoes = req.Observacoes
+	c.LeadSource = req.LeadSource
+	c.ReferrerID = req.ReferrerID
 
 	if err := h.db.WithContext(r.Context()).Save(&c).Error; err != nil {
 		log.Printf("ERROR UpdateCliente save: %v", err)
@@ -144,7 +243,18 @@ func (h *ClientesHandler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, c)
+	h.respond(w, r.Context(), http.StatusOK, c.ID)
+}
+
+// respond relê o Customer (com referrer_name) e escreve a resposta.
+func (h *ClientesHandler) respond(w http.ResponseWriter, ctx context.Context, status int, id uuid.UUID) {
+	c, err := h.fetch(ctx, id)
+	if err != nil {
+		log.Printf("ERROR fetch cliente after write: %v", err)
+		models.WriteError(w, http.StatusInternalServerError, "erro interno")
+		return
+	}
+	writeJSON(w, status, c)
 }
 
 func (h *ClientesHandler) delete(w http.ResponseWriter, r *http.Request) {
@@ -171,9 +281,9 @@ func (h *ClientesHandler) search(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var clientes []models.Cliente
-	if err := h.db.WithContext(r.Context()).
-		Where("nome ILIKE ?", "%"+q+"%").
-		Order("nome asc").
+	if err := h.baseQuery(r.Context()).
+		Where("clientes.nome ILIKE ?", "%"+q+"%").
+		Order("clientes.nome asc").
 		Limit(20).
 		Find(&clientes).Error; err != nil {
 		log.Printf("ERROR SearchClientes: %v", err)

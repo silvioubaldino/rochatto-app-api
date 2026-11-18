@@ -290,7 +290,7 @@ func (h *EstoqueHandler) resumo(w http.ResponseWriter, r *http.Request) {
 			produto_id,
 			COUNT(*)                                AS total_entradas,
 			SUM(quantidade_entrada)                 AS quantidade_total,
-			AVG(custo_unit)                         AS custo_medio,
+			COALESCE(SUM(quantidade_entrada * custo_unit) / NULLIF(SUM(quantidade_entrada), 0), 0) AS custo_medio, -- ponderado pela quantidade
 			SUM(quantidade_entrada * custo_unit)     AS valor_total_estoque,
 			MAX(data_entrada)                       AS ultima_entrada
 		`).

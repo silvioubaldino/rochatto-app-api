@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math/big"
 	"net/http"
 	"strings"
@@ -133,8 +134,9 @@ func parseRSAPublicKey(k jwk) (*rsa.PublicKey, error) {
 	}, nil
 }
 
-// RequireAuth is an HTTP middleware that validates Firebase JWTs.
-func RequireAuth(projectID string) func(http.Handler) http.Handler {
+// RequireAuth is an HTTP middleware that validates Firebase JWTs and then restricts access
+// to the owner's e-mails (allow). A valid token outside the allowlist gets 403.
+func RequireAuth(projectID string, allow Allowlist) func(http.Handler) http.Handler {
 	expectedIssuer := "https://securetoken.google.com/" + projectID
 
 	return func(next http.Handler) http.Handler {
@@ -146,7 +148,8 @@ func RequireAuth(projectID string) func(http.Handler) http.Handler {
 			}
 			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
 
-			token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+			claims := jwt.MapClaims{}
+			token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
 				if token.Method.Alg() != "RS256" {
 					return nil, fmt.Errorf("unexpected signing method: %s", token.Method.Alg())
 				}
@@ -169,6 +172,12 @@ func RequireAuth(projectID string) func(http.Handler) http.Handler {
 			sub, err := token.Claims.GetSubject()
 			if err != nil || sub == "" {
 				models.WriteError(w, http.StatusUnauthorized, "unauthorized")
+				return
+			}
+
+			if err := allow.Check(claims); err != nil {
+				log.Printf("WARN auth: acesso negado para uid=%s: %v", sub, err)
+				models.WriteError(w, http.StatusForbidden, "acesso restrito ao dono da conta")
 				return
 			}
 

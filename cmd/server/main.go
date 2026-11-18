@@ -29,6 +29,9 @@ func main() {
 		log.Fatal("FIREBASE_PROJECT_ID não configurada")
 	}
 
+	allow := ownerAllowlist(env)
+	migrateOnStart(databaseURL)
+
 	db, err := gorm.Open(postgres.Open(databaseURL), &gorm.Config{})
 	if err != nil {
 		log.Fatalf("erro ao conectar ao banco: %v", err)
@@ -38,7 +41,8 @@ func main() {
 	handlers.NewClientesHandler(db).Register(apiMux)
 	handlers.NewProdutosHandler(db).Register(apiMux)
 	handlers.NewFornecedoresHandler(db).Register(apiMux)
-	handlers.NewVendedoresExternosHandler(db).Register(apiMux)
+	handlers.NewPartnersHandler(db).Register(apiMux)
+	handlers.NewProductCategoriesHandler(db).Register(apiMux)
 	handlers.NewVendasHandler(db).Register(apiMux)
 	handlers.NewQuotesHandler(db).Register(apiMux)
 	handlers.NewPagamentosHandler(db).Register(apiMux)
@@ -47,7 +51,7 @@ func main() {
 
 	root := http.NewServeMux()
 	root.HandleFunc("GET /health", handlers.Health(env))
-	root.Handle("/api/v1/", http.StripPrefix("/api/v1", auth.RequireAuth(firebaseProjectID)(apiMux)))
+	root.Handle("/api/v1/", http.StripPrefix("/api/v1", auth.RequireAuth(firebaseProjectID, allow)(apiMux)))
 
 	handler := auth.CORS(frontendURL)(root)
 

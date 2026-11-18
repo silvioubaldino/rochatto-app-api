@@ -215,8 +215,7 @@ func (h *VendasHandler) fetchVendaResumo(ctx context.Context, id uuid.UUID) (*ve
 	var row vendaResumoRow
 	result := h.db.WithContext(ctx).
 		Table("vw_vendas_resumo vr").
-		Select("vr.*, c.nome AS cliente_nome, ve.nome AS vendedor_externo_nome, vq.quote_id AS quote_id").
-		Joins("JOIN vendas vq ON vq.id = vr.id"). // quote_id não está na view (criada antes da 003)
+		Select("vr.*, c.nome AS cliente_nome, ve.nome AS vendedor_externo_nome"). // vr.* inclui quote_id (004)
 		Joins("JOIN clientes c ON c.id = vr.cliente_id").
 		Joins("LEFT JOIN vendedores_externos ve ON ve.id = vr.vendedor_externo_id").
 		Where("vr.id = ?", id).
@@ -307,8 +306,7 @@ func parseDate(s string) (time.Time, error) {
 func (h *VendasHandler) list(w http.ResponseWriter, r *http.Request) {
 	query := h.db.WithContext(r.Context()).
 		Table("vw_vendas_resumo vr").
-		Select("vr.*, c.nome AS cliente_nome, ve.nome AS vendedor_externo_nome, vq.quote_id AS quote_id").
-		Joins("JOIN vendas vq ON vq.id = vr.id"). // quote_id não está na view (criada antes da 003)
+		Select("vr.*, c.nome AS cliente_nome, ve.nome AS vendedor_externo_nome"). // vr.* inclui quote_id (004)
 		Joins("JOIN clientes c ON c.id = vr.cliente_id").
 		Joins("LEFT JOIN vendedores_externos ve ON ve.id = vr.vendedor_externo_id")
 
@@ -329,10 +327,7 @@ func (h *VendasHandler) list(w http.ResponseWriter, r *http.Request) {
 		query = query.Where("vr.cliente_id = ?", clienteID)
 	}
 	if r.URL.Query().Get("pendente") == "true" {
-		query = query.Where(`
-			(SELECT COALESCE(SUM(iv.quantidade * iv.preco_venda_unit), 0) FROM itens_venda iv WHERE iv.venda_id = vr.id)
-			> (SELECT COALESCE(SUM(pc.valor), 0) FROM pagamentos_cliente pc WHERE pc.venda_id = vr.id AND pc.status = 'recebido')
-		`)
+		query = query.Where("vr.total_venda > vr.total_recebido")
 	}
 
 	query = query.Order("vr.data_venda DESC, vr.created_at DESC")

@@ -2,13 +2,17 @@
 id: SPEC-001
 type: spec
 title: Espinha Quote → Sale (api)
-status: review
-updated: 2026-07-16
+status: done
+updated: 2026-11-18
 parents: [AYD-001@context]
-related: [GLO, ADR-001@context]
+related: [GLO, ADR-001@context, PDR-001@context, AYD-002@context]
 ---
 
 # Spec: Espinha Quote → Sale (parte deste repo — api)
+
+> **Revisão 2026-11-17 aplicada** (PDR-001@context): Quote sem Supplier e venda rápida
+> (`POST /quotes/quick-sale`) entregues. `origin`, `delivery_status` e a remoção de
+> `POST /vendas` ficam na SPEC-002 (AYD-002@context).
 
 > O QUÊ e COMO este repo cumpre o **AYD-001**. `approved` = contrato local congelado;
 > `done` = implementado (este documento vira o registro histórico da entrega).
