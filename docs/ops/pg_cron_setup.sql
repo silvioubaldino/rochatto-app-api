@@ -1,50 +1,14 @@
 -- =============================================================
--- Script para configurar no Supabase Dashboard → SQL Editor
--- Pré-requisito: habilitar pg_cron em Database → Extensions
+-- pg_cron NÃO é mais necessário (AYD-004 / SPEC-004).
+--
+-- A função gerar_notificacoes_pagamentos() agora é versionada na migration
+-- migrations/007_finance.up.sql e a própria API a executa a cada
+-- GET /dashboard/notificacoes (também disponível em POST /dashboard/gerar-notificacoes).
+--
+-- Passo de deploy: quem tiver agendado o job antigo remove com o comando abaixo
+-- (SQL Editor / psql). Sem o job, nada mais precisa ser configurado.
+-- Se o job não existir, o comando falha com "could not find valid entry" — pode ignorar;
+-- se a extensão pg_cron não estiver instalada, também não há nada a fazer.
 -- =============================================================
 
--- Função que gera/atualiza notificacoes de pagamentos
-CREATE OR REPLACE FUNCTION gerar_notificacoes_pagamentos()
-RETURNS void AS $$
-BEGIN
-  -- Limpar notificacoes de pagamentos que ja foram confirmados ou de Sales canceladas
-  DELETE FROM notificacoes
-  WHERE pagamento_id IN (
-    SELECT id FROM pagamentos_cliente WHERE status = 'recebido'
-  )
-  OR venda_id IN (SELECT id FROM vendas WHERE delivery_status = 'CANCELED');
-
-  -- Inserir/atualizar notificacoes para pagamentos pendentes
-  -- nos proximos 5 dias ou vencidos
-  INSERT INTO notificacoes (tipo, venda_id, pagamento_id, cliente_nome, valor, data_ref, dias_restantes)
-  SELECT
-    CASE WHEN p.data_agendada < CURRENT_DATE THEN 'pagamento_vencido'
-         ELSE 'pagamento_vencendo'
-    END,
-    v.id,
-    p.id,
-    c.nome,
-    p.valor,
-    p.data_agendada,
-    (p.data_agendada - CURRENT_DATE)::int
-  FROM pagamentos_cliente p
-  JOIN vendas v ON v.id = p.venda_id
-  JOIN clientes c ON c.id = v.cliente_id
-  WHERE p.status = 'pendente'
-    AND p.data_agendada IS NOT NULL
-    AND p.data_agendada <= CURRENT_DATE + 5
-    AND v.deleted_at IS NULL
-    AND v.delivery_status <> 'CANCELED'   -- migration 006 (AYD-002): Sale cancelada não gera alerta
-  ON CONFLICT (pagamento_id) DO UPDATE SET
-    tipo = EXCLUDED.tipo,
-    dias_restantes = EXCLUDED.dias_restantes,
-    lida = FALSE;
-END;
-$$ LANGUAGE plpgsql;
-
--- Agendar para rodar todo dia as 8h (horario UTC)
-SELECT cron.schedule(
-  'notificacoes-diarias',
-  '0 8 * * *',
-  'SELECT gerar_notificacoes_pagamentos()'
-);
+SELECT cron.unschedule('notificacoes-diarias');

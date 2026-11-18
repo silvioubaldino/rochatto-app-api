@@ -41,7 +41,7 @@ internal/
   dbmigrate/                → golang-migrate sobre as migrations embutidas
   models/                   → structs GORM de domínio e tipos compartilhados
 migrations/                 → NNN_nome.{up,down}.sql + embed.go (package migrations)
-docs/ops/                   → operação: baseline de migrations, backup, script pg_cron
+docs/ops/                   → operação: baseline de migrations, backup, nota de remoção do pg_cron
 ```
 
 ## Convenções obrigatórias
@@ -68,7 +68,7 @@ docs/ops/                   → operação: baseline de migrations, backup, scri
 - Todas as PKs são `UUID` geradas pelo PostgreSQL (`gen_random_uuid()`)
 - Todas as entidades principais têm `created_at TIMESTAMPTZ` e `deleted_at TIMESTAMPTZ` (soft delete)
 - **Nunca deletar fisicamente** registros de vendas, clientes, produtos ou pagamentos
-- Campos calculados (total_venda, lucro, a_receber, payment_status, total_cost/to_pay, balance) **nunca são persistidos** — vêm das views `vw_vendas_resumo`, `vw_purchases_resumo` e `vw_stock_balance`
+- Campos calculados (total_venda, lucro, a_receber, payment_status, total_cost/to_pay, balance) **nunca são persistidos** — vêm das views `vw_vendas_resumo` (inclui `receivable`, `freight_payable`), `vw_purchases_resumo` e `vw_stock_balance`
 - Valores monetários: `DECIMAL(12,2)` no banco, `float64` no Go
 
 ### Código Go
@@ -119,13 +119,14 @@ go vet ./... && TEST_DATABASE_URL=$DATABASE_URL go test ./...
 | 4 | `specs/phase-04-financial.md` | Pagamentos do cliente, pagamentos a fornecedores, view calculada |
 | 5 | `specs/phase-05-dashboard.md` | Dashboard, notificações, relatórios e pg_cron |
 | 6 | `docs/specs/SPEC-002-sale-fulfillment.md` | Atendimento da Sale: Purchase, Stock (Balance/ajustes), delivery/payment status (substitui o antigo módulo `/estoque`) |
+| 7 | `docs/specs/SPEC-004-finance.md` | Financeiro: payment method e soft-delete do Receipt, saldos da Sale, `GET /finance/summary`, alertas sem pg_cron |
 
 ## Deploy (Google Cloud Run — free tier)
 
 - `Dockerfile` na raiz: binários `server` e `migrate` (migrations embutidas, tzdata incluído)
 - Variáveis de ambiente configuradas no serviço do Cloud Run (`ENV=production`,
   `ALLOWED_EMAILS` obrigatório)
-- Banco: Neon Postgres. Baseline de migrations, backup e pg_cron: `docs/ops/database.md`
+- Banco: Neon Postgres. Baseline de migrations, alertas (sem pg_cron) e backup: `docs/ops/database.md`
 - CI: `.github/workflows/ci.yml` (vet, build, migrations e testes com Postgres 16)
 - Scale-to-zero: aceita cold start (RNF-04)
 

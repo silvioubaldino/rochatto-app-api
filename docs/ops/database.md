@@ -75,15 +75,33 @@ WHERE i.pago_fornecedor > 0 AND (i.fornecedor_id IS NULL OR v.deleted_at IS NOT 
 `PENDING`); `estoque` é reconstruído dos ajustes e das reposições recebidas; Purchases, origem
 dos Items e Outflows se perdem. Para voltar de verdade, restaure o backup.
 
-## pg_cron (notificações de pagamento)
+### Migration 007 (AYD-004 — Financeiro)
 
-`docs/ops/pg_cron_setup.sql` cria `gerar_notificacoes_pagamentos()` e agenda o job diário.
-**Não é migration** (depende da extensão pg_cron, criada no painel do provedor). O endpoint
-`POST /dashboard/gerar-notificacoes` chama essa função — sem ela, responde 500.
-O script foi escrito para o Supabase; no Neon, confirme se pg_cron está disponível no plano.
-Desde a 006 a função ignora Receipts de Sales `CANCELED` — rode o script de novo depois de
-aplicar a 006 para atualizar a função (é `CREATE OR REPLACE`; o `cron.schedule` com o mesmo
-nome só atualiza o job).
+Aditiva (sem perda de dados): `pagamentos_cliente.payment_method` (enum `payment_method`,
+nulo) e `deleted_at`; `vw_vendas_resumo` recriada com `receivable` e `freight_payable` (e
+ignorando Receipts excluídos); função `gerar_notificacoes_pagamentos()` versionada. Receipts
+existentes ficam com `payment_method = NULL` (aparecem como "Não informado" no painel).
+
+`down 1` volta ao schema 006, mas **Receipts soft-deletados voltam a contar** em
+`total_recebido`/`payment_status` (a coluna `deleted_at` some) e o `payment_method` se perde.
+Para manter a exclusão antes de um down, apague-os fisicamente:
+
+```sql
+DELETE FROM notificacoes WHERE pagamento_id IN (SELECT id FROM pagamentos_cliente WHERE deleted_at IS NOT NULL);
+DELETE FROM pagamentos_cliente WHERE deleted_at IS NOT NULL;
+```
+
+## Alertas de pagamento (sem pg_cron)
+
+Desde a 007 a função `gerar_notificacoes_pagamentos()` é **migration** (idempotente; "hoje" =
+calendário de America/Sao_Paulo) e a API a executa a cada `GET /dashboard/notificacoes`
+(`POST /dashboard/gerar-notificacoes` dispara a mesma geração). Não há mais agendador:
+`pg_cron` e Cloud Scheduler são dispensáveis (Neon free tier). A geração preserva `lida`:
+só volta a `false` se o tipo (vencendo → vencido) ou a data de referência mudou.
+
+**Passo de deploy:** quem agendou o job antigo no `pg_cron` deve removê-lo
+(`docs/ops/pg_cron_setup.sql`): `SELECT cron.unschedule('notificacoes-diarias');`.
+Rodar o script antigo de novo **sobrescreveria** a função da 007 — não faça.
 
 ## Backup
 

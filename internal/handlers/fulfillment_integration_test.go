@@ -590,11 +590,11 @@ func TestIntegration_SaleStatuses(t *testing.T) {
 		_, s := e.api.do("GET", "/vendas/"+saleID, nil)
 		return s["payment_status"].(string)
 	}
-	e.api.do("POST", "/vendas/"+saleID+"/pagamentos", map[string]any{"valor": 400, "data_pagamento": "2026-11-01"})
+	e.api.do("POST", "/vendas/"+saleID+"/pagamentos", map[string]any{"valor": 400, "data_pagamento": "2026-11-01", "payment_method": "PIX"})
 	if got := status(); got != "PARTIAL" {
 		t.Errorf("após 400/1000 = %s, want PARTIAL", got)
 	}
-	e.api.do("POST", "/vendas/"+saleID+"/pagamentos", map[string]any{"valor": 600, "data_pagamento": "2026-11-02"})
+	e.api.do("POST", "/vendas/"+saleID+"/pagamentos", map[string]any{"valor": 600, "data_pagamento": "2026-11-02", "payment_method": "PIX"})
 	if got := status(); got != "PAID" {
 		t.Errorf("após 1000/1000 = %s, want PAID", got)
 	}
@@ -648,7 +648,7 @@ func TestIntegration_DashboardExcludesCanceled(t *testing.T) {
 
 	saleID, _ := e.sale(qItem("D1", 2, 500, 200, pid))
 	mustExec(t, e.db, `UPDATE vendas SET data_venda = CURRENT_DATE, frete_valor = 100, comissao_valor = 50 WHERE id = ?`, saleID)
-	e.api.do("POST", "/vendas/"+saleID+"/pagamentos", map[string]any{"valor": 300, "data_pagamento": day})
+	e.api.do("POST", "/vendas/"+saleID+"/pagamentos", map[string]any{"valor": 300, "data_pagamento": day, "payment_method": "PIX"})
 
 	rankQty := func() float64 {
 		_, rank := e.api.do("GET", "/relatorios/produtos?data_inicio="+day+"&data_fim="+day, nil)

@@ -102,6 +102,8 @@ type vendaListResponse struct {
 	TotalCusto          float64    `json:"total_custo"`
 	TotalRecebido       float64    `json:"total_recebido"`
 	AReceber            float64    `json:"a_receber"`
+	Receivable          float64    `json:"receivable"`      // RN-05: GREATEST(total_venda − total_recebido, 0) — AYD-004
+	FreightPayable      float64    `json:"freight_payable"` // RF-10: GREATEST(frete_valor − frete_pago, 0) — AYD-004
 	Lucro               float64    `json:"lucro"`
 	CreatedAt           time.Time  `json:"created_at"`
 }
@@ -156,6 +158,8 @@ type vendaResumoRow struct {
 	TotalCusto          float64    `gorm:"column:total_custo"`
 	TotalRecebido       float64    `gorm:"column:total_recebido"`
 	Lucro               float64    `gorm:"column:lucro"`
+	Receivable          float64    `gorm:"column:receivable"`
+	FreightPayable      float64    `gorm:"column:freight_payable"`
 	ClienteNome         string     `gorm:"column:cliente_nome"`
 	VendedorExternoNome *string    `gorm:"column:vendedor_externo_nome"`
 	QuoteID             *uuid.UUID `gorm:"column:quote_id"`
@@ -182,6 +186,8 @@ func (row vendaResumoRow) toListResponse() vendaListResponse {
 		TotalCusto:          row.TotalCusto,
 		TotalRecebido:       row.TotalRecebido,
 		AReceber:            row.TotalVenda - row.TotalRecebido,
+		Receivable:          row.Receivable,
+		FreightPayable:      row.FreightPayable,
 		Lucro:               row.Lucro,
 		CreatedAt:           row.CreatedAt,
 	}
@@ -283,7 +289,7 @@ func (h *VendasHandler) buildDetailResponse(ctx context.Context, vendaID uuid.UU
 
 	return &vendaDetailResponse{
 		vendaListResponse: row.toListResponse(),
-		APagarFrete:       row.FreteValor - row.FretePago,
+		APagarFrete:       row.FreightPayable,
 		Itens:             itens,
 		Pagamentos:        pagResp,
 	}, nil
@@ -367,6 +373,26 @@ func (h *VendasHandler) list(w http.ResponseWriter, r *http.Request) {
 		}
 		query = query.Where("vr.cliente_id = ?", clienteID)
 	}
+	// AYD-004: período por data_venda (inclusivo) e pendências de Freight/Commission.
+	for _, f := range []struct{ param, op string }{{"from", ">="}, {"to", "<="}} {
+		raw := q.Get(f.param)
+		if raw == "" {
+			continue
+		}
+		d, err := parseDate(raw)
+		if err != nil {
+			models.WriteError(w, http.StatusBadRequest, f.param+" inválida (formato: YYYY-MM-DD)")
+			return
+		}
+		query = query.Where("vr.data_venda "+f.op+" ?", d)
+	}
+	// AYD-004: os filtros de pendência excluem Sales canceladas, como os saldos do painel.
+	if q.Get("freight_pending") == "true" {
+		query = query.Where("vr.frete_valor > vr.frete_pago AND vr.delivery_status <> 'CANCELED'")
+	}
+	if q.Get("commission_pending") == "true" {
+		query = query.Where("vr.comissao_valor > 0 AND vr.comissao_paga = FALSE AND vr.delivery_status <> 'CANCELED'")
+	}
 	if q.Get("pendente") == "true" {
 		// "a receber" exclui Sales canceladas (AYD-002).
 		query = query.Where("vr.total_venda > vr.total_recebido AND vr.delivery_status <> 'CANCELED'")
@@ -426,6 +452,10 @@ func (h *VendasHandler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.FreteValor < 0 || req.FretePago < 0 || req.ComissaoValor < 0 {
 		models.WriteError(w, http.StatusBadRequest, "valores monetários não podem ser negativos")
+		return
+	}
+	if req.FretePago > req.FreteValor {
+		models.WriteError(w, http.StatusBadRequest, "frete_pago não pode ser maior que frete_valor")
 		return
 	}
 	dataEntregaPrevista, err := parseOptionalDate("data_entrega_prevista", req.DataEntregaPrevista)
