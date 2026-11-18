@@ -75,7 +75,7 @@ func newStack(t *testing.T, allowlist string) *stack {
 	})))
 	h, err := mcp.NewHandler(mcp.Options{
 		Config: s.cfg, Verifier: s.oauth,
-		Pipeline: mcp.PipelineOptions{Gateway: gateway.New(apiMux), Audit: mcp.NewDBAuditor(db), ValidateOutput: true},
+		Pipeline: mcp.PipelineOptions{Gateway: gateway.New(apiMux), Audit: mcp.NewDBAuditor(db), Deduper: mcp.NewDBDeduper(db, nil), ValidateOutput: true},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -192,8 +192,8 @@ func TestE2E_ConnectionToolsListAndCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list.Tools) != len(mcp.Catalog()) {
-		t.Errorf("tools/list = %d ferramentas, catálogo tem %d", len(list.Tools), len(mcp.Catalog()))
+	if len(list.Tools) != len(mcp.Catalog()) || len(list.Tools) != 34 || init.ServerInfo.Version != "1.0.0" {
+		t.Errorf("tools/list = %d ferramentas (catálogo %d, versão %s), quero 34 e 1.0.0", len(list.Tools), len(mcp.Catalog()), init.ServerInfo.Version)
 	}
 
 	// Dado criado pela REST aparece pela ferramenta (mesmos handlers).
@@ -253,7 +253,7 @@ func TestE2E_RevocationAndAllowlist(t *testing.T) {
 	// E-mail removido da allowlist: a Connection é revogada na primeira chamada seguinte.
 	access2, _, conn2 := s.connect("")
 	s.oauth = oauth.New(s.db, s.cfg, auth.ParseAllowlist("outro@example.com"))
-	h, _ := mcp.NewHandler(mcp.Options{Config: s.cfg, Verifier: s.oauth, Pipeline: mcp.PipelineOptions{Gateway: gateway.New(http.NewServeMux())}})
+	h, _ := mcp.NewHandler(mcp.Options{Config: s.cfg, Verifier: s.oauth, Pipeline: mcp.PipelineOptions{Gateway: gateway.New(http.NewServeMux()), Deduper: mcp.NewDBDeduper(s.db, nil)}})
 	rec := httptest.NewRecorder()
 	rq := httptest.NewRequest("POST", "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
 	rq.Header.Set("Authorization", "Bearer "+access2)
@@ -272,19 +272,63 @@ func TestE2E_RevocationAndAllowlist(t *testing.T) {
 
 func TestE2E_ScopeWriteOnlyConnectionHasNoReadTools(t *testing.T) {
 	s := newStack(t, "dono@example.com")
-	access, _, _ := s.connect("write") // scopes futuros menores: sem read, as ferramentas de leitura somem
+	access, _, _ := s.connect("write") // scopes futuros menores: sem read, as 18 ferramentas de leitura somem
 	cs, err := s.session(access)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer cs.Close()
 	list, err := cs.ListTools(context.Background(), nil)
-	if err != nil || len(list.Tools) != 0 {
-		t.Fatalf("tools/list = %v %v, quero vazio", list, err)
+	if err != nil || len(list.Tools) != 16 { // só as 16 escritas
+		t.Fatalf("tools/list = %d (%v), quero as 16 de escrita", len(list.Tools), err)
+	}
+	for _, tool := range list.Tools {
+		if tool.Annotations != nil && tool.Annotations.ReadOnlyHint {
+			t.Errorf("%s é de leitura e apareceu para uma Connection write", tool.Name)
+		}
 	}
 	// Chamada direta fora dos scopes → FORBIDDEN (não erro de protocolo).
 	res, err := cs.CallTool(context.Background(), &sdk.CallToolParams{Name: "search_customers", Arguments: map[string]any{}})
 	if err != nil || !res.IsError || res.StructuredContent.(map[string]any)["error"].(map[string]any)["code"] != "FORBIDDEN" {
 		t.Errorf("CallTool sem scope = %v %+v", err, res)
+	}
+}
+
+// SPEC-007 — scope de leitura: Connection só com read não lista as 16 escritas e chamá-las
+// devolve FORBIDDEN sem nenhuma chamada ao Gateway (nenhum Customer criado).
+func TestE2E_ReadOnlyConnectionHasNoWriteTools(t *testing.T) {
+	s := newStack(t, "dono@example.com")
+	access, _, _ := s.connect("read")
+	cs, err := s.session(access)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+	list, err := cs.ListTools(context.Background(), nil)
+	if err != nil || len(list.Tools) != 18 {
+		t.Fatalf("tools/list = %d (%v), quero as 18 de leitura", len(list.Tools), err)
+	}
+	for _, tool := range list.Tools {
+		if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
+			t.Errorf("%s não é de leitura e apareceu para uma Connection read", tool.Name)
+		}
+	}
+	for _, tool := range mcp.Catalog() {
+		if tool.Meta.ReadOnly {
+			continue
+		}
+		res, err := cs.CallTool(context.Background(), &sdk.CallToolParams{Name: tool.Meta.Name, Arguments: map[string]any{"name": "x"}})
+		if err != nil || !res.IsError {
+			t.Fatalf("%s: %v %+v", tool.Meta.Name, err, res)
+		}
+		e := res.StructuredContent.(map[string]any)["error"].(map[string]any)
+		if e["code"] != "FORBIDDEN" || e["message"] != "esta conexão não tem permissão de escrita" {
+			t.Errorf("%s = %v", tool.Meta.Name, e)
+		}
+	}
+	var n int64
+	s.db.Raw(`SELECT COUNT(*) FROM clientes`).Scan(&n)
+	if n != 0 {
+		t.Errorf("nenhuma escrita deveria ter chegado à API, há %d clientes", n)
 	}
 }

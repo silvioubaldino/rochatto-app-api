@@ -15,6 +15,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/silvioubaldino/sales-backend/internal/mcp/toolkit"
 )
 
@@ -119,7 +120,17 @@ func TestCatalogConventions(t *testing.T) {
 			if e.OutputSchema == nil || e.OutputSchema.Type != "object" {
 				t.Errorf("outputSchema deve ser um object (structuredContent)")
 			}
-			for _, schema := range []any{e.InputSchema, e.OutputSchema} {
+			// null só onde o AYD permite limpar o valor (§3.2/§4.3): campos listados em nullableInputs.
+			in := *e.InputSchema
+			in.Properties = map[string]*jsonschema.Schema{}
+			for k, v := range e.InputSchema.Properties {
+				if !nullableInputs[m.Name][k] {
+					in.Properties[k] = v
+				} else if b, _ := json.Marshal(v); !strings.Contains(string(b), `{"type":"null"}`) {
+					t.Errorf("campo %s deveria aceitar null explícito", k)
+				}
+			}
+			for _, schema := range []any{in, e.OutputSchema} {
 				if b, _ := json.Marshal(schema); strings.Contains(string(b), `"null"`) {
 					t.Errorf("schema não deve aceitar null: %s", b)
 				}
@@ -138,15 +149,86 @@ func TestCatalogConventions(t *testing.T) {
 					}
 				}
 			}
-			// Dedupe (§3.7): toda ferramenta dedupe aceita allow_duplicate.
-			if m.Dedupe && e.InputSchema.Properties["allow_duplicate"] == nil {
-				t.Errorf("ferramenta dedupe sem allow_duplicate")
+			// Dedupe (§3.7): allow_duplicate em toda ferramenta dedupe — e só nelas.
+			if m.Dedupe != (e.InputSchema.Properties["allow_duplicate"] != nil) {
+				t.Errorf("allow_duplicate deve existir exatamente nas ferramentas dedupe (dedupe=%v)", m.Dedupe)
+			}
+			// Escritas declaram destructiveHint e idempotentHint (§3.6); leituras não declaram destructiveHint.
+			if !m.ReadOnly && e.Annotations.DestructiveHint == nil {
+				t.Errorf("escrita sem destructiveHint")
+			}
+			if m.ReadOnly && e.Annotations.DestructiveHint != nil {
+				t.Errorf("leitura não declara destructiveHint")
 			}
 			// Escrita: saída com warnings (§3.3).
 			if !m.ReadOnly && e.OutputSchema.Properties["warnings"] == nil {
 				t.Errorf("escrita deve devolver warnings")
 			}
 		})
+	}
+}
+
+// Campos de entrada em que null tem significado explícito (limpar) — AYD-006 §4.3.
+var nullableInputs = map[string]map[string]bool{
+	"update_sale":      {"expected_delivery_date": true, "notes": true},
+	"update_sale_item": {"supplier_id": true},
+}
+
+// As 16 escritas e suas anotações esperadas (AYD-006 §4.1): D = destructive, I = idempotent, dd = dedupe.
+var writeTools = map[string]struct{ D, I, DD bool }{
+	"create_customer":            {false, false, true},
+	"create_quote":               {false, false, true},
+	"set_quote_status":           {false, true, false},
+	"convert_quote_to_sale":      {true, false, false},
+	"create_quick_sale":          {false, false, true},
+	"update_sale":                {false, true, false},
+	"update_sale_item":           {false, true, false},
+	"set_sale_delivery_status":   {false, true, false},
+	"cancel_sale":                {true, true, false},
+	"record_receipt":             {false, false, true},
+	"confirm_receipt":            {false, true, false},
+	"create_purchase":            {false, false, true},
+	"add_sale_items_to_purchase": {false, false, false},
+	"set_purchase_status":        {false, true, false},
+	"record_supplier_payment":    {false, true, false},
+	"create_stock_adjustment":    {false, false, true},
+}
+
+// Catálogo completo como contrato (SPEC-007): 34 ferramentas, 18 R + 16 não R, versão 1.0.0.
+func TestCatalogComplete(t *testing.T) {
+	if CatalogVersion != "1.0.0" {
+		t.Errorf("catalog_version = %s, quero 1.0.0", CatalogVersion)
+	}
+	cat := Catalog()
+	if len(cat) != 34 {
+		t.Fatalf("catálogo tem %d ferramentas, quero 34", len(cat))
+	}
+	reads, writes := 0, map[string]bool{}
+	for _, tool := range cat {
+		m := tool.Meta
+		if m.ReadOnly {
+			reads++
+			continue
+		}
+		writes[m.Name] = true
+		want, ok := writeTools[m.Name]
+		if !ok {
+			t.Errorf("escrita inesperada %s", m.Name)
+			continue
+		}
+		// Anotações de risco (§3.6/§4.1): destructive só em convert e cancel; idempotent nas 8 listadas.
+		a := tool.Entry().Annotations
+		if a.ReadOnlyHint || a.OpenWorldHint || a.DestructiveHint == nil || *a.DestructiveHint != want.D || a.IdempotentHint != want.I || m.Dedupe != want.DD {
+			t.Errorf("%s: anotações %+v dedupe=%v, esperado %+v", m.Name, a, m.Dedupe, want)
+		}
+	}
+	if reads != 18 || len(writes) != 16 {
+		t.Errorf("leituras=%d escritas=%d, quero 18 e 16", reads, len(writes))
+	}
+	for name := range writeTools {
+		if !writes[name] {
+			t.Errorf("escrita %s não registrada", name)
+		}
 	}
 }
 

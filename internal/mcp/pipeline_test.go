@@ -298,3 +298,55 @@ func TestCanonicalArgs_KeyOrderIndependent(t *testing.T) {
 		t.Errorf("allow_duplicate deve ficar fora do hash: %s", h4)
 	}
 }
+
+// SPEC-007 — scope de leitura com as 16 escritas REAIS: FORBIDDEN, e nenhuma chamada chega ao
+// Gateway (nem ao Deduper).
+func TestPipeline_ReadScopeBlocksAllRealWriteTools(t *testing.T) {
+	calls := 0
+	gw := fakeGateway{do: func(string, string, url.Values, any, any) error { calls++; return nil }}
+	d := dedupeFn(func(context.Context, uuid.UUID, string, string) ([]byte, bool, error) {
+		calls++
+		return nil, false, nil
+	})
+	aud := &memAudit{}
+	p := newTestPipeline(t, gw, aud, d, Catalog())
+	writes := 0
+	for _, tool := range Catalog() {
+		if tool.Meta.ReadOnly {
+			continue
+		}
+		writes++
+		res := p.Call(context.Background(), tool, principal("read"), json.RawMessage(`{}`))
+		sc, _ := json.Marshal(res.StructuredContent)
+		if !res.IsError || !strings.Contains(string(sc), `"code":"FORBIDDEN"`) || !strings.Contains(string(sc), "esta conexão não tem permissão de escrita") {
+			t.Errorf("%s com scope read = %s", tool.Meta.Name, sc)
+		}
+		if e := aud.last(t); e.Tool != tool.Meta.Name || e.Outcome != "ERROR" || e.ErrorCode != "FORBIDDEN" {
+			t.Errorf("auditoria de %s = %+v", tool.Meta.Name, e)
+		}
+	}
+	if writes != 16 || calls != 0 {
+		t.Errorf("escritas=%d, chamadas ao Gateway/Deduper=%d (quero 16 e 0)", writes, calls)
+	}
+}
+
+// Só as ferramentas dedupe do catálogo real (6) aceitam allow_duplicate e gravam result; o
+// hash ignora allow_duplicate.
+func TestPipeline_RealDedupeToolsAreTheSixCreations(t *testing.T) {
+	var dd []string
+	for _, tool := range Catalog() {
+		if tool.Meta.Dedupe {
+			dd = append(dd, tool.Meta.Name)
+		}
+	}
+	want := "create_customer create_quote create_quick_sale record_receipt create_purchase create_stock_adjustment"
+	got := strings.Join(dd, " ")
+	for _, n := range strings.Fields(want) {
+		if !strings.Contains(got, n) {
+			t.Errorf("%s deveria ser dedupe (got %s)", n, got)
+		}
+	}
+	if len(dd) != 6 {
+		t.Errorf("dedupe = %v, quero 6", dd)
+	}
+}

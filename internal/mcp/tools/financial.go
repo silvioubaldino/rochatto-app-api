@@ -7,10 +7,9 @@ import (
 	"github.com/silvioubaldino/sales-backend/internal/mcp/toolkit"
 )
 
-// FinancialTools: finanças (AYD-006 §4.1 — módulo Financial; os Receipts de escrita entram
-// com a SPEC-007).
+// FinancialTools: finanças e Receipts (AYD-006 §4.1 — módulo Financial).
 func FinancialTools() []toolkit.Tool {
-	return []toolkit.Tool{getFinanceSummary, listPaymentAlerts}
+	return []toolkit.Tool{getFinanceSummary, listPaymentAlerts, recordReceipt, confirmReceipt}
 }
 
 // --- get_finance_summary (resposta de /finance/summary — AYD-004, já EN) ---
@@ -152,4 +151,88 @@ var listPaymentAlerts = toolkit.Define(toolkit.Meta{
 		})
 	}
 	return out, nil
+})
+
+// --- record_receipt (W · dd) e confirm_receipt (W · I) ---
+
+type RecordReceiptIn struct {
+	SaleID        UUID                  `json:"sale_id" jsonschema:"id da venda (obtenha com list_sales)"`
+	Amount        toolkit.PosMoney      `json:"amount" jsonschema:"valor do recebimento em BRL (> 0)"`
+	PaidAt        Date                  `json:"paid_at,omitempty" jsonschema:"data em que foi pago; com ela o recebimento nasce RECEIVED e payment_method é obrigatório"`
+	ScheduledDate Date                  `json:"scheduled_date,omitempty" jsonschema:"data agendada de uma parcela futura (sem paid_at nasce PENDING)"`
+	PaymentMethod toolkit.PaymentMethod `json:"payment_method,omitempty" jsonschema:"forma de pagamento: PIX, CASH, CARD, BOLETO ou TRANSFER"`
+	Notes         string                `json:"notes,omitempty" jsonschema:"observações"`
+	toolkit.Dedupable
+}
+
+type ReceiptOut struct {
+	Receipt  Receipt     `json:"receipt"`
+	Sale     SaleSummary `json:"sale"`
+	Warnings []string    `json:"warnings"`
+}
+
+type RecordReceiptOut struct {
+	Receipt      Receipt     `json:"receipt"`
+	Sale         SaleSummary `json:"sale"`
+	Warnings     []string    `json:"warnings"`
+	Deduplicated bool        `json:"deduplicated,omitempty"`
+}
+
+// receiptWithSale relê a Sale após a escrita do Receipt para devolver o novo receivable.
+func receiptWithSale(ctx context.Context, gw toolkit.Gateway, saleID UUID, r legacyReceipt) (ReceiptOut, error) {
+	s, err := get[legacySale](ctx, gw, "/vendas/"+pathID(string(saleID)), nil)
+	if err != nil {
+		return ReceiptOut{}, afterWrite(err)
+	}
+	return ReceiptOut{Receipt: r.toEN(), Sale: s.toEN(), Warnings: noWarnings()}, nil
+}
+
+var recordReceipt = toolkit.Define(toolkit.Meta{
+	Name:  "record_receipt",
+	Title: "Registrar recebimento",
+	Description: "Registra um Receipt (recebimento) de uma Sale (venda): com paid_at já foi pago (RECEIVED) e exige " +
+		"payment_method; sem paid_at é uma parcela agendada (PENDING), opcionalmente com scheduled_date. Use " +
+		"quando o dono disser que o cliente pagou ou combinou uma parcela. Pré-requisito: sale_id de " +
+		"list_sales. Devolve o recebimento e a venda com o novo a receber (receivable). Venda cancelada não " +
+		"aceita recebimentos. Não edita nem exclui recebimentos.",
+	Dedupe: true,
+}, func(ctx context.Context, gw toolkit.Gateway, in RecordReceiptIn) (RecordReceiptOut, error) {
+	if err := checkMoney("amount", float64(in.Amount)); err != nil {
+		return RecordReceiptOut{}, err
+	}
+	r, err := send[legacyReceipt](ctx, gw, "POST", "/vendas/"+pathID(string(in.SaleID))+"/pagamentos", map[string]any{
+		"valor": in.Amount, "data_pagamento": optStr(string(in.PaidAt)), "data_agendada": optStr(string(in.ScheduledDate)),
+		"payment_method": optStr(string(in.PaymentMethod)), "observacoes": optStr(in.Notes),
+	})
+	if err != nil {
+		return RecordReceiptOut{}, err
+	}
+	o, err := receiptWithSale(ctx, gw, in.SaleID, r)
+	return RecordReceiptOut{Receipt: o.Receipt, Sale: o.Sale, Warnings: o.Warnings}, err
+})
+
+type ConfirmReceiptIn struct {
+	SaleID        UUID                  `json:"sale_id" jsonschema:"id da venda (obtenha com list_sales)"`
+	ReceiptID     UUID                  `json:"receipt_id" jsonschema:"id do recebimento PENDING (obtenha com get_sale)"`
+	PaidAt        Date                  `json:"paid_at,omitempty" jsonschema:"data do pagamento (padrão: hoje em São Paulo)"`
+	PaymentMethod toolkit.PaymentMethod `json:"payment_method,omitempty" jsonschema:"forma de pagamento; obrigatória se o recebimento ainda não tiver uma"`
+}
+
+var confirmReceipt = toolkit.Define(toolkit.Meta{
+	Name:  "confirm_receipt",
+	Title: "Confirmar recebimento",
+	Description: "Confirma um Receipt (recebimento) PENDING (agendado) de uma Sale (venda) como RECEIVED " +
+		"(recebido), com a data do pagamento (padrão: hoje) e a forma de pagamento, que é obrigatória se o " +
+		"recebimento ainda não tiver uma. Use quando uma parcela agendada for paga. Pré-requisitos: sale_id e " +
+		"receipt_id (get_sale). Devolve o recebimento e a venda com o novo a receber (receivable). Não cria " +
+		"recebimentos novos (use record_receipt) nem desfaz confirmações.",
+	Idempotent: true,
+}, func(ctx context.Context, gw toolkit.Gateway, in ConfirmReceiptIn) (ReceiptOut, error) {
+	r, err := send[legacyReceipt](ctx, gw, "POST",
+		"/vendas/"+pathID(string(in.SaleID))+"/pagamentos/"+pathID(string(in.ReceiptID))+"/confirmar",
+		map[string]any{"data_pagamento": optStr(string(in.PaidAt)), "payment_method": optStr(string(in.PaymentMethod))})
+	if err != nil {
+		return ReceiptOut{}, err
+	}
+	return receiptWithSale(ctx, gw, in.SaleID, r)
 })

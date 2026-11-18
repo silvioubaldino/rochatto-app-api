@@ -46,14 +46,52 @@ type Tool struct {
 	call           func(ctx context.Context, gw Gateway, args json.RawMessage) (any, error)
 }
 
+// SchemaOption ajusta os schemas de entrada e saída de uma ferramenta (ver Define).
+type SchemaOption func(in, out *jsonschema.Schema)
+
+// MinItems exige ao menos n elementos na propriedade array prop da entrada (§4.3: "≥ 1").
+func MinItems(prop string, n int) SchemaOption {
+	return func(in, _ *jsonschema.Schema) {
+		if p := in.Properties[prop]; p != nil {
+			p.MinItems = &n
+		}
+	}
+}
+
+// OutConst fixa o valor de uma propriedade da saída (ex.: delivery_status "CANCELED").
+func OutConst(prop string, v any) SchemaOption {
+	return func(_, out *jsonschema.Schema) {
+		if p := out.Properties[prop]; p != nil {
+			c := v
+			*p = jsonschema.Schema{Type: "string", Const: &c}
+		}
+	}
+}
+
+// NotZero proíbe o valor 0 na propriedade numérica prop da entrada (§4.3: "≠ 0").
+func NotZero(prop string) SchemaOption {
+	return func(in, _ *jsonschema.Schema) {
+		if p := in.Properties[prop]; p != nil {
+			var zero any = 0
+			p.Not = &jsonschema.Schema{Const: &zero}
+		}
+	}
+}
+
 // Handler é o corpo de uma ferramenta. Devolve o Out, ou *ToolError / *APIError.
 type Handler[In, Out any] func(ctx context.Context, gw Gateway, in In) (Out, error)
 
 // Define cria uma ferramenta; os schemas de entrada e saída são derivados de In e Out.
 // Entra em pânico se os tipos não geram schema válido (erro de programação, pego no teste).
-func Define[In, Out any](meta Meta, h Handler[In, Out]) Tool {
+//
+// opts refinam os schemas derivados quando as tags não bastam (ex.: minItems, const); rodam
+// antes da resolução, então a validação de entrada e de saída os enxerga.
+func Define[In, Out any](meta Meta, h Handler[In, Out], opts ...SchemaOption) Tool {
 	in := mustSchema(reflect.TypeFor[In]())
 	out := mustSchema(reflect.TypeFor[Out]())
+	for _, o := range opts {
+		o(in, out)
+	}
 	t := Tool{Meta: meta, InputSchema: in, OutputSchema: out}
 	var err error
 	if t.inputResolved, err = in.Resolve(&jsonschema.ResolveOptions{}); err != nil {
