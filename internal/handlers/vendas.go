@@ -52,10 +52,12 @@ type vendaUpdateRequest struct {
 	DeliveryStatus      json.RawMessage `json:"delivery_status"`
 	DataEntregaPrevista *string         `json:"data_entrega_prevista"`
 	FreteValor          float64         `json:"frete_valor"`
-	FretePago           float64         `json:"frete_pago"`
 	ComissaoValor       float64         `json:"comissao_valor"`
-	ComissaoPaga        bool            `json:"comissao_paga"`
 	Observacoes         *string         `json:"observacoes"`
+	// Campos removidos (AYD-007): só detectados para responder 400 — pagar frete/comissão é
+	// quitar a conta (POST /settlements).
+	FretePago    json.RawMessage `json:"frete_pago"`
+	ComissaoPaga json.RawMessage `json:"comissao_paga"`
 }
 
 type deliveryStatusRequest struct {
@@ -94,25 +96,26 @@ type vendaListResponse struct {
 	DataVenda           string     `json:"data_venda"`
 	DataEntregaPrevista *string    `json:"data_entrega_prevista"`
 	FreteValor          float64    `json:"frete_valor"`
-	FretePago           float64    `json:"frete_pago"`
 	ComissaoValor       float64    `json:"comissao_valor"`
-	ComissaoPaga        bool       `json:"comissao_paga"`
 	Observacoes         *string    `json:"observacoes"`
 	TotalVenda          float64    `json:"total_venda"`
 	TotalCusto          float64    `json:"total_custo"`
-	TotalRecebido       float64    `json:"total_recebido"`
+	TotalRecebido       float64    `json:"total_recebido"` // Σ quitações da conta RECEIVABLE (AYD-007)
 	AReceber            float64    `json:"a_receber"`
-	Receivable          float64    `json:"receivable"`      // RN-05: GREATEST(total_venda − total_recebido, 0) — AYD-004
-	FreightPayable      float64    `json:"freight_payable"` // RF-10: GREATEST(frete_valor − frete_pago, 0) — AYD-004
+	Receivable          float64    `json:"receivable"`         // RN-05: aberto da conta RECEIVABLE
+	FreightPayable      float64    `json:"freight_payable"`    // RF-10: frete ainda a pagar (conta PAYABLE sem credor)
+	CommissionPayable   float64    `json:"commission_payable"` // comissão ainda a pagar (conta do Partner ou sem credor)
 	Lucro               float64    `json:"lucro"`
 	CreatedAt           time.Time  `json:"created_at"`
 }
 
 type vendaDetailResponse struct {
 	vendaListResponse
-	APagarFrete float64             `json:"a_pagar_frete"`
-	Itens       []itemResponse      `json:"itens"`
-	Pagamentos  []pagamentoResponse `json:"pagamentos"`
+	APagarFrete float64        `json:"a_pagar_frete"`
+	Itens       []itemResponse `json:"itens"`
+	// Warnings: OVERSETTLED quando alguma conta da Sale ficou com quitado > valor (ex.: troca de
+	// Partner depois de quitar a comissão) — o dono ajusta a quitação (AYD-007 §2).
+	Warnings []string `json:"warnings"`
 }
 
 type itemResponse struct {
@@ -149,9 +152,7 @@ type vendaResumoRow struct {
 	DataVenda           time.Time  `gorm:"column:data_venda"`
 	DataEntregaPrevista *time.Time `gorm:"column:data_entrega_prevista"`
 	FreteValor          float64    `gorm:"column:frete_valor"`
-	FretePago           float64    `gorm:"column:frete_pago"`
 	ComissaoValor       float64    `gorm:"column:comissao_valor"`
-	ComissaoPaga        bool       `gorm:"column:comissao_paga"`
 	Observacoes         *string    `gorm:"column:observacoes"`
 	CreatedAt           time.Time  `gorm:"column:created_at"`
 	TotalVenda          float64    `gorm:"column:total_venda"`
@@ -160,6 +161,7 @@ type vendaResumoRow struct {
 	Lucro               float64    `gorm:"column:lucro"`
 	Receivable          float64    `gorm:"column:receivable"`
 	FreightPayable      float64    `gorm:"column:freight_payable"`
+	CommissionPayable   float64    `gorm:"column:commission_payable"`
 	ClienteNome         string     `gorm:"column:cliente_nome"`
 	VendedorExternoNome *string    `gorm:"column:vendedor_externo_nome"`
 	QuoteID             *uuid.UUID `gorm:"column:quote_id"`
@@ -178,9 +180,7 @@ func (row vendaResumoRow) toListResponse() vendaListResponse {
 		DataVenda:           row.DataVenda.Format("2006-01-02"),
 		DataEntregaPrevista: formatDate(row.DataEntregaPrevista),
 		FreteValor:          row.FreteValor,
-		FretePago:           row.FretePago,
 		ComissaoValor:       row.ComissaoValor,
-		ComissaoPaga:        row.ComissaoPaga,
 		Observacoes:         row.Observacoes,
 		TotalVenda:          row.TotalVenda,
 		TotalCusto:          row.TotalCusto,
@@ -188,6 +188,7 @@ func (row vendaResumoRow) toListResponse() vendaListResponse {
 		AReceber:            row.TotalVenda - row.TotalRecebido,
 		Receivable:          row.Receivable,
 		FreightPayable:      row.FreightPayable,
+		CommissionPayable:   row.CommissionPayable,
 		Lucro:               row.Lucro,
 		CreatedAt:           row.CreatedAt,
 	}
@@ -274,24 +275,20 @@ func (h *VendasHandler) buildDetailResponse(ctx context.Context, vendaID uuid.UU
 		return nil, fmt.Errorf("fetch itens: %w", err)
 	}
 
-	var pagamentos []models.PagamentoCliente
-	if err := h.db.WithContext(ctx).
-		Where("venda_id = ?", vendaID).
-		Order("CASE WHEN status = 'pendente' THEN 0 ELSE 1 END, COALESCE(data_agendada, data_pagamento) ASC").
-		Find(&pagamentos).Error; err != nil {
-		return nil, fmt.Errorf("fetch pagamentos: %w", err)
+	var overs []string
+	if err := h.db.WithContext(ctx).Raw(`SELECT DISTINCT 'OVERSETTLED' FROM vw_obligations
+		WHERE sale_id = ? AND settled > amount`, vendaID).Scan(&overs).Error; err != nil {
+		return nil, fmt.Errorf("fetch warnings: %w", err)
 	}
-
-	pagResp := make([]pagamentoResponse, 0, len(pagamentos))
-	for _, p := range pagamentos {
-		pagResp = append(pagResp, pagamentoToResponse(p))
+	if overs == nil {
+		overs = []string{}
 	}
 
 	return &vendaDetailResponse{
 		vendaListResponse: row.toListResponse(),
 		APagarFrete:       row.FreightPayable,
 		Itens:             itens,
-		Pagamentos:        pagResp,
+		Warnings:          overs,
 	}, nil
 }
 
@@ -388,14 +385,14 @@ func (h *VendasHandler) list(w http.ResponseWriter, r *http.Request) {
 	}
 	// AYD-004: os filtros de pendência excluem Sales canceladas, como os saldos do painel.
 	if q.Get("freight_pending") == "true" {
-		query = query.Where("vr.frete_valor > vr.frete_pago AND vr.delivery_status <> 'CANCELED'")
+		query = query.Where("vr.freight_payable > 0 AND vr.delivery_status <> 'CANCELED'")
 	}
 	if q.Get("commission_pending") == "true" {
-		query = query.Where("vr.comissao_valor > 0 AND vr.comissao_paga = FALSE AND vr.delivery_status <> 'CANCELED'")
+		query = query.Where("vr.commission_payable > 0 AND vr.delivery_status <> 'CANCELED'")
 	}
 	if q.Get("pendente") == "true" {
 		// "a receber" exclui Sales canceladas (AYD-002).
-		query = query.Where("vr.total_venda > vr.total_recebido AND vr.delivery_status <> 'CANCELED'")
+		query = query.Where("vr.receivable > 0 AND vr.delivery_status <> 'CANCELED'")
 	}
 
 	query = query.Order("vr.data_venda DESC, vr.created_at DESC")
@@ -450,12 +447,12 @@ func (h *VendasHandler) update(w http.ResponseWriter, r *http.Request) {
 		models.WriteError(w, http.StatusBadRequest, "status de entrega só via PATCH /vendas/{id}/delivery-status")
 		return
 	}
-	if req.FreteValor < 0 || req.FretePago < 0 || req.ComissaoValor < 0 {
-		models.WriteError(w, http.StatusBadRequest, "valores monetários não podem ser negativos")
+	if req.FretePago != nil || req.ComissaoPaga != nil {
+		models.WriteError(w, http.StatusBadRequest, "frete_pago e comissao_paga foram removidos: pague frete e comissão quitando a conta (POST /settlements)")
 		return
 	}
-	if req.FretePago > req.FreteValor {
-		models.WriteError(w, http.StatusBadRequest, "frete_pago não pode ser maior que frete_valor")
+	if req.FreteValor < 0 || req.ComissaoValor < 0 {
+		models.WriteError(w, http.StatusBadRequest, "valores monetários não podem ser negativos")
 		return
 	}
 	dataEntregaPrevista, err := parseOptionalDate("data_entrega_prevista", req.DataEntregaPrevista)
@@ -472,9 +469,7 @@ func (h *VendasHandler) update(w http.ResponseWriter, r *http.Request) {
 			"vendedor_externo_id":   req.VendedorExternoID,
 			"data_entrega_prevista": dataEntregaPrevista,
 			"frete_valor":           req.FreteValor,
-			"frete_pago":            req.FretePago,
 			"comissao_valor":        req.ComissaoValor,
-			"comissao_paga":         req.ComissaoPaga,
 			"observacoes":           req.Observacoes,
 		})
 	if result.Error != nil {

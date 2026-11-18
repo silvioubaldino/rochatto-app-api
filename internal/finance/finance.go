@@ -1,4 +1,4 @@
-// Package finance reúne as regras puras do Financeiro (AYD-004): payment method do Receipt e
+// Package finance reúne as regras puras do Financeiro (AYD-004/AYD-007): payment method e
 // validação do período do painel. Sem acesso a banco — os handlers carregam o estado e
 // aplicam estas regras.
 package finance
@@ -23,17 +23,9 @@ var PaymentMethods = map[string]bool{
 	MethodPix: true, MethodCash: true, MethodCard: true, MethodBoleto: true, MethodTransfer: true,
 }
 
-// Status do Receipt (enum legado `status_pagamento`).
-const (
-	ReceiptPending  = "pendente"
-	ReceiptReceived = "recebido"
-)
-
 var (
 	// ErrInvalidMethod: payment_method fora do enum.
 	ErrInvalidMethod = errors.New("payment_method inválido (PIX | CASH | CARD | BOLETO | TRANSFER)")
-	// ErrMethodRequired: Receipt "recebido" sem payment_method.
-	ErrMethodRequired = errors.New("campo 'payment_method' é obrigatório para recebimento")
 )
 
 // NormalizeMethod trata vazio/espaços como ausente e valida o enum.
@@ -49,15 +41,6 @@ func NormalizeMethod(raw *string) (*string, error) {
 		return nil, ErrInvalidMethod
 	}
 	return &m, nil
-}
-
-// CheckMethodForStatus aplica a regra do AYD-004: o Receipt que fica "recebido" exige
-// payment_method; o "pendente" não (forma ainda combinada).
-func CheckMethodForStatus(status string, method *string) error {
-	if status == ReceiptReceived && method == nil {
-		return ErrMethodRequired
-	}
-	return nil
 }
 
 // ResolvePeriod interpreta from/to ("YYYY-MM-DD", vazio = default) do painel: default

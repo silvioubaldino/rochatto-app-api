@@ -99,42 +99,6 @@ func StampTransition(to string, orderedAt, receivedAt *time.Time, today time.Tim
 	return orderedAt, receivedAt
 }
 
-// --- Purchase: pagamento ao Supplier ---
-
-var ErrNegativePaidAmount = errors.New("paid_amount deve ser >= 0")
-
-// ResolvePayment aplica os defaults do PATCH /purchases/{id}/payment: PAID exige paid_amount ≥ 0
-// (default = total_cost) e paid_at (default = hoje); PENDING zera paid_amount e paid_at.
-func ResolvePayment(status string, amount *float64, at *time.Time, totalCost float64, today time.Time) (*float64, *time.Time, error) {
-	if status == PaymentPending {
-		return nil, nil, nil
-	}
-	if amount == nil {
-		v := totalCost
-		amount = &v
-	}
-	if *amount < 0 {
-		return nil, nil, ErrNegativePaidAmount
-	}
-	if at == nil {
-		d := dateOnly(today)
-		at = &d
-	}
-	return amount, at, nil
-}
-
-// ToPay replica a regra da view: total_cost − pago se PENDING; 0 se PAID.
-func ToPay(status string, totalCost float64, paidAmount *float64) float64 {
-	if status == PaymentPaid {
-		return 0
-	}
-	paid := 0.0
-	if paidAmount != nil {
-		paid = *paidAmount
-	}
-	return totalCost - paid
-}
-
 // --- Sale ---
 
 var (
@@ -154,8 +118,8 @@ func CheckDeliveryChange(current, next string, itemsInOrderedPurchase bool) erro
 	return nil
 }
 
-// SalePaymentStatus replica a regra da view vw_vendas_resumo: PENDING se recebido = 0;
-// PARTIAL se 0 < recebido < total; PAID se recebido ≥ total.
+// SalePaymentStatus replica a regra da view vw_vendas_resumo (recebido = Σ quitações da conta
+// RECEIVABLE — AYD-007): PENDING se recebido = 0; PARTIAL se 0 < recebido < total; PAID se ≥ total.
 func SalePaymentStatus(total, received float64) string {
 	switch {
 	case received <= 0:

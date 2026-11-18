@@ -50,6 +50,8 @@ type Fornecedor struct {
 	Telefone    *string `               json:"telefone"`
 	Cidade      *string `               json:"cidade"`
 	Observacoes *string `               json:"observacoes"`
+	// AYD-007: cadastro de fornecedores e prestadores (STONE | TRANSPORT | LABOR | TAX_AUTHORITY | OTHER).
+	Kind string `gorm:"column:kind;type:supplier_kind;not null;default:'STONE'" json:"kind"`
 }
 
 func (Fornecedor) TableName() string { return "fornecedores" }
@@ -85,9 +87,7 @@ type Venda struct {
 	DataVenda           time.Time  `gorm:"type:date;not null"                              json:"data_venda"`
 	DataEntregaPrevista *time.Time `gorm:"type:date"                                       json:"data_entrega_prevista"`
 	FreteValor          float64    `gorm:"type:decimal(12,2);not null;default:0"            json:"frete_valor"`
-	FretePago           float64    `gorm:"type:decimal(12,2);not null;default:0"            json:"frete_pago"`
 	ComissaoValor       float64    `gorm:"type:decimal(12,2);not null;default:0"            json:"comissao_valor"`
-	ComissaoPaga        bool       `gorm:"not null;default:false"                           json:"comissao_paga"`
 	Observacoes         *string    `                                                        json:"observacoes"`
 }
 
@@ -140,28 +140,12 @@ type QuoteItem struct {
 
 func (QuoteItem) TableName() string { return "quote_items" }
 
-type PagamentoCliente struct {
-	ID            uuid.UUID  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
-	VendaID       uuid.UUID  `gorm:"type:uuid;not null"                             json:"venda_id"`
-	Valor         float64    `gorm:"type:decimal(12,2);not null"                     json:"valor"`
-	DataPagamento *time.Time `gorm:"type:date"                                       json:"data_pagamento"`
-	DataAgendada  *time.Time `gorm:"type:date"                                       json:"data_agendada"`
-	Status        string     `gorm:"type:status_pagamento;not null;default:'pendente'" json:"status"`
-	// AYD-004: forma de pagamento (obrigatória ao receber) e soft-delete (RN-08). Com
-	// gorm.DeletedAt, todo First/Find/Delete do GORM já ignora/atualiza deleted_at.
-	PaymentMethod *string        `gorm:"type:payment_method"                              json:"payment_method"`
-	Observacoes   *string        `                                                        json:"observacoes"`
-	CreatedAt     time.Time      `                                                        json:"created_at"`
-	DeletedAt     gorm.DeletedAt `gorm:"index"                                            json:"-"`
-}
-
-func (PagamentoCliente) TableName() string { return "pagamentos_cliente" }
-
 type Notificacao struct {
 	ID            uuid.UUID  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
 	Tipo          string     `gorm:"not null"           json:"tipo"`
 	VendaID       *uuid.UUID `gorm:"type:uuid"         json:"venda_id"`
-	PagamentoID   *uuid.UUID `gorm:"type:uuid;uniqueIndex" json:"pagamento_id"`
+	ObligationID  uuid.UUID  `gorm:"column:obligation_id;type:uuid;not null" json:"obligation_id"`
+	InstallmentID *uuid.UUID `gorm:"column:installment_id;type:uuid"         json:"installment_id"`
 	ClienteNome   string     `gorm:"not null"           json:"cliente_nome"`
 	Valor         float64    `gorm:"type:decimal(12,2);not null" json:"valor"`
 	DataRef       time.Time  `gorm:"type:date;not null" json:"data_ref"`
@@ -173,20 +157,17 @@ type Notificacao struct {
 func (Notificacao) TableName() string { return "notificacoes" }
 
 // Purchase — AYD-002 (entidade nova, inglês — ADR-001). Consolida custo e pagamento ao
-// Supplier (um pagamento por Purchase — RN-06). Totais (total_cost, to_pay) vêm de
-// vw_purchases_resumo.
+// Supplier. Totais (total_cost, paid, payable, payment_status) vêm de vw_purchases_resumo e das
+// contas da compra (AYD-007).
 type Purchase struct {
 	Base
-	Kind          string     `gorm:"column:kind;type:purchase_kind;not null"                        json:"kind"`
-	SupplierID    uuid.UUID  `gorm:"column:supplier_id;type:uuid;not null"                          json:"supplier_id"`
-	Status        string     `gorm:"column:status;type:purchase_status;not null;default:'OPEN'"     json:"status"`
-	ExpectedDate  *time.Time `gorm:"column:expected_date;type:date"                                 json:"expected_date"`
-	OrderedAt     *time.Time `gorm:"column:ordered_at;type:date"                                    json:"ordered_at"`
-	ReceivedAt    *time.Time `gorm:"column:received_at;type:date"                                   json:"received_at"`
-	PaymentStatus string     `gorm:"column:payment_status;type:supplier_payment_status;not null;default:'PENDING'" json:"payment_status"`
-	PaidAmount    *float64   `gorm:"column:paid_amount;type:decimal(12,2)"                          json:"paid_amount"`
-	PaidAt        *time.Time `gorm:"column:paid_at;type:date"                                       json:"paid_at"`
-	Notes         *string    `gorm:"column:notes"                                                   json:"notes"`
+	Kind         string     `gorm:"column:kind;type:purchase_kind;not null"                        json:"kind"`
+	SupplierID   uuid.UUID  `gorm:"column:supplier_id;type:uuid;not null"                          json:"supplier_id"`
+	Status       string     `gorm:"column:status;type:purchase_status;not null;default:'OPEN'"     json:"status"`
+	ExpectedDate *time.Time `gorm:"column:expected_date;type:date"                                 json:"expected_date"`
+	OrderedAt    *time.Time `gorm:"column:ordered_at;type:date"                                    json:"ordered_at"`
+	ReceivedAt   *time.Time `gorm:"column:received_at;type:date"                                   json:"received_at"`
+	Notes        *string    `gorm:"column:notes"                                                   json:"notes"`
 }
 
 func (Purchase) TableName() string { return "purchases" }

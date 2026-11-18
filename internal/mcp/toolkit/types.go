@@ -46,6 +46,17 @@ type (
 	SupplierPaymentStatus string
 	AlertKind             string
 	MovementKind          string
+
+	// AYD-007 (catálogo 1.1.0): contas, parcelas e movimentações financeiras.
+	SupplierKind        string // STONE | TRANSPORT | LABOR | TAX_AUTHORITY | OTHER
+	ObligationDirection string // PAYABLE | RECEIVABLE
+	ObligationStatus    string // OPEN | PARTIAL | SETTLED
+	OriginType          string // SALE | PURCHASE
+	CounterpartyType    string // SUPPLIER | PARTNER | CUSTOMER
+	InstallmentStatus   string // OPEN | PARTIAL | COVERED
+	MovementCategory    string // as 12 categorias de movimentação
+	ExpenseCategory     string // categorias aceitas por record_expense (despesa ou receita avulsa)
+	MovementDirection   string // IN (entrada) | OUT (saída)
 )
 
 // Valores de enum (fonte para os schemas e para os adaptadores).
@@ -63,6 +74,17 @@ var Enums = map[reflect.Type][]string{
 	reflect.TypeFor[SupplierPaymentStatus](): {"PENDING", "PAID"},
 	reflect.TypeFor[AlertKind]():             {"OVERDUE", "DUE_SOON"},
 	reflect.TypeFor[MovementKind]():          {"INFLOW", "OUTFLOW", "ADJUSTMENT"},
+
+	reflect.TypeFor[SupplierKind]():        {"STONE", "TRANSPORT", "LABOR", "TAX_AUTHORITY", "OTHER"},
+	reflect.TypeFor[ObligationDirection](): {"PAYABLE", "RECEIVABLE"},
+	reflect.TypeFor[ObligationStatus]():    {"OPEN", "PARTIAL", "SETTLED"},
+	reflect.TypeFor[OriginType]():          {"SALE", "PURCHASE"},
+	reflect.TypeFor[CounterpartyType]():    {"SUPPLIER", "PARTNER", "CUSTOMER"},
+	reflect.TypeFor[InstallmentStatus]():   {"OPEN", "PARTIAL", "COVERED"},
+	reflect.TypeFor[MovementCategory](): {"SALE_RECEIPT", "OTHER_INCOME", "PURCHASE_PAYMENT", "FREIGHT", "LABOR", "COMMISSION",
+		"VEHICLE", "TAXES", "FIXED_COSTS", "MARKETING", "BANK_FEES", "OTHER_EXPENSE"},
+	reflect.TypeFor[ExpenseCategory]():   {"VEHICLE", "TAXES", "FIXED_COSTS", "MARKETING", "BANK_FEES", "LABOR", "OTHER_EXPENSE", "OTHER_INCOME"},
+	reflect.TypeFor[MovementDirection](): {"IN", "OUT"},
 
 	reflect.TypeFor[SettableQuoteStatus]():    {"OPEN", "LOST"},
 	reflect.TypeFor[SettableDeliveryStatus](): {"TO_DELIVER", "DELIVERED"},

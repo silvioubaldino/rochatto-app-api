@@ -58,7 +58,8 @@ type notificacaoResponse struct {
 	ID            uuid.UUID  `json:"id"`
 	Tipo          string     `json:"tipo"`
 	VendaID       *uuid.UUID `json:"venda_id"`
-	PagamentoID   *uuid.UUID `json:"pagamento_id"` // Receipt do alerta (SPEC-006: usado pelo Assistant connector)
+	ObligationID  uuid.UUID  `json:"obligation_id"`  // conta do alerta (AYD-007): o app abre a conta
+	InstallmentID *uuid.UUID `json:"installment_id"` // parcela, quando o alerta vem de parcela
 	ClienteNome   string     `json:"cliente_nome"`
 	Valor         float64    `json:"valor"`
 	DataRef       string     `json:"data_ref"`
@@ -198,7 +199,7 @@ func (h *DashboardHandler) getKPIs(w http.ResponseWriter, r *http.Request) {
 
 // --- Endpoints ---
 
-// getResumo é DEPRECATED (AYD-005): mantido sem mudanças; use GET /dashboard/kpis.
+// getResumo é DEPRECATED (AYD-005): mantido (saldos re-derivados das contas — AYD-007); use GET /dashboard/kpis.
 func (h *DashboardHandler) getResumo(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -237,7 +238,7 @@ func (h *DashboardHandler) getResumo(w http.ResponseWriter, r *http.Request) {
 	// 1. Total a receber (RN-05: total_venda − total_recebido de toda Sale, entregue ou não;
 	// pagamento a maior numa Sale não abate o saldo de outra)
 	err := h.db.WithContext(ctx).Raw(`
-		SELECT COALESCE(SUM(GREATEST(vr.total_venda - vr.total_recebido, 0)), 0)
+		SELECT COALESCE(SUM(vr.receivable), 0)
 		FROM vw_vendas_resumo vr
 		WHERE vr.delivery_status <> 'CANCELED'
 	`).Scan(&resp.TotalAReceber).Error
@@ -247,9 +248,9 @@ func (h *DashboardHandler) getResumo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Total a pagar a Suppliers (RN-06): Σ to_pay das Purchases não excluídas
+	// 2. Total a pagar a Suppliers (RN-06): Σ payable (aberto das contas) das Purchases não excluídas
 	err = h.db.WithContext(ctx).Raw(`
-		SELECT COALESCE(SUM(pr.to_pay), 0)
+		SELECT COALESCE(SUM(pr.payable), 0)
 		FROM vw_purchases_resumo pr
 	`).Scan(&resp.TotalAPagarFornecedor).Error
 	if err != nil {
@@ -299,10 +300,9 @@ func (h *DashboardHandler) getResumo(w http.ResponseWriter, r *http.Request) {
 
 	// 6. Comissoes pendentes
 	err = h.db.WithContext(ctx).Raw(`
-		SELECT COALESCE(SUM(comissao_valor), 0)
-		FROM vendas
-		WHERE deleted_at IS NULL AND delivery_status <> 'CANCELED'
-			AND comissao_valor > 0 AND comissao_paga = FALSE
+		SELECT COALESCE(SUM(commission_payable), 0)
+		FROM vw_vendas_resumo
+		WHERE delivery_status <> 'CANCELED'
 	`).Scan(&resp.TotalComissoesPendentes).Error
 	if err != nil {
 		log.Printf("ERROR Dashboard total_comissoes_pendentes: %v", err)
@@ -330,7 +330,7 @@ func (h *DashboardHandler) getNotificacoes(w http.ResponseWriter, r *http.Reques
 	}
 	var notificacoes []models.Notificacao
 	err := query.
-		Order("CASE WHEN tipo = 'pagamento_vencido' THEN 0 ELSE 1 END, data_ref ASC").
+		Order("CASE WHEN tipo IN ('pagamento_vencido', 'conta_pagar_vencida') THEN 0 ELSE 1 END, data_ref ASC").
 		Limit(50).
 		Find(&notificacoes).Error
 	if err != nil {
@@ -345,7 +345,8 @@ func (h *DashboardHandler) getNotificacoes(w http.ResponseWriter, r *http.Reques
 			ID:            n.ID,
 			Tipo:          n.Tipo,
 			VendaID:       n.VendaID,
-			PagamentoID:   n.PagamentoID,
+			ObligationID:  n.ObligationID,
+			InstallmentID: n.InstallmentID,
 			ClienteNome:   n.ClienteNome,
 			Valor:         n.Valor,
 			DataRef:       n.DataRef.Format("2006-01-02"),

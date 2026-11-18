@@ -33,9 +33,24 @@ func (e *env) writeFixture() writeFixture {
 	return f
 }
 
+// receiptCount conta os "recebimentos" da Sale como get_sale os mostra: quitações da conta a
+// receber + parcelas ainda não cobertas (AYD-007).
 func (e *env) receiptCount(saleID string) int {
 	e.t.Helper()
-	return len(e.mustREST("GET", "/vendas/"+saleID, nil, 200)["pagamentos"].([]any))
+	list := e.mustREST("GET", "/obligations?origin_type=SALE&origin_id="+saleID+"&direction=RECEIVABLE", nil, 200)["items"].([]any)
+	if len(list) == 0 {
+		return 0
+	}
+	d := e.mustREST("GET", "/obligations/"+obj(list[0])["id"].(string), nil, 200)
+	n := len(d["settlements"].([]any))
+	if d["open"].(float64) > 0 {
+		for _, i := range d["installments"].([]any) {
+			if obj(i)["status"] != "COVERED" {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 func (e *env) toolCalls(tool string) (n int64) {
@@ -167,21 +182,24 @@ func TestIntegration_WriteReceiptsParityAndDedupe(t *testing.T) {
 	})
 
 	t.Run("recebimento agendado e confirmação", func(t *testing.T) {
-		sch := e.ok("record_receipt", map[string]any{"sale_id": f.sale, "amount": 700, "scheduled_date": day(5), "notes": "parcela 2"})
+		// Venda nova: a parcela é plano e o recebido cobre as parcelas mais antigas — numa venda já
+		// paga acima de 700 a parcela nasceria coberta.
+		h := e.writeFixture()
+		sch := e.ok("record_receipt", map[string]any{"sale_id": h.sale, "amount": 700, "scheduled_date": day(5), "notes": "parcela 2"})
 		rc := obj(sch["receipt"])
 		if rc["status"] != "PENDING" || rc["scheduled_date"] != day(5) || rc["notes"] != "parcela 2" {
 			t.Fatalf("agendado = %v", rc)
 		}
 		before := obj(sch["sale"])["receivable"].(float64)
-		e.fail("confirm_receipt", map[string]any{"sale_id": f.sale, "receipt_id": rc["id"]}, "INVALID_INPUT", "payment_method")
-		cf := e.ok("confirm_receipt", map[string]any{"sale_id": f.sale, "receipt_id": rc["id"], "payment_method": "TRANSFER"})
+		e.fail("confirm_receipt", map[string]any{"sale_id": h.sale, "receipt_id": rc["id"]}, "INVALID_INPUT", "payment_method")
+		cf := e.ok("confirm_receipt", map[string]any{"sale_id": h.sale, "receipt_id": rc["id"], "payment_method": "TRANSFER"})
 		crc := obj(cf["receipt"])
 		if crc["status"] != "RECEIVED" || crc["paid_at"] != time.Now().In(sp()).Format("2006-01-02") || crc["payment_method"] != "TRANSFER" ||
 			obj(cf["sale"])["receivable"].(float64) != max(before-700, 0) { // receivable nunca é negativo (RN-05)
 			t.Errorf("confirm_receipt = %v (receivable antes %v)", cf, before)
 		}
-		e.fail("confirm_receipt", map[string]any{"sale_id": f.sale, "receipt_id": rc["id"], "payment_method": "PIX"}, "INVALID_INPUT", "já confirmado")
-		e.fail("confirm_receipt", map[string]any{"sale_id": f.sale, "receipt_id": uuidNew(), "payment_method": "PIX"}, "NOT_FOUND", "pagamento não encontrado")
+		e.fail("confirm_receipt", map[string]any{"sale_id": h.sale, "receipt_id": rc["id"], "payment_method": "PIX"}, "INVALID_INPUT", "já confirmado")
+		e.fail("confirm_receipt", map[string]any{"sale_id": h.sale, "receipt_id": uuidNew(), "payment_method": "PIX"}, "NOT_FOUND", "pagamento não encontrado")
 	})
 
 	t.Run("paridade de regra: Sale cancelada", func(t *testing.T) {
@@ -203,25 +221,44 @@ func TestIntegration_WriteSalePartialUpdate(t *testing.T) {
 	f := e.writeFixture()
 	e.mustREST("PUT", "/vendas/"+f.sale, map[string]any{"frete_valor": 300, "observacoes": "x", "data_entrega_prevista": "2026-12-20", "comissao_valor": 40}, 200)
 
-	// Critério de aceite: só frete_pago muda.
+	// Critério de aceite: só o frete pago muda — vira quitação da conta a pagar do frete (AYD-007).
 	out := e.ok("update_sale", map[string]any{"sale_id": f.sale, "freight_paid": 300})
 	s := obj(out["sale"])
 	if s["freight_paid"] != float64(300) || s["freight_amount"] != float64(300) || s["notes"] != "x" || s["expected_delivery_date"] != "2026-12-20" ||
-		s["commission_amount"] != float64(40) || s["freight_payable"] != float64(0) {
+		s["commission_amount"] != float64(40) || s["freight_payable"] != float64(0) || s["commission_paid"] != false {
 		t.Fatalf("update_sale = %v", s)
 	}
 	got := e.mustREST("GET", "/vendas/"+f.sale, nil, 200)
-	if got["frete_pago"] != float64(300) || got["frete_valor"] != float64(300) || got["observacoes"] != "x" || got["comissao_paga"] != false {
+	if got["freight_payable"] != float64(0) || got["commission_payable"] != float64(40) || got["frete_valor"] != float64(300) || got["observacoes"] != "x" {
 		t.Errorf("REST = %v", got)
 	}
-
-	// commission_paid false explícito vs omitido; null limpa; valores novos.
-	e.ok("update_sale", map[string]any{"sale_id": f.sale, "commission_paid": true})
-	if got = e.mustREST("GET", "/vendas/"+f.sale, nil, 200); got["comissao_paga"] != true || got["frete_pago"] != float64(300) {
-		t.Errorf("commission_paid = %v", got)
+	if _, has := got["frete_pago"]; has {
+		t.Error("frete_pago não existe mais na API")
 	}
-	e.ok("update_sale", map[string]any{"sale_id": f.sale, "freight_amount": 450, "commission_paid": false})
-	if got = e.mustREST("GET", "/vendas/"+f.sale, nil, 200); got["frete_valor"] != float64(450) || got["comissao_paga"] != false {
+	var freightMovements int64
+	e.db.Raw(`SELECT COUNT(*) FROM financial_movements m JOIN settlements s ON s.movement_id = m.id AND s.deleted_at IS NULL
+		JOIN obligations o ON o.id = s.obligation_id WHERE o.sale_id = ? AND m.category = 'FREIGHT' AND m.amount = -300`, f.sale).Scan(&freightMovements)
+	if freightMovements != 1 {
+		t.Errorf("o frete pago deveria ser 1 movimentação FREIGHT de −300 quitando a conta: %d", freightMovements)
+	}
+	// Repetir o mesmo valor não paga de novo (idempotente).
+	e.ok("update_sale", map[string]any{"sale_id": f.sale, "freight_paid": 300})
+	e.db.Raw(`SELECT COUNT(*) FROM financial_movements m JOIN settlements s ON s.movement_id = m.id JOIN obligations o ON o.id = s.obligation_id WHERE o.sale_id = ? AND m.category = 'FREIGHT'`, f.sale).Scan(&freightMovements)
+	if freightMovements != 1 {
+		t.Errorf("update_sale deveria ser idempotente: %d movimentações de frete", freightMovements)
+	}
+
+	// commission_paid true quita a comissão (movimentação COMMISSION); false não desfaz pagamento.
+	if c := obj(e.ok("update_sale", map[string]any{"sale_id": f.sale, "commission_paid": true})["sale"]); c["commission_paid"] != true || c["freight_paid"] != float64(300) {
+		t.Errorf("commission_paid = %v", c)
+	}
+	if got = e.mustREST("GET", "/vendas/"+f.sale, nil, 200); got["commission_payable"] != float64(0) || got["freight_payable"] != float64(0) {
+		t.Errorf("commission_paid REST = %v", got)
+	}
+	e.fail("update_sale", map[string]any{"sale_id": f.sale, "commission_paid": false}, "INVALID_INPUT", "desfazer")
+	e.fail("update_sale", map[string]any{"sale_id": f.sale, "freight_paid": 100}, "INVALID_INPUT", "reduzir")
+	e.ok("update_sale", map[string]any{"sale_id": f.sale, "freight_amount": 450})
+	if got = e.mustREST("GET", "/vendas/"+f.sale, nil, 200); got["frete_valor"] != float64(450) || got["freight_payable"] != float64(150) {
 		t.Errorf("freight_amount = %v", got)
 	}
 	e.ok("update_sale", map[string]any{"sale_id": f.sale, "expected_delivery_date": nil, "notes": nil})
@@ -354,14 +391,16 @@ func TestIntegration_WriteProcurementAndStock(t *testing.T) {
 	e.fail("set_purchase_status", map[string]any{"purchase_id": pid, "status": "EM_ROTA"}, "INVALID_INPUT", "")
 
 	// Pagamento ao Supplier: valor e data informados; depois o padrão (custo total, hoje). A API é a dona de to_pay.
+	// record_supplier_payment (descontinuada) quita a conta do Supplier: pagar menos deixa a compra PENDING.
 	part := e.ok("record_supplier_payment", map[string]any{"purchase_id": pid, "paid_amount": 1000, "paid_at": "2026-11-10"})
-	if part["payment_status"] != "PAID" || part["paid_amount"] != float64(1000) || part["paid_at"] != "2026-11-10" || part["to_pay"] != float64(0) { // PAID quita o acerto (um pagamento por Purchase)
+	if part["payment_status"] != "PENDING" || part["paid_amount"] != float64(1000) || part["paid_at"] != "2026-11-10" || part["to_pay"] != float64(1400) {
 		t.Errorf("pagamento parcial = %v", part)
 	}
 	full := e.ok("record_supplier_payment", map[string]any{"purchase_id": pid})
-	if full["paid_amount"] != float64(2400) || full["to_pay"] != float64(0) || full["paid_at"] != time.Now().In(sp()).Format("2006-01-02") {
+	if full["payment_status"] != "PAID" || full["paid_amount"] != float64(2400) || full["to_pay"] != float64(0) || full["paid_at"] != time.Now().In(sp()).Format("2006-01-02") {
 		t.Errorf("pagamento total = %v", full)
 	}
+	e.fail("record_supplier_payment", map[string]any{"purchase_id": pid}, "CONFLICT", "valor acima do devido") // nada mais a pagar
 	e.fail("record_supplier_payment", map[string]any{"purchase_id": pid, "paid_amount": -5}, "INVALID_INPUT", "")
 	e.fail("record_supplier_payment", map[string]any{"purchase_id": uuidNew()}, "NOT_FOUND", "")
 
@@ -458,8 +497,8 @@ func TestIntegration_WriteRequiresWriteScope(t *testing.T) {
 	}
 	var n int64
 	e.db.Raw(`SELECT COUNT(*) FROM mcp_tool_calls WHERE connection_id = ? AND outcome = 'ERROR' AND error_code = 'FORBIDDEN'`, ro.ConnectionID).Scan(&n)
-	if n != 16 {
-		t.Errorf("auditoria FORBIDDEN = %d, quero 16", n)
+	if n != 19 {
+		t.Errorf("auditoria FORBIDDEN = %d, quero 19", n)
 	}
 	_ = context.Background
 }
