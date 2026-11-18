@@ -299,7 +299,6 @@ func TestCanonicalArgs_KeyOrderIndependent(t *testing.T) {
 	}
 }
 
-// SPEC-007/008 — scope de leitura com as 19 escritas REAIS: FORBIDDEN, e nenhuma chamada chega ao
 // Gateway (nem ao Deduper).
 func TestPipeline_ReadScopeBlocksAllRealWriteTools(t *testing.T) {
 	calls := 0
@@ -325,8 +324,8 @@ func TestPipeline_ReadScopeBlocksAllRealWriteTools(t *testing.T) {
 			t.Errorf("auditoria de %s = %+v", tool.Meta.Name, e)
 		}
 	}
-	if writes != 19 || calls != 0 {
-		t.Errorf("escritas=%d, chamadas ao Gateway/Deduper=%d (quero 19 e 0)", writes, calls)
+	if writes != 17 || calls != 0 {
+		t.Errorf("escritas=%d, chamadas ao Gateway/Deduper=%d (quero 17 e 0)", writes, calls)
 	}
 }
 
@@ -339,7 +338,7 @@ func TestPipeline_RealDedupeToolsAreTheCreations(t *testing.T) {
 			dd = append(dd, tool.Meta.Name)
 		}
 	}
-	want := "create_customer create_quote create_quick_sale record_receipt create_purchase create_stock_adjustment settle_obligations record_expense"
+	want := "create_customer create_quote create_quick_sale create_purchase add_purchase_charge create_stock_adjustment settle_obligations record_expense"
 	got := strings.Join(dd, " ")
 	for _, n := range strings.Fields(want) {
 		if !strings.Contains(got, n) {

@@ -17,6 +17,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/silvioubaldino/sales-backend/internal/fulfillment"
 	"github.com/silvioubaldino/sales-backend/internal/models"
+	"github.com/silvioubaldino/sales-backend/internal/obligations"
+	"github.com/silvioubaldino/sales-backend/internal/purchasing"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -45,6 +47,11 @@ func (h *PurchasesHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /purchases/{id}/items/{itemId}", h.deleteLine)
 
 	mux.HandleFunc("PATCH /purchases/{id}/status", h.updateStatus)
+
+	mux.HandleFunc("GET /purchases/{id}/charges", h.listCharges)
+	mux.HandleFunc("POST /purchases/{id}/charges", h.createCharge)
+	mux.HandleFunc("PUT /purchases/{id}/charges/{chargeId}", h.updateCharge)
+	mux.HandleFunc("DELETE /purchases/{id}/charges/{chargeId}", h.deleteCharge)
 }
 
 // --- Request types ---
@@ -56,17 +63,20 @@ type purchaseLineRequest struct {
 }
 
 type purchaseCreateRequest struct {
-	Kind         string                `json:"kind"`
-	SupplierID   *uuid.UUID            `json:"supplier_id"`
-	ExpectedDate *string               `json:"expected_date"`
-	Notes        *string               `json:"notes"`
-	SaleItemIDs  []uuid.UUID           `json:"sale_item_ids"`
-	Items        []purchaseLineRequest `json:"items"`
+	Kind             string                `json:"kind"`
+	SupplierID       *uuid.UUID            `json:"supplier_id"`
+	ExpectedDate     *string               `json:"expected_date"`
+	Notes            *string               `json:"notes"`
+	AllocationMethod *string               `json:"allocation_method"` // AYD-008; padrão BY_QUANTITY
+	SaleItemIDs      []uuid.UUID           `json:"sale_item_ids"`
+	Items            []purchaseLineRequest `json:"items"`
 }
 
 type purchaseUpdateRequest struct {
-	ExpectedDate *string `json:"expected_date"`
-	Notes        *string `json:"notes"`
+	ExpectedDate     *string    `json:"expected_date"`
+	Notes            *string    `json:"notes"`
+	AllocationMethod *string    `json:"allocation_method"`
+	SupplierID       *uuid.UUID `json:"supplier_id"`
 }
 
 type saleItemIDsRequest struct {
@@ -80,21 +90,23 @@ type purchaseStatusRequest struct {
 // --- Response types ---
 
 type purchaseSummaryResponse struct {
-	ID            uuid.UUID `json:"id"`
-	Kind          string    `json:"kind"`
-	Status        string    `json:"status"`
-	SupplierID    uuid.UUID `json:"supplier_id"`
-	SupplierName  string    `json:"supplier_name"`
-	ExpectedDate  *string   `json:"expected_date"`
-	Notes         *string   `json:"notes"`
-	OrderedAt     *string   `json:"ordered_at"`
-	ReceivedAt    *string   `json:"received_at"`
-	PaymentStatus string    `json:"payment_status"` // derivado das contas: PENDING | PAID (AYD-007)
-	TotalCost     float64   `json:"total_cost"`
-	Paid          float64   `json:"paid"`    // Σ quitado das contas da compra
-	Payable       float64   `json:"payable"` // Σ em aberto das contas da compra
-	LineCount     int64     `json:"line_count"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID               uuid.UUID `json:"id"`
+	Kind             string    `json:"kind"`
+	Status           string    `json:"status"`
+	SupplierID       uuid.UUID `json:"supplier_id"`
+	SupplierName     string    `json:"supplier_name"`
+	ExpectedDate     *string   `json:"expected_date"`
+	Notes            *string   `json:"notes"`
+	OrderedAt        *string   `json:"ordered_at"`
+	ReceivedAt       *string   `json:"received_at"`
+	PaymentStatus    string    `json:"payment_status"` // derivado das contas: PENDING | PAID (AYD-007)
+	TotalCost        float64   `json:"total_cost"`     // Σ das pedras (goods_total); com custos adicionais: composition.total
+	Paid             float64   `json:"paid"`           // Σ quitado das contas da compra
+	Payable          float64   `json:"payable"`        // Σ em aberto das contas da compra (AYD-007)
+	Open             float64   `json:"open"`           // Σ em aberto das contas da compra (= payable)
+	LineCount        int64     `json:"line_count"`
+	AllocationMethod string    `json:"allocation_method"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 type purchaseSaleItemResponse struct {
@@ -115,10 +127,35 @@ type purchaseLineResponse struct {
 	UnitCost    float64   `json:"unit_cost"`
 }
 
+type purchaseCompositionResponse struct {
+	GoodsTotal   float64                  `json:"goods_total"` // Σ linhas (pedras)
+	Charges      []purchaseChargeResponse `json:"charges"`
+	ChargesTotal float64                  `json:"charges_total"`
+	Total        float64                  `json:"total"` // goods_total + charges_total ("custo da compra")
+}
+
+type purchaseCostLineResponse struct {
+	LineType         string     `json:"line_type"` // STOCK_ITEM | SALE_ITEM
+	LineID           uuid.UUID  `json:"line_id"`
+	ProductID        *uuid.UUID `json:"product_id"`
+	ProductName      string     `json:"product_name"`
+	Unit             *string    `json:"unit"`
+	Quantity         float64    `json:"quantity"`
+	UnitCost         float64    `json:"unit_cost"`
+	BaseCost         float64    `json:"base_cost"`
+	AllocatedCharges float64    `json:"allocated_charges"`
+	LandedTotal      float64    `json:"landed_total"`
+	LandedUnitCost   float64    `json:"landed_unit_cost"`
+}
+
 type purchaseDetailResponse struct {
 	purchaseSummaryResponse
-	SaleItems []purchaseSaleItemResponse `json:"sale_items"`
-	Items     []purchaseLineResponse     `json:"items"`
+	SaleItems   []purchaseSaleItemResponse  `json:"sale_items"`
+	Items       []purchaseLineResponse      `json:"items"`
+	Composition purchaseCompositionResponse `json:"composition"`
+	Obligations []obligations.Obligation    `json:"obligations"`
+	Lines       []purchaseCostLineResponse  `json:"lines"`
+	Warnings    []string                    `json:"warnings"`
 }
 
 type purchaseStatusResponse struct {
@@ -159,10 +196,13 @@ type purchaseResumoRow struct {
 	ReceivedAt    *time.Time `gorm:"column:received_at"`
 	PaymentStatus string     `gorm:"column:payment_status"`
 	TotalCost     float64    `gorm:"column:total_cost"`
+	ChargesTotal  float64    `gorm:"column:charges_total"`
 	Paid          float64    `gorm:"column:paid"`
 	Payable       float64    `gorm:"column:payable"`
 	LineCount     int64      `gorm:"column:line_count"`
 	CreatedAt     time.Time  `gorm:"column:created_at"`
+
+	AllocationMethod string `gorm:"column:allocation_method"`
 }
 
 func (row purchaseResumoRow) toSummary() purchaseSummaryResponse {
@@ -180,8 +220,11 @@ func (row purchaseResumoRow) toSummary() purchaseSummaryResponse {
 		TotalCost:     row.TotalCost,
 		Paid:          row.Paid,
 		Payable:       row.Payable,
+		Open:          row.Payable,
 		LineCount:     row.LineCount,
 		CreatedAt:     row.CreatedAt,
+
+		AllocationMethod: row.AllocationMethod,
 	}
 }
 
@@ -222,7 +265,86 @@ func fetchPurchaseDetail(db *gorm.DB, id uuid.UUID) (*purchaseDetailResponse, er
 		ORDER BY pi.created_at`, id).Scan(&lines).Error; err != nil {
 		return nil, err
 	}
-	return &purchaseDetailResponse{purchaseSummaryResponse: row.toSummary(), SaleItems: saleItems, Items: lines}, nil
+
+	charges, err := fetchPurchaseCharges(db, id)
+	if err != nil {
+		return nil, err
+	}
+	costLines, err := fetchPurchaseCostLines(db, id)
+	if err != nil {
+		return nil, err
+	}
+	obs, err := obligations.List(db, obligations.ListFilter{
+		Direction: obligations.Payable, OriginType: "PURCHASE", OriginID: &id, Limit: 200,
+	})
+	if err != nil {
+		return nil, err
+	}
+	warnings, err := purchaseWarnings(db, id)
+	if err != nil {
+		return nil, err
+	}
+	goods := obligations.Round2(row.TotalCost)
+	chargesTotal := obligations.Round2(row.ChargesTotal)
+	return &purchaseDetailResponse{
+		purchaseSummaryResponse: row.toSummary(), SaleItems: saleItems, Items: lines,
+		Composition: purchaseCompositionResponse{
+			GoodsTotal: goods, Charges: charges, ChargesTotal: chargesTotal,
+			Total: obligations.Round2(goods + chargesTotal),
+		},
+		Obligations: obs.Items, Lines: costLines, Warnings: warnings,
+	}, nil
+}
+
+func fetchPurchaseCostLines(db *gorm.DB, id uuid.UUID) ([]purchaseCostLineResponse, error) {
+	lines := []purchaseCostLineResponse{}
+	if err := db.Raw(`
+		SELECT line_type, line_id, product_id, COALESCE(product_name, '') AS product_name, unit,
+		       quantity, unit_cost, base_cost, allocated_charges, landed_total, landed_unit_cost
+		FROM vw_purchase_line_costs
+		WHERE purchase_id = ?
+		ORDER BY line_type DESC, created_at, line_id`, id).Scan(&lines).Error; err != nil {
+		return nil, err
+	}
+	for i := range lines {
+		l := &lines[i]
+		l.BaseCost = obligations.Round2(l.BaseCost)
+		l.AllocatedCharges = obligations.Round2(l.AllocatedCharges)
+		l.LandedTotal = obligations.Round2(l.LandedTotal)
+		l.LandedUnitCost = obligations.Round2(l.LandedUnitCost)
+	}
+	return lines, nil
+}
+
+func purchaseWarnings(db *gorm.DB, id uuid.UUID) ([]string, error) {
+	var n int64
+	if err := db.Raw(`SELECT COUNT(*) FROM vw_obligations WHERE purchase_id = ? AND settled > amount`, id).Scan(&n).Error; err != nil {
+		return nil, err
+	}
+	if n > 0 {
+		return []string{purchasing.WarningOversettled}, nil
+	}
+	return []string{}, nil
+}
+
+func ensureUnitsCompatible(tx *gorm.DB, purchaseID uuid.UUID, strict bool) error {
+	var row struct {
+		Method       string  `gorm:"column:allocation_method"`
+		Mixed        bool    `gorm:"column:units_mixed"`
+		ChargesTotal float64 `gorm:"column:charges_total"`
+	}
+	res := tx.Raw(`SELECT allocation_method, units_mixed, charges_total FROM vw_purchase_line_costs
+		WHERE purchase_id = ? LIMIT 1`, purchaseID).Scan(&row)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return nil
+	}
+	if row.Method == purchasing.ByQuantity && row.Mixed && (strict || row.ChargesTotal > 0) {
+		return errStatus(http.StatusUnprocessableEntity, purchasing.ErrMixedUnits.Error())
+	}
+	return nil
 }
 
 // lockPurchase carrega a Purchase (não excluída) com FOR UPDATE.
@@ -369,6 +491,13 @@ func (h *PurchasesHandler) list(w http.ResponseWriter, r *http.Request) {
 		}
 		query = query.Where("pr.supplier_id = ?", v)
 	}
+	if q.Get("open_only") == "true" {
+		query = query.Where("pr.payable > 0")
+	}
+	if q.Get("overdue") == "true" {
+		query = query.Where(`EXISTS (SELECT 1 FROM vw_obligations o
+			WHERE o.purchase_id = pr.id AND o.direction = 'PAYABLE' AND o.overdue)`)
+	}
 	// from/to filtram a data de criação da Purchase (fuso do negócio).
 	for _, f := range []struct{ param, op string }{{"from", ">="}, {"to", "<="}} {
 		if v := q.Get(f.param); v != "" {
@@ -421,6 +550,11 @@ func (h *PurchasesHandler) create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	method, msg := resolveAllocationMethod(req.AllocationMethod)
+	if msg != "" {
+		models.WriteError(w, http.StatusBadRequest, msg)
+		return
+	}
 	expected, err := parseOptionalDate("expected_date", req.ExpectedDate)
 	if err != nil {
 		writeTxError(w, "CreatePurchase", err)
@@ -442,6 +576,8 @@ func (h *PurchasesHandler) create(w http.ResponseWriter, r *http.Request) {
 			Status:       fulfillment.PurchaseOpen,
 			ExpectedDate: expected,
 			Notes:        nullIfBlank(req.Notes),
+
+			AllocationMethod: method,
 		}
 		if err := tx.Create(&p).Error; err != nil {
 			return err
@@ -484,6 +620,16 @@ func (h *PurchasesHandler) get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func resolveAllocationMethod(v *string) (string, string) {
+	if v == nil || *v == "" {
+		return purchasing.ByQuantity, ""
+	}
+	if !purchasing.Methods[*v] {
+		return "", "allocation_method inválido (BY_QUANTITY | BY_VALUE)"
+	}
+	return *v, ""
+}
+
 func (h *PurchasesHandler) update(w http.ResponseWriter, r *http.Request) {
 	ids, ok := parsePathIDs(w, r, "id")
 	if !ok {
@@ -498,17 +644,56 @@ func (h *PurchasesHandler) update(w http.ResponseWriter, r *http.Request) {
 		writeTxError(w, "UpdatePurchase", err)
 		return
 	}
-	res := h.db.WithContext(r.Context()).Model(&models.Purchase{}).Where("id = ?", ids[0]).
-		Updates(map[string]any{"expected_date": expected, "notes": nullIfBlank(req.Notes)})
-	if res.Error != nil {
-		writeTxError(w, "UpdatePurchase", res.Error)
+	if req.AllocationMethod != nil && !purchasing.Methods[*req.AllocationMethod] {
+		models.WriteError(w, http.StatusBadRequest, "allocation_method inválido (BY_QUANTITY | BY_VALUE)")
 		return
 	}
-	if res.RowsAffected == 0 {
-		models.WriteError(w, http.StatusNotFound, "compra não encontrada")
+	var resp *purchaseDetailResponse
+	err = h.db.WithContext(r.Context()).Transaction(func(tx *gorm.DB) error {
+		p, err := lockPurchase(tx, ids[0])
+		if err != nil {
+			return err
+		}
+		upd := map[string]any{"expected_date": expected, "notes": nullIfBlank(req.Notes)}
+		if req.AllocationMethod != nil {
+			upd["allocation_method"] = *req.AllocationMethod
+		}
+		if req.SupplierID != nil && *req.SupplierID != p.SupplierID {
+			if err := requireOpen(p, ""); err != nil {
+				return err
+			}
+			var attached int64
+			if err := tx.Raw(`SELECT COUNT(*) FROM itens_venda WHERE purchase_id = ?`, p.ID).Scan(&attached).Error; err != nil {
+				return err
+			}
+			if attached > 0 {
+				return errStatus(http.StatusConflict, "compra com itens de venda não troca de fornecedor")
+			}
+			var n int64
+			if err := tx.Model(&models.Fornecedor{}).Where("id = ?", *req.SupplierID).Count(&n).Error; err != nil {
+				return err
+			}
+			if n == 0 {
+				return errStatus(http.StatusNotFound, "fornecedor não encontrado")
+			}
+			upd["supplier_id"] = *req.SupplierID
+		}
+		if err := tx.Model(&models.Purchase{}).Where("id = ?", p.ID).Updates(upd).Error; err != nil {
+			return err
+		}
+		if req.AllocationMethod != nil {
+			if err := ensureUnitsCompatible(tx, p.ID, *req.AllocationMethod == purchasing.ByQuantity); err != nil {
+				return err
+			}
+		}
+		resp, err = fetchPurchaseDetail(tx, p.ID)
+		return err
+	})
+	if err != nil {
+		writeTxError(w, "UpdatePurchase", err)
 		return
 	}
-	h.respondDetail(w, r.Context(), http.StatusOK, ids[0])
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *PurchasesHandler) respondDetail(w http.ResponseWriter, ctx context.Context, status int, id uuid.UUID) {
@@ -645,6 +830,9 @@ func (h *PurchasesHandler) attachSaleItems(w http.ResponseWriter, r *http.Reques
 		if err := attachToPurchase(tx, p, req.SaleItemIDs); err != nil {
 			return err
 		}
+		if err := ensureUnitsCompatible(tx, p.ID, false); err != nil {
+			return err
+		}
 		resp, err = fetchPurchaseDetail(tx, p.ID)
 		return err
 	})
@@ -726,6 +914,9 @@ func (h *PurchasesHandler) createLine(w http.ResponseWriter, r *http.Request) {
 		if err := tx.Create(&pi).Error; err != nil {
 			return err
 		}
+		if err := ensureUnitsCompatible(tx, p.ID, false); err != nil {
+			return err
+		}
 		resp, err = lineResponse(tx, pi.ID)
 		return err
 	})
@@ -768,6 +959,9 @@ func (h *PurchasesHandler) updateLine(w http.ResponseWriter, r *http.Request) {
 		}
 		if res.RowsAffected == 0 {
 			return errStatus(http.StatusNotFound, "linha não encontrada")
+		}
+		if err := ensureUnitsCompatible(tx, p.ID, false); err != nil {
+			return err
 		}
 		resp, err = lineResponse(tx, ids[1])
 		return err

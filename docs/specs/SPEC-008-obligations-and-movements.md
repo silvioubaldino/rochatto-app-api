@@ -23,8 +23,8 @@ ligando **Financial movements** (dinheiro executado). Substitui Receipt
 (`/vendas/{id}/pagamentos`) e o pagamento único da Purchase (`PATCH /purchases/{id}/payment`);
 Sale e Purchase passam a derivar recebido/pago/a pagar das contas; alertas e
 `/finance/summary` passam a olhar parcelas e prazos de contas; o Assistant connector ganha 5
-ferramentas e deprecia 3 (que **continuam funcionando**, traduzidas para parcela/quitação, no
-catálogo 1.1.0). Enquanto AYD-008/009 não existem, os componentes vêm das fontes existentes (§7a).
+ferramentas e **remove** 3 (`record_receipt`, `confirm_receipt`, `record_supplier_payment` — o
+catálogo nunca foi lançado, então sem depreciação), no catálogo 1.0.0 (36 ferramentas). Enquanto AYD-008/009 não existem, os componentes vêm das fontes existentes (§7a).
 
 ## Critérios de aceite
 
@@ -114,9 +114,8 @@ Cenário: Migração 010 (§7)
 Cenário: Assistant connector (§8)
   Então list_obligations, list_financial_movements (R) e settle_obligations, record_expense (W, dedupe),
        set_installments (W, idempotente) existem
-  E record_receipt, confirm_receipt e record_supplier_payment **continuam funcionando**, traduzidas para
-       parcela/quitação, com [DESCONTINUADA — use settle_obligations / set_installments] na descrição (saem na 2.0.0)
-  E catalog_version = 1.1.0 (39 ferramentas: 20 R + 19 W) e o golden é regenerado
+  E record_receipt, confirm_receipt e record_supplier_payment **não existem mais** no catálogo (removidas, sem depreciação)
+  E catalog_version = 1.0.0 (36 ferramentas: 20 R + 16 W) e o golden é regenerado
 ```
 
 ## Contratos consumidos/expostos
@@ -195,8 +194,7 @@ reconciliação** não é necessário e nenhum caminho de escrita precisa "lembr
    `gerar_notificacoes_pagamentos()` e tabela/ colunas de `notificacoes` ajustadas
    (`pagamento_id` → `parcela_id`/`obligation_id` + tipos novos; ver Alertas).
 7. `down`: recria colunas/tabela legadas e repopula **best-effort** a partir de parcelas e
-   quitações; documentado como lossy (movimentações avulsas e parcelas de contas de Purchase
-   não voltam) em `docs/ops/database.md`.
+   quitações; lossy (movimentações avulsas e parcelas de contas de Purchase não voltam).
 
 ### Regras e handlers
 
@@ -242,7 +240,7 @@ reconciliação** não é necessário e nenhum caminho de escrita precisa "lembr
   (`payable_to_suppliers`, `freight_payable`, `commission_payable`), re-derivado das contas.
 - **Rotas** em `cmd/server/main.go`; models GORM novos em `internal/models`.
 
-### Assistant connector (`internal/mcp/tools`, `catalog_version` 1.1.0)
+### Assistant connector (`internal/mcp/tools`, `catalog_version` 1.0.0)
 
 - **Novas** (módulo `financial`): `list_obligations` (R; padrão: em aberto), `list_financial_movements`
   (R), `settle_obligations` (W, deduplicação 120 s / `allow_duplicate`, SPEC-007; nome com o verbo
@@ -250,21 +248,17 @@ reconciliação** não é necessário e nenhum caminho de escrita precisa "lembr
   `OTHER_INCOME`, valor sempre positivo), `set_installments` (W, idempotente: lista completa OU
   `count` + `first_due_date`, e/ou `due_date`; `null` limpa). O Gateway em processo despacha as rotas
   novas — mesmas regras da API.
-- **Descontinuadas — continuam funcionando** (AYD-007 §8: catálogo 1.1.0 mantém-nas, traduzidas;
-  removidas na 2.0.0), com `[DESCONTINUADA — use settle_obligations / set_installments]` na descrição:
-  `record_receipt` com `paid_at` → quitação da conta a receber (exige `payment_method`); sem `paid_at` →
-  parcela no plano (`scheduled_date`, padrão hoje); `confirm_receipt` (`receipt_id` = id da parcela) → quitação
-  do que falta da parcela; `record_supplier_payment` → quitação da conta do Supplier da compra (pagar menos
-  deixa a compra PENDING; o `payment_status` da saída passou de const `PAID` para `PENDING | PAID`).
-  Venda cancelada continua 409 "venda cancelada: recebimentos bloqueados".
+- **Removidas** (decisão do dono: o catálogo nunca foi lançado, sem depreciação): `record_receipt`,
+  `confirm_receipt` e `record_supplier_payment`, com o código de tradução e os testes. Receber e pagar
+  passam por `settle_obligations`; agendar, por `set_installments`.
 - Leituras re-derivadas: `search_suppliers` ganha `kind` (saída e filtro); `get_sale.receipts` vem
   da conta a receber (quitações = `RECEIVED`, parcelas não cobertas pelo que falta = `PENDING`);
   `list_purchases`/`get_purchase` mapeiam `paid`/`payable` para `paid_amount`/`to_pay`;
   `freight_paid`/`commission_paid` da Sale são derivados do que resta a pagar; `update_sale`
   `freight_paid`/`commission_paid` viram quitações (só quita a diferença; reduzir/desfazer é erro de entrada);
   `get_finance_summary` e `list_payment_alerts` seguem o novo formato das rotas.
-  34 → 39 ferramentas (20 de leitura + 19 de escrita).
-- `CatalogVersion` 1.0.0 → **1.1.0** (minor); `go test ./internal/mcp -run TestCatalogGolden -update`
+  Catálogo: 36 ferramentas (20 de leitura + 16 de escrita).
+- `CatalogVersion` permanece **1.0.0** (catálogo não lançado); `go test ./internal/mcp -run TestCatalogGolden -update`
   no mesmo PR; instruções do servidor (`serverInfo` instructions) trocam Receipt por
   Obligation/Settlement. Atualização do AYD-006 é do contexto.
 
@@ -272,11 +266,10 @@ reconciliação** não é necessário e nenhum caminho de escrita precisa "lembr
 
 1. **Component `type` no detalhe da conta** usa os valores de §7a (`SALE_ITEMS`,
    `LEGACY_FREIGHT`, `LEGACY_COMMISSION`, `PURCHASE_ITEMS`); AYD-008/009 acrescentarão os seus.
-2. **Ferramentas descontinuadas** — *resolvido pelo AYD-007 §8*: continuam funcionando na 1.1.0,
-   traduzidas (ver "Assistant connector"). Diferenças de comportamento herdadas do novo modelo:
-   receber **acima do devido** passa a ser 409; uma parcela criada depois de a venda já ter sido
-   paga nasce **coberta** (o quitado cobre as parcelas mais antigas); `record_receipt` agendado
-   recria o plano (os ids das parcelas mudam).
+2. **Ferramentas de recebimento/pagamento antigas** — removidas do catálogo 1.0.0 (decisão do dono;
+   o AYD-007 §8 previa a depreciação — atualizar no contexto). Diferenças de comportamento do novo
+   modelo: receber **acima do devido** é 409; uma parcela criada depois de a venda já ter sido paga
+   nasce **coberta** (o quitado cobre as parcelas mais antigas).
 3. **Sync em triggers SQL, não em Go:** o AYD não fixa onde; os triggers (mesma função da
    migração) garantem a manutenção em qualquer caminho de escrita, sem hooks espalhados.
 4. **Venda rápida/Quote→Sale**: a conta RECEIVABLE nasce pelo trigger ao inserir os Items.
@@ -318,9 +311,9 @@ reconciliação** não é necessário e nenhum caminho de escrita precisa "lembr
 5. Remover `pagamentos.go` e `PATCH /purchases/{id}/payment`; re-derivar resumos de
    Sale/Purchase; ajustar `fulfillment` (RN-15) e testes existentes que usavam Receipts.
 6. Alertas (função SQL + `dashboard.go`) e `/finance/summary`.
-7. MCP: ferramentas novas, depreciação, `kind`, `CatalogVersion` 1.1.0, golden e testes.
+7. MCP: ferramentas novas, remoção das 3 antigas, `kind`, `CatalogVersion` 1.0.0, golden e testes.
 8. Swagger, `docs/ops/database.md` (baseline/down lossy), `CLAUDE.md` (fase 11, estrutura,
-   catálogo 1.1.0), changelog.
+   catálogo 1.0.0), changelog.
 
 ## Arquivos / módulos afetados
 
@@ -357,7 +350,7 @@ reconciliação** não é necessário e nenhum caminho de escrita precisa "lembr
     rotas legadas → 404.
   - `fulfillment_integration_test.go` e `fornecedores` (kind/filtro) ajustados.
   - `internal/mcp/tools/*_integration_test.go`: 5 ferramentas novas (dedupe, scopes, erros),
-    descontinuadas com aviso e comportamento definido; `TestCatalogGolden` (1.1.0).
+    ausência das 3 antigas no catálogo; `TestCatalogGolden` (1.0.0).
 - Mocks só na fronteira; `go vet ./... && TEST_DATABASE_URL=... go test ./...`.
 
 ## Casos de borda & fora de escopo
@@ -379,6 +372,6 @@ reconciliação** não é necessário e nenhum caminho de escrita precisa "lembr
 - [x] Rotas `/vendas/{id}/pagamentos` e `PATCH /purchases/{id}/payment` removidas
 - [x] Sale/Purchase re-derivados das contas; RN-15 preservada
 - [x] Alertas RECEIVABLE/PAYABLE (com `obligation_id`/`installment_id`) e `/finance/summary` (cash, expenses, result, balances)
-- [x] MCP: 5 ferramentas novas, 3 descontinuadas (funcionando, traduzidas), `kind`, catálogo 1.1.0 + golden
+- [x] MCP: 5 ferramentas novas, 3 antigas removidas, `kind`, catálogo 1.0.0 (36) + golden
 - [x] Testes unitários e de integração por critério de aceite
 - [x] Swagger, ops, CLAUDE.md, changelog

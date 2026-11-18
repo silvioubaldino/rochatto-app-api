@@ -47,7 +47,6 @@ type (
 	AlertKind             string
 	MovementKind          string
 
-	// AYD-007 (catálogo 1.1.0): contas, parcelas e movimentações financeiras.
 	SupplierKind        string // STONE | TRANSPORT | LABOR | TAX_AUTHORITY | OTHER
 	ObligationDirection string // PAYABLE | RECEIVABLE
 	ObligationStatus    string // OPEN | PARTIAL | SETTLED
@@ -57,6 +56,10 @@ type (
 	MovementCategory    string // as 12 categorias de movimentação
 	ExpenseCategory     string // categorias aceitas por record_expense (despesa ou receita avulsa)
 	MovementDirection   string // IN (entrada) | OUT (saída)
+
+	PurchaseChargeKind string // FREIGHT | UNLOADING | TAX | OTHER
+	AllocationMethod   string // BY_QUANTITY | BY_VALUE
+	PurchaseLineType   string // STOCK_ITEM | SALE_ITEM
 )
 
 // Valores de enum (fonte para os schemas e para os adaptadores).
@@ -85,6 +88,10 @@ var Enums = map[reflect.Type][]string{
 		"VEHICLE", "TAXES", "FIXED_COSTS", "MARKETING", "BANK_FEES", "OTHER_EXPENSE"},
 	reflect.TypeFor[ExpenseCategory]():   {"VEHICLE", "TAXES", "FIXED_COSTS", "MARKETING", "BANK_FEES", "LABOR", "OTHER_EXPENSE", "OTHER_INCOME"},
 	reflect.TypeFor[MovementDirection](): {"IN", "OUT"},
+
+	reflect.TypeFor[PurchaseChargeKind](): {"FREIGHT", "UNLOADING", "TAX", "OTHER"},
+	reflect.TypeFor[AllocationMethod]():   {"BY_QUANTITY", "BY_VALUE"},
+	reflect.TypeFor[PurchaseLineType]():   {"STOCK_ITEM", "SALE_ITEM"},
 
 	reflect.TypeFor[SettableQuoteStatus]():    {"OPEN", "LOST"},
 	reflect.TypeFor[SettableDeliveryStatus](): {"TO_DELIVER", "DELIVERED"},

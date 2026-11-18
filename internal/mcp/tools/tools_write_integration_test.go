@@ -112,107 +112,64 @@ func TestIntegration_WriteQuoteToSaleFlow(t *testing.T) {
 	e.fail("create_quick_sale", map[string]any{"customer_id": cid, "items": []any{}}, "INVALID_INPUT", "")
 }
 
-func TestIntegration_WriteReceiptsParityAndDedupe(t *testing.T) {
+func TestIntegration_WriteDedupeLimits(t *testing.T) {
 	e := newEnv(t)
-	f := e.writeFixture()
-	args := map[string]any{"sale_id": f.sale, "amount": 500, "paid_at": day(0), "payment_method": "PIX"}
-
-	// Receipt recebido: devolve a Sale com o novo receivable.
-	r1 := e.ok("record_receipt", args)
-	rc, sale := obj(r1["receipt"]), obj(r1["sale"])
-	if rc["status"] != "RECEIVED" || rc["amount"] != float64(500) || rc["payment_method"] != "PIX" || sale["receivable"] != float64(1500) ||
-		sale["total_received"] != float64(500) || sale["payment_status"] != "PARTIAL" || r1["deduplicated"] != nil {
-		t.Fatalf("record_receipt = %v", r1)
+	args := map[string]any{"category": "VEHICLE", "amount": 500, "occurred_on": day(0), "payment_method": "PIX"}
+	r1 := e.ok("record_expense", args)
+	mv := obj(r1["movement"])
+	if r1["deduplicated"] != nil || e.movementCount("VEHICLE") != 1 {
+		t.Fatalf("record_expense = %v", r1)
 	}
-
-	// Deduplicação: argumentos idênticos em 120 s → só um Receipt; a 2ª resposta é a original.
-	r2 := e.ok("record_receipt", args)
-	if r2["deduplicated"] != true || obj(r2["receipt"])["id"] != rc["id"] || e.receiptCount(f.sale) != 1 {
-		t.Fatalf("2ª chamada deveria deduplicar: %v (receipts=%d)", r2, e.receiptCount(f.sale))
+	if r2 := e.ok("record_expense", args); r2["deduplicated"] != true || obj(r2["movement"])["id"] != mv["id"] || e.movementCount("VEHICLE") != 1 {
+		t.Fatalf("2ª chamada deveria deduplicar: %v", r2)
 	}
-	// allow_duplicate força outro Receipt (e não entra no hash).
-	args3 := map[string]any{"sale_id": f.sale, "amount": 500, "paid_at": day(0), "payment_method": "PIX", "allow_duplicate": true}
-	if r3 := e.ok("record_receipt", args3); r3["deduplicated"] != nil || obj(r3["receipt"])["id"] == rc["id"] || e.receiptCount(f.sale) != 2 {
+	args3 := map[string]any{"category": "VEHICLE", "amount": 500, "occurred_on": day(0), "payment_method": "PIX", "allow_duplicate": true}
+	if r3 := e.ok("record_expense", args3); r3["deduplicated"] != nil || obj(r3["movement"])["id"] == mv["id"] || e.movementCount("VEHICLE") != 2 {
 		t.Fatalf("allow_duplicate = %v", r3)
 	}
-	// ...e a chamada seguinte sem allow_duplicate continua deduplicando contra o resultado MAIS RECENTE.
-	if r4 := e.ok("record_receipt", args); r4["deduplicated"] != true || e.receiptCount(f.sale) != 2 {
+	if r4 := e.ok("record_expense", args); r4["deduplicated"] != true || e.movementCount("VEHICLE") != 2 {
 		t.Errorf("4ª = %v", r4)
 	}
 
-	t.Run("limites da deduplicação", func(t *testing.T) {
+	t.Run("limites", func(t *testing.T) {
 		// Ordem diferente das chaves = argumentos idênticos (JSON canônico).
-		_, _ = e.callRaw(e.pr, "record_receipt", `{"sale_id":"`+f.sale+`","amount":10,"payment_method":"CASH","paid_at":"`+day(0)+`"}`)
-		out, isErr := e.callRaw(e.pr, "record_receipt", `{"paid_at":"`+day(0)+`","payment_method":"CASH","amount":10,"sale_id":"`+f.sale+`"}`)
-		if isErr || out["deduplicated"] != true || e.receiptCount(f.sale) != 3 {
-			t.Errorf("ordem das chaves: %v (receipts=%d)", out, e.receiptCount(f.sale))
+		_, _ = e.callRaw(e.pr, "record_expense", `{"category":"VEHICLE","amount":10,"payment_method":"CASH","occurred_on":"`+day(0)+`"}`)
+		out, isErr := e.callRaw(e.pr, "record_expense", `{"occurred_on":"`+day(0)+`","payment_method":"CASH","amount":10,"category":"VEHICLE"}`)
+		if isErr || out["deduplicated"] != true || e.movementCount("VEHICLE") != 3 {
+			t.Errorf("ordem das chaves: %v (movimentações=%d)", out, e.movementCount("VEHICLE"))
 		}
 		// Argumentos diferentes → cria.
-		e.ok("record_receipt", map[string]any{"sale_id": f.sale, "amount": 11, "paid_at": day(0), "payment_method": "CASH"})
-		if e.receiptCount(f.sale) != 4 {
+		e.ok("record_expense", map[string]any{"category": "VEHICLE", "amount": 11, "occurred_on": day(0), "payment_method": "CASH"})
+		if e.movementCount("VEHICLE") != 4 {
 			t.Error("argumentos diferentes devem criar")
 		}
 		// Outra Connection → cria (a chave inclui a Connection).
 		other := e.newConnection("read", "write")
-		if out, _ := e.callRaw(other, "record_receipt", `{"sale_id":"`+f.sale+`","amount":11,"paid_at":"`+day(0)+`","payment_method":"CASH"}`); out["deduplicated"] != nil || e.receiptCount(f.sale) != 5 {
+		if out, _ := e.callRaw(other, "record_expense", `{"category":"VEHICLE","amount":11,"occurred_on":"`+day(0)+`","payment_method":"CASH"}`); out["deduplicated"] != nil || e.movementCount("VEHICLE") != 5 {
 			t.Errorf("outra Connection: %v", out)
 		}
 		// Mais de 120 s depois → cria.
 		e.skew = 121 * time.Second
 		defer func() { e.skew = 0 }()
-		if out := e.ok("record_receipt", args); out["deduplicated"] != nil || e.receiptCount(f.sale) != 6 {
+		if out := e.ok("record_expense", args); out["deduplicated"] != nil || e.movementCount("VEHICLE") != 6 {
 			t.Errorf("após 120 s: %v", out)
 		}
 	})
 
 	t.Run("erro anterior não deduplica", func(t *testing.T) {
-		bad := map[string]any{"sale_id": f.sale, "amount": 50, "paid_at": day(0)} // sem payment_method
-		e.fail("record_receipt", bad, "INVALID_INPUT", "")
-		e.fail("record_receipt", bad, "INVALID_INPUT", "") // continua erro, nunca "deduplicated"
+		bad := map[string]any{"category": "LAZER", "amount": 50}
+		e.fail("record_expense", bad, "INVALID_INPUT", "")
+		e.fail("record_expense", bad, "INVALID_INPUT", "") // continua erro, nunca "deduplicated"
 		var withResult int64
-		e.db.Raw(`SELECT COUNT(*) FROM mcp_tool_calls WHERE tool='record_receipt' AND outcome='ERROR' AND result IS NOT NULL`).Scan(&withResult)
+		e.db.Raw(`SELECT COUNT(*) FROM mcp_tool_calls WHERE tool='record_expense' AND outcome='ERROR' AND result IS NOT NULL`).Scan(&withResult)
 		if withResult != 0 {
 			t.Errorf("chamadas com erro não guardam result (%d)", withResult)
 		}
-		before := e.receiptCount(f.sale)
-		bad["payment_method"] = "BOLETO"
-		if out := e.ok("record_receipt", bad); out["deduplicated"] != nil || e.receiptCount(f.sale) != before+1 {
+		before := e.movementCount("OTHER_EXPENSE")
+		bad["category"] = "OTHER_EXPENSE"
+		if out := e.ok("record_expense", bad); out["deduplicated"] != nil || e.movementCount("OTHER_EXPENSE") != before+1 {
 			t.Errorf("corrigido deve criar: %v", out)
 		}
-	})
-
-	t.Run("recebimento agendado e confirmação", func(t *testing.T) {
-		// Venda nova: a parcela é plano e o recebido cobre as parcelas mais antigas — numa venda já
-		// paga acima de 700 a parcela nasceria coberta.
-		h := e.writeFixture()
-		sch := e.ok("record_receipt", map[string]any{"sale_id": h.sale, "amount": 700, "scheduled_date": day(5), "notes": "parcela 2"})
-		rc := obj(sch["receipt"])
-		if rc["status"] != "PENDING" || rc["scheduled_date"] != day(5) || rc["notes"] != "parcela 2" {
-			t.Fatalf("agendado = %v", rc)
-		}
-		before := obj(sch["sale"])["receivable"].(float64)
-		e.fail("confirm_receipt", map[string]any{"sale_id": h.sale, "receipt_id": rc["id"]}, "INVALID_INPUT", "payment_method")
-		cf := e.ok("confirm_receipt", map[string]any{"sale_id": h.sale, "receipt_id": rc["id"], "payment_method": "TRANSFER"})
-		crc := obj(cf["receipt"])
-		if crc["status"] != "RECEIVED" || crc["paid_at"] != time.Now().In(sp()).Format("2006-01-02") || crc["payment_method"] != "TRANSFER" ||
-			obj(cf["sale"])["receivable"].(float64) != max(before-700, 0) { // receivable nunca é negativo (RN-05)
-			t.Errorf("confirm_receipt = %v (receivable antes %v)", cf, before)
-		}
-		e.fail("confirm_receipt", map[string]any{"sale_id": h.sale, "receipt_id": rc["id"], "payment_method": "PIX"}, "INVALID_INPUT", "já confirmado")
-		e.fail("confirm_receipt", map[string]any{"sale_id": h.sale, "receipt_id": uuidNew(), "payment_method": "PIX"}, "NOT_FOUND", "pagamento não encontrado")
-	})
-
-	t.Run("paridade de regra: Sale cancelada", func(t *testing.T) {
-		g := e.writeFixture()
-		e.ok("cancel_sale", map[string]any{"sale_id": g.sale})
-		e.fail("record_receipt", map[string]any{"sale_id": g.sale, "amount": 10}, "CONFLICT", "venda cancelada: recebimentos bloqueados")
-		out, isErr := e.call("record_receipt", map[string]any{"sale_id": g.sale, "amount": 10})
-		if !isErr || obj(out["error"])["message"] != "venda cancelada: recebimentos bloqueados" {
-			t.Errorf("mensagem literal = %v", out)
-		}
-		e.fail("record_receipt", map[string]any{"sale_id": uuidNew(), "amount": 10}, "NOT_FOUND", "venda não encontrada")
-		e.fail("record_receipt", map[string]any{"sale_id": f.sale, "amount": 0}, "INVALID_INPUT", "")
-		e.fail("record_receipt", map[string]any{"sale_id": f.sale, "amount": 10.001}, "INVALID_INPUT", "2 casas")
 	})
 }
 
@@ -390,20 +347,6 @@ func TestIntegration_WriteProcurementAndStock(t *testing.T) {
 	e.fail("set_purchase_status", map[string]any{"purchase_id": uuidNew(), "status": "ORDERED"}, "NOT_FOUND", "")
 	e.fail("set_purchase_status", map[string]any{"purchase_id": pid, "status": "EM_ROTA"}, "INVALID_INPUT", "")
 
-	// Pagamento ao Supplier: valor e data informados; depois o padrão (custo total, hoje). A API é a dona de to_pay.
-	// record_supplier_payment (descontinuada) quita a conta do Supplier: pagar menos deixa a compra PENDING.
-	part := e.ok("record_supplier_payment", map[string]any{"purchase_id": pid, "paid_amount": 1000, "paid_at": "2026-11-10"})
-	if part["payment_status"] != "PENDING" || part["paid_amount"] != float64(1000) || part["paid_at"] != "2026-11-10" || part["to_pay"] != float64(1400) {
-		t.Errorf("pagamento parcial = %v", part)
-	}
-	full := e.ok("record_supplier_payment", map[string]any{"purchase_id": pid})
-	if full["payment_status"] != "PAID" || full["paid_amount"] != float64(2400) || full["to_pay"] != float64(0) || full["paid_at"] != time.Now().In(sp()).Format("2006-01-02") {
-		t.Errorf("pagamento total = %v", full)
-	}
-	e.fail("record_supplier_payment", map[string]any{"purchase_id": pid}, "CONFLICT", "valor acima do devido") // nada mais a pagar
-	e.fail("record_supplier_payment", map[string]any{"purchase_id": pid, "paid_amount": -5}, "INVALID_INPUT", "")
-	e.fail("record_supplier_payment", map[string]any{"purchase_id": uuidNew()}, "NOT_FOUND", "")
-
 	// Reposição de estoque: Purchase recebida gera Inflow; ajuste devolve o Balance.
 	rp := obj(e.ok("create_purchase", map[string]any{"kind": "STOCK_REPLENISHMENT", "supplier_id": f.supplier,
 		"items": []map[string]any{{"product_id": f.product2, "quantity": 12.5, "unit_cost": 410.25}}})["purchase"])
@@ -440,8 +383,9 @@ func TestIntegration_WriteProcurementAndStock(t *testing.T) {
 func TestIntegration_WriteAudit(t *testing.T) {
 	e := newEnv(t)
 	f := e.writeFixture()
-	r := e.ok("record_receipt", map[string]any{"sale_id": f.sale, "amount": 100, "paid_at": day(0), "payment_method": "CASH"})
-	e.ok("record_receipt", map[string]any{"sale_id": f.sale, "amount": 100, "paid_at": day(0), "payment_method": "CASH"}) // deduplicada
+	exp := map[string]any{"category": "VEHICLE", "amount": 100, "occurred_on": day(0), "payment_method": "CASH"}
+	r := e.ok("record_expense", exp)
+	e.ok("record_expense", exp) // deduplicada
 	e.ok("update_sale", map[string]any{"sale_id": f.sale, "notes": "audit"})
 	e.fail("cancel_sale", map[string]any{"sale_id": uuidNew()}, "NOT_FOUND", "")
 
@@ -453,14 +397,14 @@ func TestIntegration_WriteAudit(t *testing.T) {
 	}
 	var rows []row
 	e.db.Raw(`SELECT tool, outcome, duration_ms AS duration_ms, result IS NOT NULL AS has_result, error_code
-		FROM mcp_tool_calls WHERE tool IN ('record_receipt','update_sale','cancel_sale') ORDER BY created_at, call_id`).Scan(&rows)
+		FROM mcp_tool_calls WHERE tool IN ('record_expense','update_sale','cancel_sale') ORDER BY created_at, call_id`).Scan(&rows)
 	byTool := map[string][]row{}
 	for _, x := range rows {
 		byTool[x.Tool] = append(byTool[x.Tool], x)
 	}
-	rr := byTool["record_receipt"]
+	rr := byTool["record_expense"]
 	if len(rr) != 2 || rr[0].Outcome != "OK" || !rr[0].HasResult || rr[1].Outcome != "OK" || rr[1].HasResult {
-		t.Errorf("record_receipt: 1ª OK com result, deduplicada OK sem result: %+v", rr)
+		t.Errorf("record_expense: 1ª OK com result, deduplicada OK sem result: %+v", rr)
 	}
 	if u := byTool["update_sale"]; len(u) != 1 || u[0].Outcome != "OK" || u[0].HasResult {
 		t.Errorf("update_sale (não dd) não guarda result: %+v", u)
@@ -470,9 +414,9 @@ func TestIntegration_WriteAudit(t *testing.T) {
 	}
 	// O result guardado é a saída original (usada pela deduplicação).
 	var stored string
-	e.db.Raw(`SELECT result::text FROM mcp_tool_calls WHERE tool='record_receipt' AND result IS NOT NULL`).Scan(&stored)
+	e.db.Raw(`SELECT result::text FROM mcp_tool_calls WHERE tool='record_expense' AND result IS NOT NULL`).Scan(&stored)
 	var m map[string]any
-	if json.Unmarshal([]byte(stored), &m) != nil || obj(m["receipt"])["id"] != obj(r["receipt"])["id"] {
+	if json.Unmarshal([]byte(stored), &m) != nil || obj(m["movement"])["id"] != obj(r["movement"])["id"] {
 		t.Errorf("result = %s", stored)
 	}
 }
@@ -492,13 +436,13 @@ func TestIntegration_WriteRequiresWriteScope(t *testing.T) {
 			t.Errorf("%s com scope read = %v", tool.Meta.Name, out)
 		}
 	}
-	if e.receiptCount(f.sale) != 0 {
+	if e.receiptCount(f.sale) != 0 || e.movementCount("VEHICLE") != 0 {
 		t.Error("nenhuma escrita deveria ter chegado à API")
 	}
 	var n int64
 	e.db.Raw(`SELECT COUNT(*) FROM mcp_tool_calls WHERE connection_id = ? AND outcome = 'ERROR' AND error_code = 'FORBIDDEN'`, ro.ConnectionID).Scan(&n)
-	if n != 19 {
-		t.Errorf("auditoria FORBIDDEN = %d, quero 19", n)
+	if n != 17 {
+		t.Errorf("auditoria FORBIDDEN = %d, quero 17", n)
 	}
 	_ = context.Background
 }
