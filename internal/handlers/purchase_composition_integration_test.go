@@ -1,8 +1,5 @@
 package handlers
 
-// Testes de integração do AYD-008 (composição da compra: custos adicionais com credor, rateio,
-// custo de entrada) contra um Postgres real. Mesmas condições dos outros *_integration_test:
-// só rodam com TEST_DATABASE_URL.
 import (
 	"math"
 	"testing"
@@ -71,8 +68,6 @@ func obligationOf(t *testing.T, p map[string]any, payee string) map[string]any {
 	return nil
 }
 
-// Composição: pedras + custos adicionais com credor → contas por credor, rateio por quantidade,
-// custo de entrada no Stock e valor em estoque.
 func TestIntegration_PurchaseComposition(t *testing.T) {
 	e := newFulfillmentEnv(t)
 	sup, driver := e.supplier(), e.supplier()
@@ -87,7 +82,6 @@ func TestIntegration_PurchaseComposition(t *testing.T) {
 		t.Errorf("warnings = %v, want []", p["warnings"])
 	}
 
-	// Validações.
 	for _, bad := range []map[string]any{
 		{"kind": "FREIGHT", "amount": 0}, {"kind": "FREIGHT", "amount": -5}, {"kind": "XX", "amount": 5},
 	} {
@@ -102,7 +96,6 @@ func TestIntegration_PurchaseComposition(t *testing.T) {
 		t.Errorf("compra inexistente = %d, want 404", code)
 	}
 
-	// Frete (credor padrão = Supplier da compra), descarga (outro credor), imposto (a definir).
 	code, freight := e.api.do("POST", "/purchases/"+id+"/charges", map[string]any{"kind": "FREIGHT", "amount": 600})
 	if code != 201 || freight["payee_supplier_id"] != sup || freight["obligation_id"] == nil || freight["payee_name"] == nil {
 		t.Fatalf("POST frete = %d %v", code, freight)
@@ -124,7 +117,6 @@ func TestIntegration_PurchaseComposition(t *testing.T) {
 	if num(comp, "goods_total") != 20700 || num(comp, "charges_total") != 780 || num(comp, "total") != 21480 || len(comp["charges"].([]any)) != 3 {
 		t.Errorf("composition = %v", comp)
 	}
-	// Uma conta por credor: Supplier (pedras + frete), descarga e "a definir".
 	if got := len(p["obligations"].([]any)); got != 3 {
 		t.Fatalf("contas = %d, want 3: %v", got, p["obligations"])
 	}
@@ -134,7 +126,6 @@ func TestIntegration_PurchaseComposition(t *testing.T) {
 	if num(p, "paid") != 0 || num(p, "payable") != 21480 || num(p, "open") != 21480 {
 		t.Errorf("paid/payable/open = %v/%v/%v", p["paid"], p["payable"], p["open"])
 	}
-	// Componentes da conta do Supplier: PURCHASE_ITEMS + PURCHASE_CHARGE (id = chargeId).
 	_, ob := e.api.do("GET", "/obligations/"+obligationOf(t, p, sup)["id"].(string), nil)
 	types := map[string]string{}
 	for _, c := range ob["components"].([]any) {
@@ -145,7 +136,6 @@ func TestIntegration_PurchaseComposition(t *testing.T) {
 		t.Errorf("componentes = %v", ob["components"])
 	}
 
-	// Rateio por quantidade = regra pura (purchasing.Allocate): 780 × qty / 300.
 	items := p["items"].([]any)
 	wantAlloc, _ := purchasing.Allocate(purchasing.ByQuantity, 780, []purchasing.Line{{Unit: "m2", Quantity: 100, UnitCost: 27}, {Unit: "m2", Quantity: 200, UnitCost: 90}})
 	for i, it := range items {
@@ -160,7 +150,6 @@ func TestIntegration_PurchaseComposition(t *testing.T) {
 	}
 	landedA := 27 + 780.0/300 // 29.60
 
-	// Sem recebimento não há Inflow; recebida, a última entrada usa o custo de entrada.
 	if b := e.balance(prodA); num(b, "balance") != 0 {
 		t.Errorf("antes de receber = %v", b)
 	}
@@ -177,7 +166,6 @@ func TestIntegration_PurchaseComposition(t *testing.T) {
 		t.Errorf("extrato INFLOW = %v", mv)
 	}
 
-	// Custo adicional em compra RECEBIDA (qualquer status): muda o custo de entrada.
 	code, late := e.api.do("POST", "/purchases/"+id+"/charges", map[string]any{"kind": "OTHER", "amount": 300})
 	if code != 201 {
 		t.Fatalf("custo adicional em RECEIVED = %d %v", code, late)
@@ -186,7 +174,6 @@ func TestIntegration_PurchaseComposition(t *testing.T) {
 	if b := e.balance(prodA); !near2(num(b, "last_inflow_cost"), landedA) {
 		t.Errorf("custo de entrada após novo custo = %v, want %.2f", b["last_inflow_cost"], landedA)
 	}
-	// valor em estoque no cabeçalho do total (lista) = Σ stock_value.
 	_, list := e.api.list("/stock/balance?q=" + "Pedra")
 	var sum float64
 	for _, r := range list {
@@ -196,7 +183,6 @@ func TestIntegration_PurchaseComposition(t *testing.T) {
 		t.Errorf("Σ stock_value = %v", sum)
 	}
 
-	// Pagamento ao Supplier + redução do frete → OVERSETTLED; remover custo remove a conta vazia.
 	supOb := obligationOf(t, e.purchase(id), sup)["id"].(string)
 	if code, res := e.api.do("POST", "/obligations/"+supOb+"/settle", map[string]any{
 		"amount": 21300, "movement": map[string]any{"occurred_on": "2027-03-01", "payment_method": "PIX"}}); code != 201 {
@@ -209,7 +195,6 @@ func TestIntegration_PurchaseComposition(t *testing.T) {
 	if ws := e.purchase(id)["warnings"].([]any); len(ws) != 1 || ws[0] != "OVERSETTLED" {
 		t.Errorf("GET warnings = %v", ws)
 	}
-	// Troca de credor do imposto (a definir → driver): a conta sem credor some, a do driver soma.
 	code, _ = e.api.do("PUT", "/purchases/"+id+"/charges/"+tax["id"].(string), map[string]any{"kind": "TAX", "amount": 30, "payee_supplier_id": driver})
 	if code != 200 {
 		t.Fatalf("PUT imposto = %d", code)
@@ -218,7 +203,6 @@ func TestIntegration_PurchaseComposition(t *testing.T) {
 	if len(p["obligations"].([]any)) != 2 || num(obligationOf(t, p, driver), "amount") != 180 {
 		t.Errorf("após trocar credor: %v", p["obligations"])
 	}
-	// DELETE soft: some da composição e do rateio.
 	if code, _ := e.api.do("DELETE", "/purchases/"+id+"/charges/"+unload["id"].(string), nil); code != 204 {
 		t.Errorf("DELETE custo = %d", code)
 	}
@@ -234,7 +218,6 @@ func TestIntegration_PurchaseComposition(t *testing.T) {
 		t.Errorf("soft-delete: %d linhas com deleted_at, want 1", live)
 	}
 
-	// Lista de custos e filtros da lista de compras.
 	_, chargesList := e.api.list("/purchases/" + id + "/charges")
 	if len(chargesList) != 3 {
 		t.Errorf("GET charges = %d, want 3", len(chargesList))
@@ -255,7 +238,6 @@ func TestIntegration_PurchaseComposition(t *testing.T) {
 		t.Errorf("overdue = %v, want 1", overdue)
 	}
 
-	// Compra soft-deletada: 409 nos custos.
 	p2 := e.replenishment(sup, nil, line(prodA, 1, 1))
 	if code, _ := e.api.do("DELETE", "/purchases/"+p2["id"].(string), nil); code != 204 {
 		t.Fatalf("DELETE purchase = %d", code)
@@ -265,7 +247,6 @@ func TestIntegration_PurchaseComposition(t *testing.T) {
 	}
 }
 
-// BY_VALUE e unidades diferentes: BY_QUANTITY → 422; BY_VALUE aceita.
 func TestIntegration_PurchaseAllocationMethodAndUnits(t *testing.T) {
 	e := newFulfillmentEnv(t)
 	sup := e.supplier()
@@ -273,7 +254,6 @@ func TestIntegration_PurchaseAllocationMethodAndUnits(t *testing.T) {
 
 	p := e.replenishment(sup, nil, line(stone, 10, 100), line(bag, 5, 20))
 	id := p["id"].(string)
-	// Sem custos adicionais, o padrão BY_QUANTITY não bloqueia a compra mista.
 	if code, res := e.api.do("POST", "/purchases/"+id+"/charges", map[string]any{"kind": "FREIGHT", "amount": 110}); code != 422 {
 		t.Fatalf("BY_QUANTITY misto = %d %v, want 422", code, res)
 	}
@@ -294,18 +274,15 @@ func TestIntegration_PurchaseAllocationMethodAndUnits(t *testing.T) {
 		t.Fatalf("BY_VALUE misto = %d %v", code, res)
 	}
 	p = e.purchase(id)
-	// base 1000 e 100 → 100 e 10 de rateio.
 	items := p["items"].([]any)
 	la, lb := findLine(t, p, items[0].(map[string]any)["id"].(string)), findLine(t, p, items[1].(map[string]any)["id"].(string))
 	if !near2(num(la, "allocated_charges"), 100) || !near2(num(lb, "allocated_charges"), 10) || !near2(num(lb, "landed_unit_cost"), 22) {
 		t.Errorf("rateio BY_VALUE = %v | %v", la, lb)
 	}
-	// Voltar para BY_QUANTITY com custos e unidades mistas → 422; adicionar linha mista com custos idem.
 	if code, _ := e.api.do("PUT", "/purchases/"+id, map[string]any{"allocation_method": "BY_QUANTITY"}); code != 422 {
 		t.Errorf("voltar a BY_QUANTITY misto = %d, want 422", code)
 	}
 
-	// Criação com método explícito; inválido → 400.
 	if code, _ := e.api.do("POST", "/purchases", map[string]any{"kind": "STOCK_REPLENISHMENT", "supplier_id": sup, "allocation_method": "X"}); code != 400 {
 		t.Errorf("POST método inválido = %d, want 400", code)
 	}
@@ -313,7 +290,6 @@ func TestIntegration_PurchaseAllocationMethodAndUnits(t *testing.T) {
 		t.Errorf("POST BY_VALUE = %v", p3["allocation_method"])
 	}
 
-	// BY_VALUE com Σ base_cost = 0 cai para quantidade (bonificação).
 	z := e.replenishment(sup, map[string]any{"allocation_method": "BY_VALUE"}, line(stone, 1, 0), line(stone, 3, 0))
 	zid := z["id"].(string)
 	e.api.do("POST", "/purchases/"+zid+"/charges", map[string]any{"kind": "FREIGHT", "amount": 40})
@@ -327,8 +303,6 @@ func TestIntegration_PurchaseAllocationMethodAndUnits(t *testing.T) {
 	}
 }
 
-// Made-to-order: o rateio entra no custo do Item (Profit da Sale); FROM_STOCK recebe o custo de
-// entrada como snapshot; troca de Supplier move os custos com credor padrão.
 func TestIntegration_PurchaseChargesFlowToSaleProfitAndSnapshot(t *testing.T) {
 	e := newFulfillmentEnv(t)
 	sup, other := e.supplier(), e.supplier()
@@ -350,7 +324,6 @@ func TestIntegration_PurchaseChargesFlowToSaleProfitAndSnapshot(t *testing.T) {
 		t.Fatalf("POST MTO = %d %v", code, p)
 	}
 	id := p["id"].(string)
-	// Sale com outro Item sob encomenda em OUTRA compra não recebe o rateio.
 	otherSale, oit := e.sale(qItem("O1", 5, 200, 100, ""))
 	e.putItem(otherSale, oit[0], map[string]any{"produto_nome": "O1", "quantidade": 5, "preco_venda_unit": 200, "custo_unit": 100, "fornecedor_id": other})
 	_, otherBefore := e.api.do("GET", "/vendas/"+otherSale, nil)
@@ -358,7 +331,6 @@ func TestIntegration_PurchaseChargesFlowToSaleProfitAndSnapshot(t *testing.T) {
 	if code, res := e.api.do("POST", "/purchases/"+id+"/charges", map[string]any{"kind": "FREIGHT", "amount": 400}); code != 201 {
 		t.Fatalf("POST custo MTO = %d %v", code, res)
 	}
-	// Todos os Items da compra estão na Sale: 400 de custo adicional reduz o Profit em 400 (sem fan-out).
 	_, after := e.api.do("GET", "/vendas/"+saleID, nil)
 	if !near2(lucroBefore-num(after, "lucro"), 400) {
 		t.Errorf("lucro %v → %v, queda esperada 400", lucroBefore, after["lucro"])
@@ -377,14 +349,12 @@ func TestIntegration_PurchaseChargesFlowToSaleProfitAndSnapshot(t *testing.T) {
 	if num(pd["composition"].(map[string]any), "total") != 4400 {
 		t.Errorf("composition = %v", pd["composition"])
 	}
-	// Dashboard/painel por Sale consomem vw_vendas_resumo: total_custo inclui o rateio.
 	var tc float64
 	e.db.Raw(`SELECT total_custo FROM vw_vendas_resumo WHERE id = ?`, saleID).Scan(&tc)
 	if !near2(tc, 4000+400) {
 		t.Errorf("total_custo = %v, want 4400", tc)
 	}
 
-	// Troca de Supplier (compra de reposição OPEN): custo com credor padrão acompanha.
 	r := e.replenishment(sup, nil, line(prod, 10, 50))
 	rid := r["id"].(string)
 	e.api.do("POST", "/purchases/"+rid+"/charges", map[string]any{"kind": "FREIGHT", "amount": 100})
@@ -400,7 +370,6 @@ func TestIntegration_PurchaseChargesFlowToSaleProfitAndSnapshot(t *testing.T) {
 		t.Errorf("trocar Supplier de compra com Items de venda = %d, want 409", code)
 	}
 
-	// Custo da última entrada (landed) vira snapshot do Item FROM_STOCK; custo posterior não muda.
 	e.api.do("PATCH", "/purchases/"+rid+"/status", map[string]any{"status": "ORDERED"})
 	e.api.do("PATCH", "/purchases/"+rid+"/status", map[string]any{"status": "RECEIVED"})
 	landed := 50 + 150.0/10

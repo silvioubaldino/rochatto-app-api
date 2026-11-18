@@ -296,7 +296,6 @@ func TestE2E_ScopeWriteOnlyConnectionHasNoReadTools(t *testing.T) {
 	}
 }
 
-// SPEC-007/008 — scope de leitura: Connection só com read não lista as 16 escritas e chamá-las
 // devolve FORBIDDEN sem nenhuma chamada ao Gateway (nenhum Customer criado).
 func TestE2E_ReadOnlyConnectionHasNoWriteTools(t *testing.T) {
 	s := newStack(t, "dono@example.com")

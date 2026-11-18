@@ -166,7 +166,6 @@ var getPurchase = toolkit.Define(toolkit.Meta{
 })
 
 // toEN traduz o PurchaseDetail do REST (sale_items com campos PT) para o contrato EN (§4.2/§5).
-// Sem payment_status/paid_amount/paid_at/to_pay: a compra traz payable/paid/open das contas (AYD-008).
 func (r restPurchaseDetail) toEN() PurchaseDetail {
 	s := r.restPurchaseSummary
 	p := PurchaseDetail{
@@ -323,8 +322,6 @@ var setPurchaseStatus = toolkit.Define(toolkit.Meta{
 	}
 	return SetPurchaseStatusOut{PurchaseID: r.ID, Status: r.Status, OrderedAt: optDate(r.OrderedAt), ReceivedAt: optDate(r.ReceivedAt), Warnings: noWarnings()}, nil
 })
-
-// --- add_purchase_charge (W · dd) ---
 
 type AddPurchaseChargeIn struct {
 	PurchaseID      UUID                       `json:"purchase_id" jsonschema:"id da compra (obtenha com list_purchases); qualquer status"`

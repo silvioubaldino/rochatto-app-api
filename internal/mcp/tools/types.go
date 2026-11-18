@@ -208,7 +208,6 @@ type restPurchaseSaleItem struct {
 	CustoUnit    float64 `json:"custo_unit"`
 }
 
-// restPurchaseDetail espelha o PurchaseDetail do REST (AYD-002 + AYD-008).
 type restPurchaseDetail struct {
 	restPurchaseSummary
 	AllocationMethod toolkit.AllocationMethod `json:"allocation_method"`
@@ -228,7 +227,6 @@ type PurchaseLine struct {
 	UnitCost    float64 `json:"unit_cost"`
 }
 
-// PurchaseCharge é o custo adicional da compra (frete de compra, descarga, imposto, outros).
 type PurchaseCharge struct {
 	ID              UUID                       `json:"id"`
 	PurchaseID      UUID                       `json:"purchase_id"`
@@ -241,7 +239,6 @@ type PurchaseCharge struct {
 	CreatedAt       time.Time                  `json:"created_at"`
 }
 
-// PurchaseComposition: do que é feito o custo da compra (pedras + custos adicionais).
 type PurchaseComposition struct {
 	GoodsTotal   float64          `json:"goods_total"`
 	Charges      []PurchaseCharge `json:"charges"`
@@ -249,7 +246,6 @@ type PurchaseComposition struct {
 	Total        float64          `json:"total"`
 }
 
-// PurchaseCostLine é a linha da compra com rateio e custo de entrada (landed cost).
 type PurchaseCostLine struct {
 	LineType         toolkit.PurchaseLineType `json:"line_type"`
 	LineID           UUID                     `json:"line_id"`
@@ -264,8 +260,6 @@ type PurchaseCostLine struct {
 	LandedUnitCost   float64                  `json:"landed_unit_cost"`
 }
 
-// PurchaseDetail é a compra completa (AYD-002 + AYD-008): composição, contas por credor, linhas com
-// custo de entrada. payable/paid/open = Σ das contas da compra (payable e open = o que falta).
 type PurchaseDetail struct {
 	ID               UUID                     `json:"id"`
 	Kind             toolkit.PurchaseKind     `json:"kind"`

@@ -1,7 +1,5 @@
 package tools_test
 
-// add_purchase_charge e as saídas estendidas de get_purchase / get_stock_balance (AYD-008 /
-// SPEC-009) contra um Postgres real (mesmas condições dos outros testes de integração do pacote).
 import (
 	"math"
 	"testing"
@@ -43,13 +41,11 @@ func TestIntegration_AddPurchaseCharge(t *testing.T) {
 		t.Errorf("obligations = %v", p["obligations"])
 	}
 
-	// get_purchase devolve o mesmo formato.
 	gp := obj(e.ok("get_purchase", map[string]any{"purchase_id": pid})["purchase"])
 	if obj(gp["composition"])["total"] != float64(5500) || len(gp["lines"].([]any)) != 1 {
 		t.Errorf("get_purchase = %v", gp)
 	}
 
-	// Dedupe como as demais criações: repetição idêntica devolve o mesmo custo; allow_duplicate cria outro.
 	args := map[string]any{"purchase_id": pid, "kind": "UNLOADING", "amount": 100}
 	first := e.ok("add_purchase_charge", args)
 	dup := e.ok("add_purchase_charge", args)
@@ -64,11 +60,9 @@ func TestIntegration_AddPurchaseCharge(t *testing.T) {
 		t.Errorf("custos = %d, want 3", n)
 	}
 
-	// Compra recebida: custo de entrada e valor em estoque no get_stock_balance.
 	e.ok("set_purchase_status", map[string]any{"purchase_id": pid, "status": "ORDERED"})
 	e.ok("set_purchase_status", map[string]any{"purchase_id": pid, "status": "RECEIVED"})
 	sb := obj(e.ok("get_stock_balance", map[string]any{"product_id": f.product})["balance"])
-	// 100 m2 × 50 + (500 + 100 + 100) = 5700 → 57/m2; saldo = 100 (+ ajustes de outros testes: só o inflow importa).
 	if cost := sb["last_inflow_cost"].(float64); math.Abs(cost-57) > 0.005 {
 		t.Errorf("last_inflow_cost = %v, want 57", cost)
 	}
@@ -80,7 +74,6 @@ func TestIntegration_AddPurchaseCharge(t *testing.T) {
 		t.Errorf("total_stock_value = %v", list["total_stock_value"])
 	}
 
-	// Validações.
 	e.fail("add_purchase_charge", map[string]any{"purchase_id": pid, "kind": "FREIGHT", "amount": 0}, "INVALID_INPUT", "")
 	e.fail("add_purchase_charge", map[string]any{"purchase_id": pid, "kind": "FRETE", "amount": 5}, "INVALID_INPUT", "")
 	e.fail("add_purchase_charge", map[string]any{"purchase_id": pid, "kind": "FREIGHT", "amount": 5.123}, "INVALID_INPUT", "2 casas")

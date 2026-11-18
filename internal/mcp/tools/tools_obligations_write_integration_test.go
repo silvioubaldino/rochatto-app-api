@@ -1,6 +1,5 @@
 package tools_test
 
-// Testes de integração das 3 ferramentas de escrita novas do catálogo 1.0.0 (AYD-007 §8 /
 // SPEC-008): settle_obligations, record_expense e set_installments, pelo pipeline real, sobre os
 // handlers REST de verdade, num Postgres descartável (TEST_DATABASE_URL).
 import (

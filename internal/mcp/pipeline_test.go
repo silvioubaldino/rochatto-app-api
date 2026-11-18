@@ -299,7 +299,6 @@ func TestCanonicalArgs_KeyOrderIndependent(t *testing.T) {
 	}
 }
 
-// SPEC-007/008 — scope de leitura com as 16 escritas REAIS: FORBIDDEN, e nenhuma chamada chega ao
 // Gateway (nem ao Deduper).
 func TestPipeline_ReadScopeBlocksAllRealWriteTools(t *testing.T) {
 	calls := 0

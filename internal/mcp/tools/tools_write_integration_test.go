@@ -112,7 +112,6 @@ func TestIntegration_WriteQuoteToSaleFlow(t *testing.T) {
 	e.fail("create_quick_sale", map[string]any{"customer_id": cid, "items": []any{}}, "INVALID_INPUT", "")
 }
 
-// Limites da deduplicação (120 s, mesma Connection, JSON canônico) exercitados em record_expense.
 func TestIntegration_WriteDedupeLimits(t *testing.T) {
 	e := newEnv(t)
 	args := map[string]any{"category": "VEHICLE", "amount": 500, "occurred_on": day(0), "payment_method": "PIX"}
@@ -124,7 +123,6 @@ func TestIntegration_WriteDedupeLimits(t *testing.T) {
 	if r2 := e.ok("record_expense", args); r2["deduplicated"] != true || obj(r2["movement"])["id"] != mv["id"] || e.movementCount("VEHICLE") != 1 {
 		t.Fatalf("2ª chamada deveria deduplicar: %v", r2)
 	}
-	// allow_duplicate força outra movimentação (e não entra no hash); a seguinte volta a deduplicar.
 	args3 := map[string]any{"category": "VEHICLE", "amount": 500, "occurred_on": day(0), "payment_method": "PIX", "allow_duplicate": true}
 	if r3 := e.ok("record_expense", args3); r3["deduplicated"] != nil || obj(r3["movement"])["id"] == mv["id"] || e.movementCount("VEHICLE") != 2 {
 		t.Fatalf("allow_duplicate = %v", r3)

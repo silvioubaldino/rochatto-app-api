@@ -175,7 +175,6 @@ var nullableInputs = map[string]map[string]bool{
 	"set_installments": {"due_date": true},
 }
 
-// As 16 escritas e suas anotações esperadas (AYD-006 §4.1): D = destructive, I = idempotent, dd = dedupe.
 var writeTools = map[string]struct{ D, I, DD bool }{
 	"create_customer":            {false, false, true},
 	"create_quote":               {false, false, true},
@@ -196,7 +195,6 @@ var writeTools = map[string]struct{ D, I, DD bool }{
 	"set_installments":           {false, true, false}, // AYD-007
 }
 
-// Catálogo completo como contrato (SPEC-007 + SPEC-008 + SPEC-009): 37 ferramentas, 20 R + 17 não R, versão 1.0.0.
 func TestCatalogComplete(t *testing.T) {
 	if CatalogVersion != "1.0.0" {
 		t.Errorf("catalog_version = %s, quero 1.0.0", CatalogVersion)
@@ -250,8 +248,6 @@ func TestInstructionsCanonical(t *testing.T) {
 	}
 }
 
-// AYD-007 §8: as 5 ferramentas novas existem com as anotações do AYD; as antigas de recebimento e
-// pagamento ao Supplier não fazem parte do catálogo 1.0.0.
 func TestCatalogDeprecatedAndNewTools(t *testing.T) {
 	byName := map[string]toolkit.Entry{}
 	for _, tool := range Catalog() {

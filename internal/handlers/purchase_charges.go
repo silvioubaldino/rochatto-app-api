@@ -1,10 +1,5 @@
 package handlers
 
-// Custos adicionais da compra (AYD-008@context): frete de compra, descarga, imposto, outros —
-// cada um com credor editável. Os custos entram nas contas da compra (AYD-007, por triggers) e
-// são rateados entre as linhas (vw_purchase_line_costs). Podem ser lançados em QUALQUER status
-// da compra (o frete costuma vir depois do pedido). Rateio e custo de entrada nunca são gravados.
-
 import (
 	"bytes"
 	"encoding/json"
@@ -20,8 +15,6 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// purchaseChargeRequest: POST/PUT (PUT é de substituição completa). payee_supplier_id ausente =
-// fornecedor da compra (padrão); null explícito = credor "a definir".
 type purchaseChargeRequest struct {
 	Kind            string          `json:"kind"`
 	Amount          float64         `json:"amount"`
@@ -41,7 +34,6 @@ type purchaseChargeResponse struct {
 	CreatedAt       time.Time  `json:"created_at"`
 }
 
-// purchaseChargeMutationResponse: o recurso no corpo + warnings (AYD-007; vazio = []).
 type purchaseChargeMutationResponse struct {
 	purchaseChargeResponse
 	Warnings []string `json:"warnings"`
@@ -74,7 +66,6 @@ func fetchPurchaseCharge(db *gorm.DB, id uuid.UUID) (*purchaseChargeResponse, er
 	return &out, nil
 }
 
-// lockPurchaseForCharge trava a Purchase: inexistente → 404; soft-deletada → 409.
 func lockPurchaseForCharge(tx *gorm.DB, id uuid.UUID) (*models.Purchase, error) {
 	var p models.Purchase
 	if err := tx.Unscoped().Clauses(clause.Locking{Strength: "UPDATE"}).First(&p, "id = ?", id).Error; err != nil {
@@ -89,7 +80,6 @@ func lockPurchaseForCharge(tx *gorm.DB, id uuid.UUID) (*models.Purchase, error) 
 	return &p, nil
 }
 
-// validated devolve o credor resolvido e a descrição normalizada, ou um erro 400/404.
 func (req purchaseChargeRequest) validated(tx *gorm.DB, p *models.Purchase) (payee *uuid.UUID, desc *string, err error) {
 	if !purchasing.ChargeKinds[req.Kind] {
 		return nil, nil, errStatus(http.StatusBadRequest, "kind inválido (FREIGHT | UNLOADING | TAX | OTHER)")
@@ -242,7 +232,6 @@ func (h *PurchasesHandler) updateCharge(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// deleteCharge: soft-delete. O OVERSETTLED eventual aparece em GET /purchases/{id}.warnings.
 func (h *PurchasesHandler) deleteCharge(w http.ResponseWriter, r *http.Request) {
 	ids, ok := parsePathIDs(w, r, "id", "chargeId")
 	if !ok {

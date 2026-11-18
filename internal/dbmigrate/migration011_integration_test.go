@@ -1,11 +1,5 @@
 package dbmigrate
 
-// Teste de integração da migração 011 (AYD-008@context / SPEC-009): semeia dados na versão 10
-// (reposição recebida, venda sob encomenda, saldo de estoque), aplica a 011 e confere a PARIDADE
-// (sem custos adicionais nada muda: a pagar da compra, Profit da Sale, custo da última entrada),
-// o rateio com custos adicionais (contas por credor, Profit, custo de entrada, valor em estoque,
-// unidades mistas), os triggers (inclusive troca de Supplier) e o ciclo down → up. Roda só com
-// TEST_DATABASE_URL e precisa de CREATE DATABASE (banco descartável próprio; senão é pulado).
 import (
 	"database/sql"
 	"fmt"
@@ -50,7 +44,6 @@ func TestIntegration_Migration011PurchaseComposition(t *testing.T) {
 	if err := m.M.Migrate(10); err != nil {
 		t.Fatalf("migrate 10: %v", err)
 	}
-	// Protocolo simples: sem cache de statements preparados (as views mudam de tipo na migração).
 	dbCfg := cfg.Copy()
 	dbCfg.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
 	dbConn := stdlib.RegisterConnConfig(dbCfg)
@@ -103,7 +96,6 @@ func TestIntegration_Migration011PurchaseComposition(t *testing.T) {
 		t.Fatalf("up 011: %v", err)
 	}
 
-	// Paridade: sem custos adicionais nada muda.
 	if got := scanF(`SELECT payable FROM vw_purchases_resumo WHERE id = $1`, purR); !near(got, payableBefore) {
 		t.Errorf("a pagar = %v, want %v", got, payableBefore)
 	}
@@ -121,7 +113,6 @@ func TestIntegration_Migration011PurchaseComposition(t *testing.T) {
 		t.Errorf("stock_value = %v, want 1000", got)
 	}
 
-	// Triggers: custo adicional (credor padrão e outro credor) → contas e rateio.
 	exec(`INSERT INTO purchase_charges (purchase_id, kind, amount, payee_supplier_id) VALUES ($1, 'FREIGHT', 200, $2), ($1, 'TAX', 50, NULL), ($1, 'UNLOADING', 30, $3)`, purR, supA, supB)
 	exec(`INSERT INTO purchase_charges (purchase_id, kind, amount, payee_supplier_id) VALUES ($1, 'FREIGHT', 40, $2)`, purM, supA)
 	if got := scanF(`SELECT COUNT(*) FROM obligations WHERE purchase_id = $1 AND deleted_at IS NULL`, purR); got != 3 {
@@ -143,7 +134,6 @@ func TestIntegration_Migration011PurchaseComposition(t *testing.T) {
 	if got := scanF(`SELECT COUNT(*) FROM obligations WHERE purchase_id = $1 AND deleted_at IS NULL AND counterparty_id IS NULL`, purR); got != 0 {
 		t.Errorf("conta sem credor após excluir o custo = %v, want 0", got)
 	}
-	// Troca de Supplier da compra: custo com credor padrão acompanha.
 	exec(`UPDATE purchases SET supplier_id = $2 WHERE id = $1`, purR, supB)
 	if got := scanF(`SELECT COUNT(*) FROM purchase_charges WHERE purchase_id = $1 AND deleted_at IS NULL AND payee_supplier_id = $2`, purR, supB); got != 2 {
 		t.Errorf("custos com o novo Supplier = %v, want 2", got)
@@ -151,13 +141,11 @@ func TestIntegration_Migration011PurchaseComposition(t *testing.T) {
 	if got := scanF(`SELECT COUNT(*) FROM obligations WHERE purchase_id = $1 AND deleted_at IS NULL`, purR); got != 1 {
 		t.Errorf("contas após trocar o Supplier = %v, want 1", got)
 	}
-	// Unidades mistas: a view sinaliza.
 	exec(`INSERT INTO purchase_items (purchase_id, product_id, quantity, unit_cost) VALUES ($1, $2, 5, 20)`, purR, prodS)
 	if got := scanF(`SELECT COUNT(*) FROM vw_purchase_line_costs WHERE purchase_id = $1 AND units_mixed`, purR); got != 2 {
 		t.Errorf("units_mixed = %v linhas, want 2", got)
 	}
 
-	// ---- down → up ----
 	if err := m.M.Migrate(10); err != nil {
 		t.Fatalf("down 011: %v", err)
 	}

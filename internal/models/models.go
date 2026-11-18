@@ -161,21 +161,18 @@ func (Notificacao) TableName() string { return "notificacoes" }
 // contas da compra (AYD-007).
 type Purchase struct {
 	Base
-	Kind         string     `gorm:"column:kind;type:purchase_kind;not null"                        json:"kind"`
-	SupplierID   uuid.UUID  `gorm:"column:supplier_id;type:uuid;not null"                          json:"supplier_id"`
-	Status       string     `gorm:"column:status;type:purchase_status;not null;default:'OPEN'"     json:"status"`
-	ExpectedDate *time.Time `gorm:"column:expected_date;type:date"                                 json:"expected_date"`
-	OrderedAt    *time.Time `gorm:"column:ordered_at;type:date"                                    json:"ordered_at"`
-	ReceivedAt   *time.Time `gorm:"column:received_at;type:date"                                   json:"received_at"`
-	Notes        *string    `gorm:"column:notes"                                                   json:"notes"`
-	// AllocationMethod: rateio dos custos adicionais entre as linhas (AYD-008) — BY_QUANTITY | BY_VALUE.
-	AllocationMethod string `gorm:"column:allocation_method;type:allocation_method;not null;default:'BY_QUANTITY'" json:"allocation_method"`
+	Kind             string     `gorm:"column:kind;type:purchase_kind;not null"                        json:"kind"`
+	SupplierID       uuid.UUID  `gorm:"column:supplier_id;type:uuid;not null"                          json:"supplier_id"`
+	Status           string     `gorm:"column:status;type:purchase_status;not null;default:'OPEN'"     json:"status"`
+	ExpectedDate     *time.Time `gorm:"column:expected_date;type:date"                                 json:"expected_date"`
+	OrderedAt        *time.Time `gorm:"column:ordered_at;type:date"                                    json:"ordered_at"`
+	ReceivedAt       *time.Time `gorm:"column:received_at;type:date"                                   json:"received_at"`
+	Notes            *string    `gorm:"column:notes"                                                   json:"notes"`
+	AllocationMethod string     `gorm:"column:allocation_method;type:allocation_method;not null;default:'BY_QUANTITY'" json:"allocation_method"`
 }
 
 func (Purchase) TableName() string { return "purchases" }
 
-// PurchaseCharge — custo adicional da compra (AYD-008): frete de compra, descarga, imposto, outros.
-// PayeeSupplierID nulo = credor "a definir". Rateio e custo de entrada são calculados (view).
 type PurchaseCharge struct {
 	Base
 	PurchaseID      uuid.UUID  `gorm:"column:purchase_id;type:uuid;not null"                json:"purchase_id"`

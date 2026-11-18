@@ -180,8 +180,6 @@ func (h *StockHandler) listBalance(w http.ResponseWriter, r *http.Request) {
 		out = append(out, row.toResponse())
 		totalValue += row.StockValue
 	}
-	// O corpo segue sendo a lista (AYD-002); o total do valor em estoque (AYD-008) vai no
-	// cabeçalho X-Total-Stock-Value e nasce da soma dos stock_value do conjunto filtrado.
 	w.Header().Set("X-Total-Stock-Value", strconv.FormatFloat(obligations.Round2(totalValue), 'f', 2, 64))
 	writeJSON(w, http.StatusOK, out)
 }

@@ -4,8 +4,6 @@ package handlers
 // (kind MADE_TO_ORDER) ou linhas de reposição de Stock (kind STOCK_REPLENISHMENT). Custo, pago e
 // a pagar vêm das contas da compra (AYD-007; o PATCH .../payment foi removido — pagar é quitar a
 // conta: POST /settlements). Totais vêm de vw_purchases_resumo (nunca persistidos).
-// Composição (AYD-008): pedras + custos adicionais (purchase_charges.go) com rateio e custo de
-// entrada por linha (vw_purchase_line_costs).
 
 import (
 	"context"
@@ -74,8 +72,6 @@ type purchaseCreateRequest struct {
 	Items            []purchaseLineRequest `json:"items"`
 }
 
-// purchaseUpdateRequest: expected_date e notes são de substituição (ausente/null limpa);
-// allocation_method e supplier_id ausentes mantêm o valor atual (supplier_id só em compra OPEN).
 type purchaseUpdateRequest struct {
 	ExpectedDate     *string    `json:"expected_date"`
 	Notes            *string    `json:"notes"`
@@ -131,7 +127,6 @@ type purchaseLineResponse struct {
 	UnitCost    float64   `json:"unit_cost"`
 }
 
-// purchaseCompositionResponse: do que é feito o custo da compra (AYD-008 §2).
 type purchaseCompositionResponse struct {
 	GoodsTotal   float64                  `json:"goods_total"` // Σ linhas (pedras)
 	Charges      []purchaseChargeResponse `json:"charges"`
@@ -139,7 +134,6 @@ type purchaseCompositionResponse struct {
 	Total        float64                  `json:"total"` // goods_total + charges_total ("custo da compra")
 }
 
-// purchaseCostLineResponse: linha com rateio e custo de entrada (vw_purchase_line_costs).
 type purchaseCostLineResponse struct {
 	LineType         string     `json:"line_type"` // STOCK_ITEM | SALE_ITEM
 	LineID           uuid.UUID  `json:"line_id"`
@@ -302,8 +296,6 @@ func fetchPurchaseDetail(db *gorm.DB, id uuid.UUID) (*purchaseDetailResponse, er
 	}, nil
 }
 
-// fetchPurchaseCostLines: linhas com rateio e custo de entrada. Precisão total na view;
-// arredondamento (2 casas) só aqui, na exibição.
 func fetchPurchaseCostLines(db *gorm.DB, id uuid.UUID) ([]purchaseCostLineResponse, error) {
 	lines := []purchaseCostLineResponse{}
 	if err := db.Raw(`
@@ -324,8 +316,6 @@ func fetchPurchaseCostLines(db *gorm.DB, id uuid.UUID) ([]purchaseCostLineRespon
 	return lines, nil
 }
 
-// purchaseWarnings: ["OVERSETTLED"] quando alguma conta da compra ficou com quitado > devido
-// (ex.: custo adicional reduzido, removido ou trocado de credor depois de quitado — AYD-007 §2).
 func purchaseWarnings(db *gorm.DB, id uuid.UUID) ([]string, error) {
 	var n int64
 	if err := db.Raw(`SELECT COUNT(*) FROM vw_obligations WHERE purchase_id = ? AND settled > amount`, id).Scan(&n).Error; err != nil {
@@ -337,9 +327,6 @@ func purchaseWarnings(db *gorm.DB, id uuid.UUID) ([]string, error) {
 	return []string{}, nil
 }
 
-// ensureUnitsCompatible: BY_QUANTITY com linhas de unidades diferentes → 422 (§3). Só vale com
-// custos adicionais (sem eles não há o que ratear); strict exige também sem custos (ao pedir
-// BY_QUANTITY explicitamente).
 func ensureUnitsCompatible(tx *gorm.DB, purchaseID uuid.UUID, strict bool) error {
 	var row struct {
 		Method       string  `gorm:"column:allocation_method"`
@@ -633,7 +620,6 @@ func (h *PurchasesHandler) get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// resolveAllocationMethod: nil → padrão BY_QUANTITY; valor inválido → mensagem de 400.
 func resolveAllocationMethod(v *string) (string, string) {
 	if v == nil || *v == "" {
 		return purchasing.ByQuantity, ""
@@ -673,9 +659,6 @@ func (h *PurchasesHandler) update(w http.ResponseWriter, r *http.Request) {
 			upd["allocation_method"] = *req.AllocationMethod
 		}
 		if req.SupplierID != nil && *req.SupplierID != p.SupplierID {
-			// Troca de Supplier: só com a compra OPEN; os custos adicionais com o credor padrão
-			// acompanham (trigger). Compra sob encomenda com Items já anexados não troca (os Items
-			// pertencem ao fornecedor).
 			if err := requireOpen(p, ""); err != nil {
 				return err
 			}

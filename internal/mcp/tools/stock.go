@@ -20,13 +20,12 @@ type GetStockBalanceIn struct {
 
 // GetStockBalanceOut: lista paginada (sem product_id) OU um saldo com extrato (com product_id).
 type GetStockBalanceOut struct {
-	Items   *[]StockBalanceRow  `json:"items,omitempty"`
-	Total   *int                `json:"total,omitempty"`
-	Offset  *int                `json:"offset,omitempty"`
-	HasMore *bool               `json:"has_more,omitempty"`
-	Balance *StockBalanceDetail `json:"balance,omitempty"`
-	// TotalStockValue: Σ stock_value dos produtos do filtro (lista; AYD-008).
-	TotalStockValue *float64 `json:"total_stock_value,omitempty"`
+	Items           *[]StockBalanceRow  `json:"items,omitempty"`
+	Total           *int                `json:"total,omitempty"`
+	Offset          *int                `json:"offset,omitempty"`
+	HasMore         *bool               `json:"has_more,omitempty"`
+	Balance         *StockBalanceDetail `json:"balance,omitempty"`
+	TotalStockValue *float64            `json:"total_stock_value,omitempty"`
 }
 
 var getStockBalance = toolkit.Define(toolkit.Meta{

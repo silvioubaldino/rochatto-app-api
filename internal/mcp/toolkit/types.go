@@ -47,7 +47,6 @@ type (
 	AlertKind             string
 	MovementKind          string
 
-	// AYD-007 (catálogo 1.0.0): contas, parcelas e movimentações financeiras.
 	SupplierKind        string // STONE | TRANSPORT | LABOR | TAX_AUTHORITY | OTHER
 	ObligationDirection string // PAYABLE | RECEIVABLE
 	ObligationStatus    string // OPEN | PARTIAL | SETTLED
@@ -58,7 +57,6 @@ type (
 	ExpenseCategory     string // categorias aceitas por record_expense (despesa ou receita avulsa)
 	MovementDirection   string // IN (entrada) | OUT (saída)
 
-	// AYD-008 (catálogo 1.0.0): composição da compra.
 	PurchaseChargeKind string // FREIGHT | UNLOADING | TAX | OTHER
 	AllocationMethod   string // BY_QUANTITY | BY_VALUE
 	PurchaseLineType   string // STOCK_ITEM | SALE_ITEM

@@ -1,14 +1,9 @@
--- AYD-008@context / SPEC-009: composição da compra.
---   pedras (linhas) + custos adicionais (purchase_charges: frete de compra, descarga, imposto,
---   outros) com credor próprio → contas por credor (AYD-007) + rateio → custo de entrada (landed).
--- Rateio, custo de entrada, valor em estoque e totais são VIEWS (RNF-05) — nunca gravados.
 
 CREATE TYPE purchase_charge_kind AS ENUM ('FREIGHT', 'UNLOADING', 'TAX', 'OTHER');
 CREATE TYPE allocation_method    AS ENUM ('BY_QUANTITY', 'BY_VALUE');
 
 ALTER TABLE purchases ADD COLUMN allocation_method allocation_method NOT NULL DEFAULT 'BY_QUANTITY';
 
--- Custo adicional da compra. payee_supplier_id nulo = "a definir" (conta sem credor).
 CREATE TABLE purchase_charges (
   id                UUID                 PRIMARY KEY DEFAULT gen_random_uuid(),
   purchase_id       UUID                 NOT NULL REFERENCES purchases(id),
@@ -22,19 +17,10 @@ CREATE TABLE purchase_charges (
 CREATE INDEX idx_purchase_charges_purchase_id ON purchase_charges(purchase_id) WHERE deleted_at IS NULL;
 CREATE INDEX idx_purchase_charges_payee       ON purchase_charges(payee_supplier_id) WHERE deleted_at IS NULL;
 
--- Views que mudam (recriadas abaixo)
 DROP VIEW IF EXISTS vw_vendas_resumo;
 DROP VIEW IF EXISTS vw_purchases_resumo;
 DROP VIEW IF EXISTS vw_stock_balance;
 
--- ============================================================
--- Rateio e custo de entrada por linha da compra (§3)
---   BY_QUANTITY: charges_total × quantity / Σ quantity
---   BY_VALUE:    charges_total × base_cost / Σ base_cost (Σ = 0 cai para BY_QUANTITY)
--- Linha = linha de reposição (STOCK_ITEM) ou Item de Sale sob encomenda (SALE_ITEM).
--- units_mixed: mais de uma unidade (normalizada) entre as linhas; linha sem Product não conta.
--- Precisão total — o arredondamento é só na exibição.
--- ============================================================
 CREATE VIEW vw_purchase_line_costs AS
 WITH lines AS (
   SELECT p.id AS purchase_id, 'STOCK_ITEM'::text AS line_type, pi.id AS line_id, NULL::uuid AS sale_id,
@@ -89,10 +75,6 @@ CROSS JOIN LATERAL (
   END AS allocated_charges
 ) alloc;
 
--- ============================================================
--- Componentes das contas: + PURCHASE_CHARGE (um por custo adicional; id = chargeId).
--- PURCHASE_ITEMS segue = Σ base_cost das linhas (vw_purchase_costs). Credor nulo → conta sem credor.
--- ============================================================
 CREATE OR REPLACE VIEW vw_obligation_components AS
 SELECT
   'SALE'::text AS origin_type, v.id AS origin_id,
@@ -140,12 +122,8 @@ FROM purchase_charges c
 JOIN purchases p ON p.id = c.purchase_id AND p.deleted_at IS NULL
 WHERE c.deleted_at IS NULL;
 
--- ============================================================
--- Triggers: contas sincronizam em toda escrita de custo adicional e na troca de Supplier
--- ============================================================
 CREATE OR REPLACE FUNCTION trg_sync_obligations_purchase() RETURNS trigger AS $$
 BEGIN
-  -- Troca de Supplier: os custos adicionais que estavam com o credor padrão acompanham a compra.
   IF TG_OP = 'UPDATE' AND NEW.supplier_id IS DISTINCT FROM OLD.supplier_id THEN
     UPDATE purchase_charges
        SET payee_supplier_id = NEW.supplier_id
@@ -171,9 +149,6 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER trg_obligations_sync AFTER INSERT OR UPDATE OR DELETE ON purchase_charges
   FOR EACH ROW EXECUTE FUNCTION trg_sync_obligations_purchase_charge();
 
--- ============================================================
--- Resumo por Purchase: total_cost = Σ linhas (pedras); + charges_total; pago/a pagar = Σ contas
--- ============================================================
 CREATE VIEW vw_purchases_resumo AS
 SELECT
   p.*,
@@ -196,10 +171,6 @@ LEFT JOIN (
 ) ob ON ob.purchase_id = p.id
 WHERE p.deleted_at IS NULL;
 
--- ============================================================
--- Resumo por Sale: total_custo e lucro incluem os custos adicionais da compra rateados aos
--- Items sob encomenda (RN-04). Rateio pré-agregado por Sale (sem fan-out).
--- ============================================================
 CREATE VIEW vw_vendas_resumo AS
 SELECT
   v.*,
@@ -268,11 +239,6 @@ LEFT JOIN (
 ) py ON py.sale_id = v.id
 WHERE v.deleted_at IS NULL;
 
--- ============================================================
--- Balance por Product (RN-03/RN-16) com custo de ENTRADA (landed): a última entrada de
--- reposição usa landed_unit_cost (com o rateio dos custos adicionais). stock_value =
--- GREATEST(balance, 0) × last_inflow_cost (0 sem custo).
--- ============================================================
 CREATE VIEW vw_stock_balance AS
 WITH replenishment AS (
   SELECT pi.product_id, pi.quantity, lc.landed_unit_cost AS unit_cost, p.received_at AS event_date, pi.created_at
@@ -320,7 +286,6 @@ SELECT
   lc.unit_cost                                                                 AS last_inflow_cost,
   lc.event_date                                                                AS last_inflow_date,
   GREATEST(COALESCE(inf.qty, 0) - COALESCE(outf.qty, 0) + COALESCE(adj.qty, 0), 0)
-    * COALESCE(lc.unit_cost, 0)                                                AS stock_value
 FROM produtos pr
 LEFT JOIN inflow     inf  ON inf.product_id  = pr.id
 LEFT JOIN outflow    outf ON outf.product_id = pr.id

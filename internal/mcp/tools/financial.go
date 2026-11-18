@@ -9,7 +9,6 @@ import (
 )
 
 // FinancialTools: finanças, contas, quitações e movimentações (AYD-006 §4.1 — módulo Financial;
-// AYD-007 §8).
 func FinancialTools() []toolkit.Tool {
 	return []toolkit.Tool{
 		getFinanceSummary, listPaymentAlerts,
@@ -654,8 +653,6 @@ func (d ObligationDetail) normalized() ObligationDetail {
 	d.Notes = opt(d.Notes)
 	return d
 }
-
-// --- Receipts derivados da conta a receber (get_sale) ---
 
 // saleReceivable devolve a conta a receber da Sale (nil se a venda ainda não tem Items).
 func saleReceivable(ctx context.Context, gw toolkit.Gateway, saleID UUID) (*ObligationDetail, error) {

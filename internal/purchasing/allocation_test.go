@@ -8,8 +8,6 @@ import (
 
 func near(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
 
-// Exemplo do AYD-008: 357 m² e 8.564,25 de custos adicionais (frete 7.612 + descarga 600 +
-// ICMS 352,25 — total 8.564,25) rateados por m² = 23,9895…/m².
 func TestAllocate_ByQuantity(t *testing.T) {
 	lines := []Line{{"m2", 100, 27}, {"M2 ", 257, 100}}
 	got, err := Allocate(ByQuantity, 8564.25, lines)

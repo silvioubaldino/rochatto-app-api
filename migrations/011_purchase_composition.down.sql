@@ -1,6 +1,3 @@
--- Reverte a 011: volta ao custo de entrada sem rateio (unit_cost da linha) e remove
--- purchase_charges. LOSSY: os custos adicionais da compra (e o credor de cada um) se perdem; as
--- contas da compra voltam a ter só o valor das linhas. allocation_method se perde.
 
 DROP TRIGGER IF EXISTS trg_obligations_sync ON purchase_charges;
 DROP FUNCTION IF EXISTS trg_sync_obligations_purchase_charge();
@@ -9,7 +6,6 @@ DROP VIEW IF EXISTS vw_vendas_resumo;
 DROP VIEW IF EXISTS vw_purchases_resumo;
 DROP VIEW IF EXISTS vw_stock_balance;
 
--- Componentes sem PURCHASE_CHARGE
 CREATE OR REPLACE VIEW vw_obligation_components AS
 SELECT
   'SALE'::text AS origin_type, v.id AS origin_id,
@@ -119,7 +115,6 @@ LEFT JOIN (
 ) py ON py.sale_id = v.id
 WHERE v.deleted_at IS NULL;
 
--- Resumo por Purchase: custo, pago e a pagar = Σ das contas da compra; payment_status derivado.
 CREATE VIEW vw_purchases_resumo AS
 SELECT
   p.*,
@@ -138,9 +133,6 @@ LEFT JOIN (
 ) ob ON ob.purchase_id = p.id
 WHERE p.deleted_at IS NULL;
 
--- Balance por Product (RN-03/RN-16): Inflow (reposição recebida) − Outflow (Items FROM_STOCK
--- de Sales não canceladas) + ajustes. Custo da última entrada: a mais recente entre linhas de
--- reposição recebidas e ajustes INITIAL/COUNT com custo.
 CREATE VIEW vw_stock_balance AS
 WITH replenishment AS (
   SELECT pi.product_id, pi.quantity, pi.unit_cost, p.received_at AS event_date, pi.created_at
