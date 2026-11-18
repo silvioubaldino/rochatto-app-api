@@ -121,6 +121,8 @@ type Quote struct {
 	LostReason *string    `gorm:"column:lost_reason"                           json:"lost_reason"`
 	QuoteDate  time.Time  `gorm:"column:quote_date;type:date;not null"         json:"quote_date"`
 	Notes      *string    `gorm:"column:notes"                                 json:"notes"`
+	// QuickSale: somente leitura via API — true só para o Quote criado por POST /quotes/quick-sale (AYD-005).
+	QuickSale bool `gorm:"column:quick_sale;not null;default:false" json:"quick_sale"`
 }
 
 func (Quote) TableName() string { return "quotes" }

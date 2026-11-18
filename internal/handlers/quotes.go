@@ -92,6 +92,7 @@ type quoteListResponse struct {
 	LostReason   *string    `json:"lost_reason"`
 	QuoteDate    string     `json:"quote_date"`
 	Notes        *string    `json:"notes"`
+	QuickSale    bool       `json:"quick_sale"`
 	TotalQuote   float64    `json:"total_quote"`
 	CreatedAt    time.Time  `json:"created_at"`
 }
@@ -127,6 +128,7 @@ type quoteResumoRow struct {
 	LostReason   *string    `gorm:"column:lost_reason"`
 	QuoteDate    time.Time  `gorm:"column:quote_date"`
 	Notes        *string    `gorm:"column:notes"`
+	QuickSale    bool       `gorm:"column:quick_sale"`
 	CreatedAt    time.Time  `gorm:"column:created_at"`
 	TotalQuote   float64    `gorm:"column:total_quote"`
 	CustomerName string     `gorm:"column:customer_name"`
@@ -144,6 +146,7 @@ func (row quoteResumoRow) toListResponse() quoteListResponse {
 		LostReason:   row.LostReason,
 		QuoteDate:    row.QuoteDate.Format("2006-01-02"),
 		Notes:        row.Notes,
+		QuickSale:    row.QuickSale,
 		TotalQuote:   row.TotalQuote,
 		CreatedAt:    row.CreatedAt,
 	}
@@ -360,13 +363,14 @@ func (h *QuotesHandler) validateQuoteRequest(w http.ResponseWriter, ctx context.
 }
 
 // insertQuote grava o Quote e seus Items dentro da transação recebida.
-func insertQuote(tx *gorm.DB, req quoteCreateRequest, quoteDate time.Time) (*models.Quote, error) {
+func insertQuote(tx *gorm.DB, req quoteCreateRequest, quoteDate time.Time, quickSale bool) (*models.Quote, error) {
 	quote := models.Quote{
 		CustomerID: req.CustomerID,
 		ReferrerID: req.ReferrerID,
 		Status:     "OPEN",
 		QuoteDate:  quoteDate,
 		Notes:      req.Notes,
+		QuickSale:  quickSale,
 	}
 	if err := tx.Create(&quote).Error; err != nil {
 		return nil, fmt.Errorf("insert quote: %w", err)
@@ -401,7 +405,7 @@ func (h *QuotesHandler) create(w http.ResponseWriter, r *http.Request) {
 	tx := h.db.WithContext(r.Context()).Begin()
 	defer tx.Rollback()
 
-	quote, err := insertQuote(tx, req, quoteDate)
+	quote, err := insertQuote(tx, req, quoteDate, false)
 	if err != nil {
 		log.Printf("ERROR CreateQuote: %v", err)
 		models.WriteError(w, http.StatusInternalServerError, "erro interno")
@@ -856,7 +860,7 @@ func (h *QuotesHandler) quickSale(w http.ResponseWriter, r *http.Request) {
 	tx := h.db.WithContext(r.Context()).Begin()
 	defer tx.Rollback()
 
-	created, err := insertQuote(tx, req, quoteDate)
+	created, err := insertQuote(tx, req, quoteDate, true)
 	if err != nil {
 		log.Printf("ERROR QuickSale: %v", err)
 		models.WriteError(w, http.StatusInternalServerError, "erro interno")
