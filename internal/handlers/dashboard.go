@@ -126,13 +126,15 @@ func (h *DashboardHandler) getResumo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Totais por Sale vêm de vw_vendas_resumo (itens e recebimentos pré-agregados por Sale —
-	// sem fan-out; a view já exclui Sales com deleted_at).
+	// sem fan-out; a view já exclui Sales com deleted_at). Sales CANCELED saem de todos os
+	// totais (AYD-002 / RN-15).
 
 	// 1. Total a receber (RN-05: total_venda − total_recebido de toda Sale, entregue ou não;
 	// pagamento a maior numa Sale não abate o saldo de outra)
 	err := h.db.WithContext(ctx).Raw(`
 		SELECT COALESCE(SUM(GREATEST(vr.total_venda - vr.total_recebido, 0)), 0)
 		FROM vw_vendas_resumo vr
+		WHERE vr.delivery_status <> 'CANCELED'
 	`).Scan(&resp.TotalAReceber).Error
 	if err != nil {
 		log.Printf("ERROR Dashboard total_a_receber: %v", err)
@@ -140,12 +142,10 @@ func (h *DashboardHandler) getResumo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Total a pagar fornecedores
+	// 2. Total a pagar a Suppliers (RN-06): Σ to_pay das Purchases não excluídas
 	err = h.db.WithContext(ctx).Raw(`
-		SELECT COALESCE(SUM(iv.quantidade * iv.custo_unit - iv.pago_fornecedor), 0)
-		FROM itens_venda iv
-		JOIN vendas v ON v.id = iv.venda_id
-		WHERE v.deleted_at IS NULL
+		SELECT COALESCE(SUM(pr.to_pay), 0)
+		FROM vw_purchases_resumo pr
 	`).Scan(&resp.TotalAPagarFornecedor).Error
 	if err != nil {
 		log.Printf("ERROR Dashboard total_a_pagar_fornecedor: %v", err)
@@ -159,6 +159,7 @@ func (h *DashboardHandler) getResumo(w http.ResponseWriter, r *http.Request) {
 		FROM vw_vendas_resumo vr
 		WHERE vr.data_venda >= ?
 			AND vr.data_venda <= ?
+			AND vr.delivery_status <> 'CANCELED'
 	`, dataInicio, dataFim).Scan(&resp.LucroPeriodo).Error
 	if err != nil {
 		log.Printf("ERROR Dashboard lucro_periodo: %v", err)
@@ -172,6 +173,7 @@ func (h *DashboardHandler) getResumo(w http.ResponseWriter, r *http.Request) {
 		FROM vw_vendas_resumo vr
 		WHERE vr.data_venda >= ?
 			AND vr.data_venda <= ?
+			AND vr.delivery_status <> 'CANCELED'
 	`, dataInicio, dataFim).Scan(&resp.TotalVendidoPeriodo).Error
 	if err != nil {
 		log.Printf("ERROR Dashboard total_vendido_periodo: %v", err)
@@ -179,10 +181,10 @@ func (h *DashboardHandler) getResumo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 5. Vendas abertas (nao entregues)
+	// 5. Vendas abertas (a entregar)
 	err = h.db.WithContext(ctx).
 		Model(&models.Venda{}).
-		Where("deleted_at IS NULL AND status != 'ENTREGUE'").
+		Where("delivery_status = 'TO_DELIVER'").
 		Count(&resp.VendasAbertas).Error
 	if err != nil {
 		log.Printf("ERROR Dashboard vendas_abertas: %v", err)
@@ -194,7 +196,8 @@ func (h *DashboardHandler) getResumo(w http.ResponseWriter, r *http.Request) {
 	err = h.db.WithContext(ctx).Raw(`
 		SELECT COALESCE(SUM(comissao_valor), 0)
 		FROM vendas
-		WHERE deleted_at IS NULL AND comissao_valor > 0 AND comissao_paga = FALSE
+		WHERE deleted_at IS NULL AND delivery_status <> 'CANCELED'
+			AND comissao_valor > 0 AND comissao_paga = FALSE
 	`).Scan(&resp.TotalComissoesPendentes).Error
 	if err != nil {
 		log.Printf("ERROR Dashboard total_comissoes_pendentes: %v", err)
@@ -310,6 +313,7 @@ func (h *DashboardHandler) getVendasPorMes(w http.ResponseWriter, r *http.Reques
 			COALESCE(SUM(vr.lucro), 0)               AS lucro
 		FROM vw_vendas_resumo vr
 		WHERE vr.data_venda >= DATE_TRUNC('month', CURRENT_DATE) - MAKE_INTERVAL(months => ?)
+			AND vr.delivery_status <> 'CANCELED'
 		GROUP BY DATE_TRUNC('month', vr.data_venda)
 		ORDER BY mes ASC
 	`, meses).Scan(&rows).Error
@@ -382,7 +386,7 @@ func (h *DashboardHandler) getProdutosMaisVendidos(w http.ResponseWriter, r *htt
 		FROM itens_venda i
 		JOIN vendas v ON v.id = i.venda_id
 		LEFT JOIN produtos p ON p.id = i.produto_id
-		WHERE v.deleted_at IS NULL`
+		WHERE v.deleted_at IS NULL AND v.delivery_status <> 'CANCELED'`
 
 	args := []any{}
 	if dataInicio != nil {

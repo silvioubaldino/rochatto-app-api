@@ -1,0 +1,182 @@
+package fulfillment
+
+import (
+	"errors"
+	"testing"
+	"time"
+)
+
+func TestCheckPurchaseTransition(t *testing.T) {
+	cases := []struct {
+		from, to string
+		lines    int64
+		want     error
+	}{
+		{PurchaseOpen, PurchaseOrdered, 1, nil},
+		{PurchaseOpen, PurchaseOrdered, 0, ErrEmptyPurchase},
+		{PurchaseOrdered, PurchaseOpen, 1, nil},
+		{PurchaseOrdered, PurchaseReceived, 1, nil},
+		{PurchaseOpen, PurchaseReceived, 1, ErrIllegalTransition},
+		{PurchaseOpen, PurchaseOpen, 1, ErrIllegalTransition},
+		{PurchaseOrdered, PurchaseOrdered, 1, ErrIllegalTransition},
+		{PurchaseReceived, PurchaseOpen, 1, ErrIllegalTransition},
+		{PurchaseReceived, PurchaseOrdered, 1, ErrIllegalTransition},
+		{PurchaseReceived, PurchaseReceived, 1, ErrIllegalTransition},
+		{PurchaseOpen, PurchaseReceived, 0, ErrIllegalTransition}, // 409 vence o 422
+	}
+	for _, c := range cases {
+		// Act
+		got := CheckPurchaseTransition(c.from, c.to, c.lines)
+		// Assert
+		if !errors.Is(got, c.want) {
+			t.Errorf("%s→%s (lines=%d) = %v, want %v", c.from, c.to, c.lines, got, c.want)
+		}
+	}
+}
+
+func TestStampTransition(t *testing.T) {
+	today := time.Date(2026, 11, 18, 22, 30, 0, 0, time.FixedZone("BRT", -3*3600))
+	earlier := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+
+	o, r := StampTransition(PurchaseOrdered, nil, nil, today)
+	if o == nil || o.Format("2006-01-02") != "2026-11-18" || r != nil {
+		t.Errorf("ORDERED: ordered_at=%v received_at=%v", o, r)
+	}
+	o, r = StampTransition(PurchaseOpen, &earlier, nil, today)
+	if o != nil || r != nil {
+		t.Errorf("OPEN: ordered_at=%v received_at=%v, want nil/nil", o, r)
+	}
+	o, r = StampTransition(PurchaseReceived, &earlier, nil, today)
+	if o == nil || !o.Equal(earlier) || r == nil || r.Format("2006-01-02") != "2026-11-18" {
+		t.Errorf("RECEIVED: ordered_at=%v received_at=%v", o, r)
+	}
+}
+
+func TestResolvePayment(t *testing.T) {
+	today := time.Date(2026, 11, 18, 10, 0, 0, 0, time.UTC)
+	f := func(v float64) *float64 { return &v }
+	paidAt := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+
+	// PAID sem valor/data → total_cost e hoje.
+	a, d, err := ResolvePayment(PaymentPaid, nil, nil, 300, today)
+	if err != nil || *a != 300 || d.Format("2006-01-02") != "2026-11-18" {
+		t.Errorf("PAID defaults = %v %v %v", a, d, err)
+	}
+	// PAID com valor/data explícitos são mantidos (inclusive 0).
+	a, d, err = ResolvePayment(PaymentPaid, f(0), &paidAt, 300, today)
+	if err != nil || *a != 0 || !d.Equal(paidAt) {
+		t.Errorf("PAID explícito = %v %v %v", a, d, err)
+	}
+	// PAID com valor negativo → erro.
+	if _, _, err := ResolvePayment(PaymentPaid, f(-1), nil, 300, today); !errors.Is(err, ErrNegativePaidAmount) {
+		t.Errorf("PAID negativo err = %v", err)
+	}
+	// PENDING zera valor e data, mesmo se vierem.
+	a, d, err = ResolvePayment(PaymentPending, f(100), &paidAt, 300, today)
+	if err != nil || a != nil || d != nil {
+		t.Errorf("PENDING = %v %v %v, want nil nil nil", a, d, err)
+	}
+}
+
+func TestToPay(t *testing.T) {
+	f := func(v float64) *float64 { return &v }
+	if got := ToPay(PaymentPaid, 300, f(100)); got != 0 {
+		t.Errorf("PAID to_pay = %v, want 0", got)
+	}
+	if got := ToPay(PaymentPending, 300, nil); got != 300 {
+		t.Errorf("PENDING sem pago = %v, want 300", got)
+	}
+	if got := ToPay(PaymentPending, 300, f(50)); got != 250 {
+		t.Errorf("PENDING legado parcial = %v, want 250", got)
+	}
+}
+
+func TestCheckDeliveryChange(t *testing.T) {
+	cases := []struct {
+		current, next string
+		ordered       bool
+		want          error
+	}{
+		{DeliveryToDeliver, DeliveryDelivered, false, nil},
+		{DeliveryDelivered, DeliveryToDeliver, false, nil},
+		{DeliveryToDeliver, DeliveryCanceled, false, nil},
+		{DeliveryDelivered, DeliveryCanceled, false, nil},
+		{DeliveryToDeliver, DeliveryCanceled, true, ErrItemsInOrderedPurchase},
+		{DeliveryCanceled, DeliveryToDeliver, false, ErrSaleCanceled},
+		{DeliveryCanceled, DeliveryCanceled, false, ErrSaleCanceled},
+		{DeliveryToDeliver, DeliveryDelivered, true, nil}, // entregar não depende das Purchases
+	}
+	for _, c := range cases {
+		if got := CheckDeliveryChange(c.current, c.next, c.ordered); !errors.Is(got, c.want) {
+			t.Errorf("%s→%s ordered=%v = %v, want %v", c.current, c.next, c.ordered, got, c.want)
+		}
+	}
+}
+
+func TestSalePaymentStatus(t *testing.T) {
+	cases := []struct {
+		total, received float64
+		want            string
+	}{
+		{1000, 0, SalePaymentPending},
+		{1000, 400, SalePaymentPartial},
+		{1000, 1000, SalePaymentPaid},
+		{1000, 1200, SalePaymentPaid},
+		{0, 0, SalePaymentPending},
+	}
+	for _, c := range cases {
+		if got := SalePaymentStatus(c.total, c.received); got != c.want {
+			t.Errorf("SalePaymentStatus(%v, %v) = %s, want %s", c.total, c.received, got, c.want)
+		}
+	}
+}
+
+func TestLockedFieldsChanged(t *testing.T) {
+	base := ItemLockFields{Origin: OriginMadeToOrder, SupplierID: "s1", Quantity: 2, UnitCost: 100}
+	if LockedFieldsChanged(base, base) {
+		t.Error("mesmos valores não devem travar")
+	}
+	for name, mut := range map[string]func(*ItemLockFields){
+		"origin":      func(f *ItemLockFields) { f.Origin = OriginFromStock },
+		"supplier":    func(f *ItemLockFields) { f.SupplierID = "s2" },
+		"no supplier": func(f *ItemLockFields) { f.SupplierID = "" },
+		"quantity":    func(f *ItemLockFields) { f.Quantity = 3 },
+		"cost":        func(f *ItemLockFields) { f.UnitCost = 90 },
+	} {
+		after := base
+		mut(&after)
+		if !LockedFieldsChanged(base, after) {
+			t.Errorf("mudança de %s deveria travar", name)
+		}
+	}
+}
+
+func TestInsufficientStock(t *testing.T) {
+	if InsufficientStock(0) || InsufficientStock(3) || !InsufficientStock(-0.5) {
+		t.Error("InsufficientStock: só Balance < 0 avisa")
+	}
+}
+
+func TestEnums(t *testing.T) {
+	for set, values := range map[*map[string]bool][]string{
+		&ItemOrigins:            {"MADE_TO_ORDER", "FROM_STOCK"},
+		&PurchaseKinds:          {"MADE_TO_ORDER", "STOCK_REPLENISHMENT"},
+		&PurchaseStatuses:       {"OPEN", "ORDERED", "RECEIVED"},
+		&SupplierPaymentStatus:  {"PENDING", "PAID"},
+		&SaleDeliveryStatuses:   {"TO_DELIVER", "DELIVERED", "CANCELED"},
+		&SalePaymentStatuses:    {"PENDING", "PARTIAL", "PAID"},
+		&StockAdjustmentReasons: {"INITIAL", "COUNT", "OTHER"},
+	} {
+		if len(*set) != len(values) {
+			t.Errorf("enum %v tem %d valores, want %d", values, len(*set), len(values))
+		}
+		for _, v := range values {
+			if !(*set)[v] {
+				t.Errorf("enum sem %s", v)
+			}
+		}
+	}
+	if ItemOrigins["A_ENTREGAR"] || SaleDeliveryStatuses["ENTREGUE"] {
+		t.Error("valores legados não podem ser aceitos")
+	}
+}

@@ -46,7 +46,8 @@ func main() {
 	handlers.NewVendasHandler(db).Register(apiMux)
 	handlers.NewQuotesHandler(db).Register(apiMux)
 	handlers.NewPagamentosHandler(db).Register(apiMux)
-	handlers.NewEstoqueHandler(db).Register(apiMux)
+	handlers.NewPurchasesHandler(db).Register(apiMux)
+	handlers.NewStockHandler(db).Register(apiMux)
 	handlers.NewDashboardHandler(db).Register(apiMux)
 
 	root := http.NewServeMux()

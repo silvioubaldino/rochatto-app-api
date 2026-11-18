@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/silvioubaldino/sales-backend/internal/fulfillment"
 	"github.com/silvioubaldino/sales-backend/internal/models"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -773,7 +774,7 @@ func convertQuote(tx *gorm.DB, id uuid.UUID) (*models.Quote, *models.Venda, erro
 		ClienteID:         quote.CustomerID,
 		VendedorExternoID: quote.ReferrerID,
 		QuoteID:           &quoteID,
-		Status:            "A_ENTREGAR",
+		DeliveryStatus:    fulfillment.DeliveryToDeliver,
 		DataVenda:         today(),
 		Observacoes:       quote.Notes,
 	}
@@ -789,6 +790,7 @@ func convertQuote(tx *gorm.DB, id uuid.UUID) (*models.Quote, *models.Venda, erro
 			Quantidade:     quoteItem.Quantity,
 			PrecoVendaUnit: quoteItem.UnitPrice,
 			CustoUnit:      quoteItem.UnitCost,
+			Origin:         fulfillment.OriginMadeToOrder,
 		}
 		if err := tx.Create(&item).Error; err != nil {
 			return nil, nil, err
