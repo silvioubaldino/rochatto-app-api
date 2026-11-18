@@ -17,13 +17,13 @@ Fornecer endpoints HTTP seguros, validados e tipados para:
 
 | Tecnologia | Versão | Papel |
 |---|---|---|
-| Go | 1.22+ | Runtime e HTTP server |
-| `net/http` stdlib | — | Router HTTP (sem framework externo) |
-| `sqlc` | 1.26+ | Geração de queries type-safe a partir de SQL puro |
-| `pgx/v5` | 5.x | Driver PostgreSQL |
+| Go | 1.26 (ver `go.mod`) | Runtime e HTTP server |
+| `net/http` stdlib | — | Router HTTP (`ServeMux` com padrões `METHOD /path/{id}`, sem framework) |
+| GORM (`gorm.io/gorm` + `gorm.io/driver/postgres`) | 1.31 | Acesso a dados (modelos + SQL explícito via `Raw`) |
+| `pgx/v5` | 5.x | Driver PostgreSQL (por baixo do GORM e do migrate) |
 | `golang-jwt/jwt` | v5 | Validação de Firebase JWT |
-| PostgreSQL | 15+ (Supabase) | Banco de dados principal |
-| `golang-migrate` | 4.x | Migrations versionadas |
+| PostgreSQL | 16 (Neon) | Banco de dados principal |
+| `golang-migrate` | 4.x | Migrations versionadas, **embutidas** no binário (TDR-001) |
 
 ## Arquitetura
 
@@ -32,17 +32,15 @@ Monolito simples — sem microserviços, sem message queues, sem cache, seguindo
 ```
 
 ```
-cmd/server/main.go          → bootstrap: DB, router, middlewares, listen
+cmd/server/                 → bootstrap: env, allowlist, migrations (opcional), DB, router, listen
+cmd/migrate/                → CLI de migrations: up | down N | version | force N
 internal/
-  auth/                     → middleware: valida Firebase JWT em toda requisição
-  handlers/                 → um arquivo por recurso (clientes, vendas, etc.)
-  db/
-    queries/                → arquivos .sql (lidos pelo sqlc)
-    *.go                    → código gerado pelo sqlc (nunca editar manualmente)
-  models/                   → structs de domínio e tipos compartilhados
-  calculator/               → funções puras de cálculo financeiro
-migrations/                 → arquivos SQL numerados (001_init.up.sql, etc.)
-sqlc.yaml                   → config do sqlc
+  auth/                     → middleware: Firebase JWT + allowlist do dono (ALLOWED_EMAILS); CORS
+  handlers/                 → um arquivo por recurso (clientes, vendas, quotes, etc.)
+  dbmigrate/                → golang-migrate sobre as migrations embutidas
+  models/                   → structs GORM de domínio e tipos compartilhados
+migrations/                 → NNN_nome.{up,down}.sql + embed.go (package migrations)
+docs/ops/                   → operação: baseline de migrations, backup, script pg_cron
 ```
 
 ## Convenções obrigatórias
@@ -61,6 +59,7 @@ sqlc.yaml                   → config do sqlc
 | Sem body | 204 No Content |
 | Validação falhou | 400 Bad Request |
 | Não autenticado | 401 Unauthorized |
+| Autenticado, mas fora da allowlist do dono | 403 Forbidden |
 | Não encontrado | 404 Not Found |
 | Erro interno | 500 Internal Server Error |
 
@@ -72,11 +71,12 @@ sqlc.yaml                   → config do sqlc
 - Valores monetários: `DECIMAL(12,2)` no banco, `float64` no Go
 
 ### Código Go
-- Sem ORM — apenas `sqlc` com SQL explícito
+- GORM para CRUD simples; agregações em SQL explícito (`Raw`) — somas por Sale sempre
+  pré-agregadas (nunca juntar itens e recebimentos no mesmo `GROUP BY`: fan-out)
 - Handlers não contêm lógica de negócio — delegam para funções em `internal/`
 - Cada handler valida o input antes de chamar o banco
 - Erros de banco são logados internamente mas nunca expostos ao cliente
-- Variáveis de ambiente via `.env` local e variáveis do Render em produção
+- Variáveis de ambiente via `.env` local e variáveis do serviço no Cloud Run em produção
 
 ## Variáveis de ambiente
 
@@ -84,23 +84,28 @@ sqlc.yaml                   → config do sqlc
 DATABASE_URL=postgresql://user:pass@host:5432/dbname
 FIREBASE_PROJECT_ID=seu-projeto-firebase
 PORT=8080
-ENV=development   # ou production
+ENV=development             # ou production
+ALLOWED_EMAILS=dono@exemplo.com   # vírgulas; obrigatório em production (senão não sobe)
+MIGRATE_ON_START=false      # true = aplica migrations pendentes no startup
+FRONTEND_URL=http://localhost:3000  # origem permitida no CORS (default "*")
 ```
+
+Testes de integração: `TEST_DATABASE_URL` (banco descartável com migrations aplicadas).
 
 ## Como rodar localmente
 
 ```bash
-# 1. Subir banco local (opcional — pode usar Supabase direto)
+# 1. Subir banco local
 docker compose up -d db
 
-# 2. Rodar migrations
-migrate -path migrations -database $DATABASE_URL up
+# 2. Rodar migrations (embutidas)
+go run ./cmd/migrate up
 
-# 3. Gerar código sqlc (após alterar queries)
-sqlc generate
+# 3. Rodar servidor
+go run ./cmd/server
 
-# 4. Rodar servidor
-go run cmd/server/main.go
+# 4. Testes (unitários; integração só com TEST_DATABASE_URL)
+go vet ./... && TEST_DATABASE_URL=$DATABASE_URL go test ./...
 ```
 
 ## Fases de implementação
@@ -114,12 +119,14 @@ go run cmd/server/main.go
 | 5 | `specs/phase-05-dashboard.md` | Dashboard, notificações, relatórios e pg_cron |
 | 6 | `specs/phase-06-estoque.md` | Módulo de estoque físico |
 
-## Deploy (Render.com — Free Tier)
+## Deploy (Google Cloud Run — free tier)
 
-- `Dockerfile` na raiz do projeto
-- Render detecta automaticamente e builda o binário Go
-- Variáveis de ambiente configuradas no painel do Render
-- ⚠️ Free tier: servidor hiberna após 15min de inatividade (cold start ~30s)
+- `Dockerfile` na raiz: binários `server` e `migrate` (migrations embutidas, tzdata incluído)
+- Variáveis de ambiente configuradas no serviço do Cloud Run (`ENV=production`,
+  `ALLOWED_EMAILS` obrigatório)
+- Banco: Neon Postgres. Baseline de migrations, backup e pg_cron: `docs/ops/database.md`
+- CI: `.github/workflows/ci.yml` (vet, build, migrations e testes com Postgres 16)
+- Scale-to-zero: aceita cold start (RNF-04)
 
 ## This repo's role (docs framework)
 
