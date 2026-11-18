@@ -286,6 +286,7 @@ SELECT
   lc.unit_cost                                                                 AS last_inflow_cost,
   lc.event_date                                                                AS last_inflow_date,
   GREATEST(COALESCE(inf.qty, 0) - COALESCE(outf.qty, 0) + COALESCE(adj.qty, 0), 0)
+    * COALESCE(lc.unit_cost, 0)                                                AS stock_value
 FROM produtos pr
 LEFT JOIN inflow     inf  ON inf.product_id  = pr.id
 LEFT JOIN outflow    outf ON outf.product_id = pr.id
