@@ -327,7 +327,7 @@ func (h *QuotesHandler) validateQuoteRequest(w http.ResponseWriter, ctx context.
 		return time.Time{}, false
 	}
 	if req.ReferrerID != nil {
-		var partner models.VendedorExterno
+		var partner models.Partner
 		if err := h.db.WithContext(ctx).First(&partner, "id = ?", *req.ReferrerID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				models.WriteError(w, http.StatusBadRequest, "referrer não encontrado")

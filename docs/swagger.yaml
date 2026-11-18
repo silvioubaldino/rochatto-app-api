@@ -67,6 +67,17 @@ components:
           type: string
           nullable: true
           example: "Cliente VIP"
+        lead_source:
+          $ref: "#/components/schemas/LeadSource"
+        referrer_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Partner que indicou; obrigatório se lead_source = PARTNER, proibido caso contrário
+        referrer_name:
+          type: string
+          nullable: true
+          description: Nome do Partner (inclusive se já excluído)
         created_at:
           type: string
           format: date-time
@@ -99,6 +110,13 @@ components:
           type: string
           nullable: true
           example: "Cliente VIP"
+        lead_source:
+          $ref: "#/components/schemas/LeadSource"
+        referrer_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Partner que indicou; obrigatório se lead_source = PARTNER, proibido caso contrário
 
     # --- Produto ---
     Produto:
@@ -127,6 +145,14 @@ components:
           type: string
           nullable: true
           example: "un"
+        category_id:
+          type: string
+          format: uuid
+          nullable: true
+        category_name:
+          type: string
+          nullable: true
+          description: Nome da categoria (exibido mesmo se a categoria foi excluída)
         created_at:
           type: string
           format: date-time
@@ -158,6 +184,11 @@ components:
           type: string
           nullable: true
           example: "un"
+        category_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Categoria existente e não excluída (manter a mesma categoria já excluída é permitido no PUT)
 
     # --- Fornecedor ---
     Fornecedor:
@@ -200,40 +231,73 @@ components:
           type: string
           nullable: true
 
-    # --- VendedorExterno ---
-    VendedorExterno:
+    # --- Partner (AYD-003) ---
+    PartnerType:
+      type: string
+      enum: [ARCHITECT, ENGINEER, BUILDER, OTHER]
+
+    LeadSource:
+      type: string
+      nullable: true
+      enum: [REFERRAL, INSTAGRAM, PARTNER, OTHER, null]
+
+    Partner:
       type: object
       properties:
         id:
           type: string
           format: uuid
-        nome:
+        name:
           type: string
-          example: "Maria Vendedora"
-        telefone:
+          example: "Ana Arquiteta"
+        phone:
           type: string
           nullable: true
-        observacoes:
+        type:
+          $ref: "#/components/schemas/PartnerType"
+        notes:
           type: string
           nullable: true
         created_at:
           type: string
           format: date-time
 
-    VendedorExternoRequest:
+    PartnerRequest:
       type: object
-      required:
-        - nome
+      required: [name, type]
       properties:
-        nome:
+        name:
           type: string
-          example: "Maria Vendedora"
-        telefone:
-          type: string
-          nullable: true
-        observacoes:
+        phone:
           type: string
           nullable: true
+        type:
+          $ref: "#/components/schemas/PartnerType"
+        notes:
+          type: string
+          nullable: true
+
+    # --- ProductCategory (AYD-003) ---
+    ProductCategory:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: "Quartzito"
+        created_at:
+          type: string
+          format: date-time
+
+    ProductCategoryRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: Único entre categorias não excluídas (case-insensitive)
 
     # --- Venda ---
     VendaStatus:
@@ -892,6 +956,17 @@ paths:
         - Clientes
       summary: Lista todos os clientes
       operationId: listClientes
+      parameters:
+        - name: lead_source
+          in: query
+          schema:
+            type: string
+            enum: [REFERRAL, INSTAGRAM, PARTNER, OTHER]
+        - name: referrer_id
+          in: query
+          schema:
+            type: string
+            format: uuid
       responses:
         "200":
           description: Lista de clientes ordenada por nome
@@ -929,7 +1004,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Cliente"
         "400":
-          description: Dados inválidos (campo `nome` obrigatório, JSON inválido)
+          description: Dados inválidos (campo `nome` obrigatório, JSON inválido, lead_source inválido, PARTNER sem referrer_id, referrer_id com lead_source ≠ PARTNER, referrer_id inexistente)
           content:
             application/json:
               schema:
@@ -1089,6 +1164,12 @@ paths:
         - Produtos
       summary: Lista todos os produtos
       operationId: listProdutos
+      parameters:
+        - name: category_id
+          in: query
+          schema:
+            type: string
+            format: uuid
       responses:
         "200":
           description: Lista de produtos ordenada por nome
@@ -1413,167 +1494,286 @@ paths:
   # ============================================================
   # Vendedores Externos
   # ============================================================
-  /api/v1/vendedores-externos:
+  # ============================================================
+  # Partners (AYD-003) — substitui /vendedores-externos
+  # ============================================================
+  /api/v1/partners:
     get:
       tags:
-        - Vendedores Externos
-      summary: Lista todos os vendedores externos
-      operationId: listVendedoresExternos
+        - Partners
+      summary: Lista Partners (ordem por nome)
+      operationId: listPartners
+      parameters:
+        - name: q
+          in: query
+          description: Busca por nome (ILIKE)
+          schema:
+            type: string
+        - name: type
+          in: query
+          schema:
+            $ref: "#/components/schemas/PartnerType"
       responses:
         "200":
-          description: Lista de vendedores externos ordenada por nome
+          description: Lista de Partners
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/VendedorExterno"
-        "401":
-          description: Não autenticado
-        "500":
-          description: Erro interno
+                  $ref: "#/components/schemas/Partner"
+        "400":
+          description: type inválido
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
 
     post:
       tags:
-        - Vendedores Externos
-      summary: Cria um novo vendedor externo
-      operationId: createVendedorExterno
+        - Partners
+      summary: Cria um Partner
+      operationId: createPartner
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/VendedorExternoRequest"
+              $ref: "#/components/schemas/PartnerRequest"
       responses:
         "201":
-          description: Vendedor externo criado com sucesso
+          description: Partner criado
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/VendedorExterno"
+                $ref: "#/components/schemas/Partner"
         "400":
-          description: Dados inválidos
+          description: name/type ausente ou type inválido
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Não autenticado
-        "500":
-          description: Erro interno
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
 
-  /api/v1/vendedores-externos/{id}:
+  /api/v1/partners/{id}:
     parameters:
       - name: id
         in: path
         required: true
-        description: UUID do vendedor externo
         schema:
           type: string
           format: uuid
 
     get:
       tags:
-        - Vendedores Externos
-      summary: Busca um vendedor externo por ID
-      operationId: getVendedorExterno
+        - Partners
+      summary: Busca um Partner
+      operationId: getPartner
       responses:
         "200":
-          description: Vendedor externo encontrado
+          description: Partner
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/VendedorExterno"
+                $ref: "#/components/schemas/Partner"
         "400":
           description: UUID inválido
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Partner não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Não autenticado
-        "404":
-          description: Vendedor externo não encontrado
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Erro interno
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
 
     put:
       tags:
-        - Vendedores Externos
-      summary: Atualiza um vendedor externo
-      operationId: updateVendedorExterno
+        - Partners
+      summary: Atualiza um Partner
+      operationId: updatePartner
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/VendedorExternoRequest"
+              $ref: "#/components/schemas/PartnerRequest"
       responses:
         "200":
-          description: Vendedor externo atualizado com sucesso
+          description: Partner atualizado
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/VendedorExterno"
+                $ref: "#/components/schemas/Partner"
         "400":
           description: Dados inválidos
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Partner não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Não autenticado
-        "404":
-          description: Vendedor externo não encontrado
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Erro interno
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
 
     delete:
       tags:
-        - Vendedores Externos
-      summary: Remove um vendedor externo (soft delete)
-      operationId: deleteVendedorExterno
+        - Partners
+      summary: Remove um Partner (soft delete; referências existentes são mantidas)
+      operationId: deletePartner
       responses:
         "204":
-          description: Vendedor externo removido com sucesso
+          description: Removido
         "400":
           description: UUID inválido
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-        "401":
-          description: Não autenticado
-        "500":
-          description: Erro interno
+        "404":
+          description: Partner não encontrado
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+
+  # ============================================================
+  # Product categories (AYD-003)
+  # ============================================================
+  /api/v1/product-categories:
+    get:
+      tags:
+        - Product Categories
+      summary: Lista categorias não excluídas (ordem alfabética)
+      operationId: listProductCategories
+      responses:
+        "200":
+          description: Lista de categorias
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProductCategory"
+        "401":
+          description: Não autenticado
+
+    post:
+      tags:
+        - Product Categories
+      summary: Cria uma categoria
+      operationId: createProductCategory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductCategoryRequest"
+      responses:
+        "201":
+          description: Categoria criada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductCategory"
+        "400":
+          description: name ausente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Nome duplicado (case-insensitive)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+
+  /api/v1/product-categories/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+
+    put:
+      tags:
+        - Product Categories
+      summary: Renomeia uma categoria
+      operationId: updateProductCategory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductCategoryRequest"
+      responses:
+        "200":
+          description: Categoria atualizada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductCategory"
+        "400":
+          description: Dados inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Categoria não encontrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Nome duplicado (case-insensitive)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+
+    delete:
+      tags:
+        - Product Categories
+      summary: Remove uma categoria (soft delete; Products mantêm o vínculo)
+      operationId: deleteProductCategory
+      responses:
+        "204":
+          description: Removida
+        "400":
+          description: UUID inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Categoria não encontrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
 
   # ============================================================
   # Vendas
@@ -1626,7 +1826,7 @@ paths:
                 items:
                   $ref: "#/components/schemas/VendaListResponse"
         "400":
-          description: Parâmetro inválido (ex: cliente_id não é UUID)
+          description: "Parâmetro inválido (ex: cliente_id não é UUID)"
           content:
             application/json:
               schema:

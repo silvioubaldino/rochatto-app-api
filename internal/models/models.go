@@ -22,6 +22,10 @@ type Cliente struct {
 	Endereco    *string `                        json:"endereco"`
 	Cidade      *string `                        json:"cidade"`
 	Observacoes *string `                        json:"observacoes"`
+	// AYD-003: campos novos em inglês num recurso legado (ADR-001).
+	LeadSource   *string    `gorm:"column:lead_source;type:lead_source_type" json:"lead_source"`
+	ReferrerID   *uuid.UUID `gorm:"column:referrer_id;type:uuid"            json:"referrer_id"`
+	ReferrerName *string    `gorm:"column:referrer_name;->;-:migration"      json:"referrer_name"` // só leitura (JOIN)
 }
 
 func (Cliente) TableName() string { return "clientes" }
@@ -33,6 +37,9 @@ type Produto struct {
 	PrecoReferencia *float64 `gorm:"type:decimal(12,2)" json:"preco_referencia"`
 	CustoReferencia *float64 `gorm:"type:decimal(12,2)" json:"custo_referencia"`
 	Unidade         *string  `                json:"unidade"`
+	// AYD-003: categoria (campos novos em inglês num recurso legado — ADR-001).
+	CategoryID   *uuid.UUID `gorm:"column:category_id;type:uuid"       json:"category_id"`
+	CategoryName *string    `gorm:"column:category_name;->;-:migration" json:"category_name"` // só leitura (JOIN)
 }
 
 func (Produto) TableName() string { return "produtos" }
@@ -47,14 +54,26 @@ type Fornecedor struct {
 
 func (Fornecedor) TableName() string { return "fornecedores" }
 
-type VendedorExterno struct {
+// Partner (referrer) — AYD-003. Reaproveita a tabela legada vendedores_externos (sem
+// rename físico: IDs e FKs de quotes.referrer_id / vendas.vendedor_externo_id preservados);
+// as colunas PT são mapeadas para o contrato em inglês.
+type Partner struct {
 	Base
-	Nome        string  `gorm:"not null" json:"nome"`
-	Telefone    *string `               json:"telefone"`
-	Observacoes *string `               json:"observacoes"`
+	Name  string  `gorm:"column:nome;not null"                                json:"name"`
+	Phone *string `gorm:"column:telefone"                                     json:"phone"`
+	Type  string  `gorm:"column:type;type:partner_type;not null;default:'OTHER'" json:"type"`
+	Notes *string `gorm:"column:observacoes"                                  json:"notes"`
 }
 
-func (VendedorExterno) TableName() string { return "vendedores_externos" }
+func (Partner) TableName() string { return "vendedores_externos" }
+
+// ProductCategory — AYD-003 (entidade nova, inglês — ADR-001).
+type ProductCategory struct {
+	Base
+	Name string `gorm:"column:name;not null" json:"name"`
+}
+
+func (ProductCategory) TableName() string { return "product_categories" }
 
 type Venda struct {
 	Base
