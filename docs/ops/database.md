@@ -35,12 +35,55 @@ Se o banco não tiver tudo da 003, ajuste o número do `force` para a última mi
 realmente aplicada. Nunca rode `up` sem `force` num banco já populado: a 001 tentaria recriar
 as tabelas e falharia (deixando `dirty`).
 
+### Migration 006 (AYD-002 — atendimento da Sale): parte irreversível
+
+A 006 migra os dados legados e **remove** `vendas.status`, `itens_venda.pago_fornecedor` e a
+tabela `estoque` (ver `migrations/006_sale_fulfillment.up.sql`):
+
+- `vendas.status` → `delivery_status` (`ENTREGUE` → `DELIVERED`; os demais → `TO_DELIVER`).
+- `itens_venda.pago_fornecedor` → uma **Purchase legada** `RECEIVED` por Supplier com os Items
+  de Sales não excluídas que têm Supplier **e** (Sale `ENTREGUE` **ou** `pago_fornecedor > 0`);
+  `paid_amount = Σ pago_fornecedor`, `PAID` se cobre o custo. `pago_fornecedor` de Items
+  **sem Supplier** (ou de Sales excluídas) é perdido.
+- `estoque` com `produto_id` (e quantidade ≠ 0) → `stock_adjustments` `INITIAL`.
+  **Entradas sem `produto_id` não migram e são apagadas com a tabela.**
+
+**Antes de aplicar em produção:** faça o backup (abaixo) e liste as entradas que não vão migrar
+para o dono vincular a um Product (ou anotar o saldo e lançar um ajuste depois):
+
+```sql
+-- entradas de estoque que NÃO migram (sem Product)
+SELECT id, produto_nome, quantidade_entrada, custo_unit, data_entrada, observacoes
+FROM estoque
+WHERE produto_id IS NULL OR quantidade_entrada = 0
+ORDER BY data_entrada;
+
+-- para vincular: UPDATE estoque SET produto_id = '<uuid do produto>' WHERE id = '<uuid da entrada>';
+```
+
+Também vale conferir o `pago_fornecedor` que será perdido:
+
+```sql
+SELECT i.id, i.venda_id, i.produto_nome, i.pago_fornecedor
+FROM itens_venda i JOIN vendas v ON v.id = i.venda_id
+WHERE i.pago_fornecedor > 0 AND (i.fornecedor_id IS NULL OR v.deleted_at IS NOT NULL);
+```
+
+`down 1` volta a um schema 005 funcional, mas o mapeamento é **best-effort**: `CANCELED` vira
+`A_ENTREGAR`; os estados `A_ENTREGAR_DATA`/`A_RETIRAR`/`ENTREGUE_PARCIAL` não voltam;
+`pago_fornecedor` é reconstruído do pagamento da Purchase (rateio proporcional quando
+`PENDING`); `estoque` é reconstruído dos ajustes e das reposições recebidas; Purchases, origem
+dos Items e Outflows se perdem. Para voltar de verdade, restaure o backup.
+
 ## pg_cron (notificações de pagamento)
 
 `docs/ops/pg_cron_setup.sql` cria `gerar_notificacoes_pagamentos()` e agenda o job diário.
 **Não é migration** (depende da extensão pg_cron, criada no painel do provedor). O endpoint
 `POST /dashboard/gerar-notificacoes` chama essa função — sem ela, responde 500.
 O script foi escrito para o Supabase; no Neon, confirme se pg_cron está disponível no plano.
+Desde a 006 a função ignora Receipts de Sales `CANCELED` — rode o script de novo depois de
+aplicar a 006 para atualizar a função (é `CREATE OR REPLACE`; o `cron.schedule` com o mesmo
+nome só atualiza o job).
 
 ## Backup
 
