@@ -120,6 +120,7 @@ go vet ./... && TEST_DATABASE_URL=$DATABASE_URL go test ./...
 | 5 | `specs/phase-05-dashboard.md` | Dashboard, notificações, relatórios e pg_cron |
 | 6 | `docs/specs/SPEC-002-sale-fulfillment.md` | Atendimento da Sale: Purchase, Stock (Balance/ajustes), delivery/payment status (substitui o antigo módulo `/estoque`) |
 | 7 | `docs/specs/SPEC-004-finance.md` | Financeiro: payment method e soft-delete do Receipt, saldos da Sale, `GET /finance/summary`, alertas sem pg_cron |
+| 8 | `docs/specs/SPEC-005-dashboard.md` | Dashboard: `GET /dashboard/kpis` (ticket médio, conversão Quote → Sale, saldos), `quotes.quick_sale`, `/relatorios/vendas` com N meses exatos e `/relatorios/produtos` com `from`/`to` e `unit` |
 
 ## Deploy (Google Cloud Run — free tier)
 
