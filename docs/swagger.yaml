@@ -303,6 +303,10 @@ components:
     SaleDeliveryStatus:
       type: string
       enum: [TO_DELIVER, DELIVERED, CANCELED]
+    PaymentMethod:
+      type: string
+      enum: [PIX, CASH, CARD, BOLETO, TRANSFER]
+      description: "Forma de pagamento do Receipt (AYD-004): Pix, Dinheiro, Cartão, Boleto, Transferência"
       description: Status de entrega da Sale (manual). CANCELED é terminal.
     SalePaymentStatus:
       type: string
@@ -446,6 +450,11 @@ components:
         status:
           type: string
           enum: [pendente, recebido]
+        payment_method:
+          allOf:
+            - $ref: "#/components/schemas/PaymentMethod"
+          nullable: true
+          description: "null só em Receipts legados ou pendentes (AYD-004)"
         observacoes:
           type: string
           nullable: true
@@ -514,6 +523,15 @@ components:
         a_receber:
           type: number
           format: double
+          description: "Legado: total_venda − total_recebido (pode ser negativo). Prefira `receivable`."
+        receivable:
+          type: number
+          format: double
+          description: "RN-05 (AYD-004): GREATEST(total_venda − total_recebido, 0)"
+        freight_payable:
+          type: number
+          format: double
+          description: "RF-10 (AYD-004): GREATEST(frete_valor − frete_pago, 0)"
         lucro:
           type: number
           format: double
@@ -588,6 +606,57 @@ components:
         delivery_status:
           $ref: "#/components/schemas/SaleDeliveryStatus"
 
+    FinanceSummaryResponse:
+      type: object
+      properties:
+        period:
+          type: object
+          properties:
+            from: { type: string, format: date }
+            to: { type: string, format: date }
+        sales:
+          type: object
+          description: "Sales com data_venda em [from, to], não CANCELED, não excluídas"
+          properties:
+            count: { type: integer }
+            revenue: { type: number, format: double }
+            cost: { type: number, format: double }
+            freight: { type: number, format: double }
+            commission: { type: number, format: double }
+            profit: { type: number, format: double, description: "revenue − cost − freight − commission (RN-04)" }
+            received: { type: number, format: double, description: "Σ total_recebido dessas Sales (Receipts de qualquer data)" }
+            receivable: { type: number, format: double }
+        cash:
+          type: object
+          properties:
+            received:
+              type: number
+              format: double
+              description: "Σ Receipts recebidos com data_pagamento no período (Receipt e Sale não excluídos; Sale não CANCELED)"
+            received_by_method:
+              type: array
+              description: "Mesma base; ordenado por amount desc; payment_method null = legado ('Não informado')"
+              items:
+                type: object
+                properties:
+                  payment_method:
+                    allOf:
+                      - $ref: "#/components/schemas/PaymentMethod"
+                    nullable: true
+                  amount: { type: number, format: double }
+            paid_to_suppliers:
+              type: number
+              format: double
+              description: "Σ paid_amount das Purchases não excluídas com paid_at no período"
+        balances:
+          type: object
+          description: "Saldos em aberto hoje (ignoram o período); Sales CANCELED excluídas"
+          properties:
+            receivable: { type: number, format: double }
+            payable_to_suppliers: { type: number, format: double }
+            freight_payable: { type: number, format: double }
+            commission_payable: { type: number, format: double }
+
     # --- Pagamentos ---
     PagamentoCreateRequest:
       type: object
@@ -606,7 +675,8 @@ components:
           description: |
             Data em que o pagamento foi recebido.
             Mutuamente exclusivo com `data_agendada`.
-            Se omitido e `data_agendada` também omitido, assume data de hoje com status `recebido`.
+            Com `data_pagamento` o Receipt nasce `recebido` e `payment_method` é obrigatório.
+            Sem nenhuma das duas datas nasce `pendente`.
         data_agendada:
           type: string
           format: date
@@ -615,6 +685,11 @@ components:
             Data agendada para recebimento futuro.
             Mutuamente exclusivo com `data_pagamento`.
             Define status como `pendente`.
+        payment_method:
+          allOf:
+            - $ref: "#/components/schemas/PaymentMethod"
+          nullable: true
+          description: "Obrigatório quando o Receipt nasce `recebido` (400); opcional em `pendente` (forma combinada)"
         observacoes:
           type: string
           nullable: true
@@ -640,6 +715,11 @@ components:
         status:
           type: string
           enum: [pendente, recebido]
+        payment_method:
+          allOf:
+            - $ref: "#/components/schemas/PaymentMethod"
+          nullable: true
+          description: "Obrigatório quando `status` = recebido (400)"
         observacoes:
           type: string
           nullable: true
@@ -652,6 +732,11 @@ components:
           format: date
           nullable: true
           description: "Se omitido, assume a data de hoje"
+        payment_method:
+          allOf:
+            - $ref: "#/components/schemas/PaymentMethod"
+          nullable: true
+          description: "Obrigatório, salvo se o Receipt pendente já tiver um (é mantido)"
 
     # --- Purchase (AYD-002) ---
     PurchaseKind:
@@ -2122,6 +2207,28 @@ paths:
           schema:
             type: boolean
           description: "Se `true`, retorna apenas vendas com saldo a receber"
+        - name: freight_pending
+          in: query
+          schema:
+            type: boolean
+          description: "Se `true`, só Sales com frete_valor > frete_pago (AYD-004)"
+        - name: commission_pending
+          in: query
+          schema:
+            type: boolean
+          description: "Se `true`, só Sales com comissao_valor > 0 e comissao_paga = false (AYD-004)"
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date
+          description: "data_venda >= from (inclusivo, YYYY-MM-DD; 400 se inválida)"
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date
+          description: "data_venda <= to (inclusivo, YYYY-MM-DD; 400 se inválida)"
       responses:
         "200":
           description: Lista de vendas ordenada por data_venda DESC
@@ -2553,7 +2660,9 @@ paths:
         Lógica de status automático:
         - `data_agendada` fornecida → `status = pendente`
         - `data_pagamento` fornecida → `status = recebido`
-        - Nenhuma data fornecida → `status = recebido`, `data_pagamento = hoje`
+        - Nenhuma data fornecida → `status = pendente`
+        - `status = recebido` exige `payment_method` (400 se ausente)
+        - Sale `CANCELED` → 409 `venda cancelada: recebimentos bloqueados` (vale para POST, PUT, confirmar e DELETE)
         
         **Regra:** `data_pagamento` e `data_agendada` são mutuamente exclusivos.
       operationId: createPagamento
@@ -2574,6 +2683,7 @@ paths:
           description: |
             Dados inválidos:
             - `valor` deve ser > 0
+            - `payment_method` ausente (Receipt recebido) ou fora do enum
             - Não é permitido informar `data_pagamento` e `data_agendada` ao mesmo tempo
             - Formato de data inválido (esperado YYYY-MM-DD)
           content:
@@ -2584,6 +2694,12 @@ paths:
           description: Não autenticado
         "404":
           description: Venda não encontrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: "Sale CANCELED: recebimentos bloqueados"
           content:
             application/json:
               schema:
@@ -2644,6 +2760,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: "Sale CANCELED: recebimentos bloqueados"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Erro interno
           content:
@@ -2654,7 +2776,8 @@ paths:
     delete:
       tags:
         - Pagamentos
-      summary: Remove um pagamento
+      summary: Remove um pagamento (soft-delete)
+      description: "Soft-delete (`deleted_at`, RN-08): o Receipt some de listas, totais, painel e alertas."
       operationId: deletePagamento
       responses:
         "204":
@@ -2669,6 +2792,12 @@ paths:
           description: Não autenticado
         "404":
           description: Pagamento não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: "Sale CANCELED: recebimentos bloqueados"
           content:
             application/json:
               schema:
@@ -2704,6 +2833,7 @@ paths:
       description: |
         Altera o status do pagamento de `pendente` para `recebido`.
         Se `data_pagamento` não for fornecida no body, assume a data de hoje.
+        `payment_method` é obrigatório (400), salvo se o Receipt já tiver um.
         Retorna 400 se o pagamento já estiver `recebido`.
       operationId: confirmarPagamento
       requestBody:
@@ -2729,6 +2859,12 @@ paths:
           description: Não autenticado
         "404":
           description: Pagamento não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: "Sale CANCELED: recebimentos bloqueados"
           content:
             application/json:
               schema:
@@ -3412,12 +3548,58 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/finance/summary:
+    get:
+      tags:
+        - Financeiro
+      summary: Painel financeiro (entra × sai) de um período
+      description: |
+        AYD-004. `sales` = visão por competência (Sales com `data_venda` no período, não CANCELED);
+        `cash` = movimento datado no período (Receipts recebidos × pagamentos a Suppliers);
+        `balances` = saldos em aberto hoje (ignoram o período). Default: do 1º dia do mês corrente até hoje.
+      operationId: getFinanceSummary
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Painel financeiro
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinanceSummaryResponse"
+        "400":
+          description: "Data inválida ou from > to"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/dashboard/notificacoes:
     get:
       tags:
         - Dashboard
       summary: Lista notificações não lidas
-      description: "Retorna até 50 notificações não lidas. Pagamentos vencidos aparecem primeiro."
+      description: |
+        Retorna até 50 notificações não lidas. Pagamentos vencidos aparecem primeiro.
+        Antes de ler, a API executa `gerar_notificacoes_pagamentos()` (idempotente; preserva
+        `lida`) — sem `pg_cron` (AYD-004). Se a geração falhar, responde 500.
       operationId: getNotificacoes
       responses:
         "200":
@@ -3498,7 +3680,8 @@ paths:
       summary: Dispara a geração de notificações de pagamentos
       description: |
         Executa a função PostgreSQL `gerar_notificacoes_pagamentos()`.
-        Normalmente executada automaticamente via `pg_cron`.
+        Já é executada a cada `GET /dashboard/notificacoes` (AYD-004); este endpoint só dispara a
+        mesma geração sob demanda. A função é versionada na migração 007.
       operationId: gerarNotificacoes
       responses:
         "204":
@@ -3616,6 +3799,8 @@ tags:
     description: Compras consolidadas por Supplier e pagamento ao Supplier (AYD-002)
   - name: Stock
     description: Balance por Product, extrato e ajustes (AYD-002)
+  - name: Financeiro
+    description: Painel entra × sai por período e saldos em aberto (AYD-004)
   - name: Dashboard
     description: Indicadores financeiros e notificações
   - name: Relatórios
