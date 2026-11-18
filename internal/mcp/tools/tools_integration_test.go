@@ -32,6 +32,7 @@ type env struct {
 	pr     *oauth.Principal
 	byName map[string]toolkit.Tool
 	audit  *mcp.DBAuditor
+	skew   time.Duration // adianta o relógio da deduplicação (simula "depois de 120 s")
 }
 
 func newEnv(t *testing.T) *env {
@@ -52,22 +53,31 @@ func newEnv(t *testing.T) *env {
 	handlers.NewFinanceHandler(db).Register(mux)
 
 	audit := mcp.NewDBAuditor(db)
-	pipe, err := mcp.NewPipeline(mcp.PipelineOptions{Gateway: gateway.New(mux), Audit: audit, ValidateOutput: true}, mcp.Catalog())
+	e := &env{t: t, db: db, mux: mux, byName: map[string]toolkit.Tool{}, audit: audit}
+	deduper := mcp.NewDBDeduper(db, func() time.Time { return time.Now().Add(e.skew) })
+	pipe, err := mcp.NewPipeline(mcp.PipelineOptions{Gateway: gateway.New(mux), Audit: audit, Deduper: deduper, ValidateOutput: true}, mcp.Catalog())
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := &env{t: t, db: db, mux: mux, pipe: pipe, byName: map[string]toolkit.Tool{}, audit: audit}
+	e.pipe = pipe
 	for _, tool := range mcp.Catalog() {
 		e.byName[tool.Meta.Name] = tool
 	}
 	// A Connection precisa existir (FK da auditoria).
-	var connID string
 	db.Exec(`INSERT INTO oauth_clients(client_id, redirect_uris) VALUES ('c', '{}')`)
-	if err := db.Raw(`INSERT INTO oauth_connections(client_id, owner_uid, scopes, resource) VALUES ('c', 'u', '{read,write}', 'r') RETURNING id::text`).Scan(&connID).Error; err != nil {
-		t.Fatal(err)
-	}
-	e.pr = &oauth.Principal{ConnectionID: uuid.MustParse(connID), Scopes: []string{"read", "write"}}
+	e.pr = e.newConnection("read", "write")
 	return e
+}
+
+// newConnection cria uma Connection (FK da auditoria) e devolve o Principal correspondente.
+func (e *env) newConnection(scopes ...string) *oauth.Principal {
+	e.t.Helper()
+	var connID string
+	if err := e.db.Raw(`INSERT INTO oauth_connections(client_id, owner_uid, scopes, resource) VALUES ('c', 'u', ?, 'r') RETURNING id::text`,
+		"{"+strings.Join(scopes, ",")+"}").Scan(&connID).Error; err != nil {
+		e.t.Fatal(err)
+	}
+	return &oauth.Principal{ConnectionID: uuid.MustParse(connID), Scopes: scopes}
 }
 
 // rest chama a rota REST diretamente (para semear e para comparar paridade).
@@ -107,6 +117,17 @@ func (e *env) call(name string, args any) (map[string]any, bool) {
 	if err := json.Unmarshal(b, &out); err != nil {
 		e.t.Fatalf("structuredContent de %s: %s", name, b)
 	}
+	return out, res.IsError
+}
+
+// callRaw executa com os argumentos como texto JSON (controla a ordem das chaves) e como a
+// Connection pr.
+func (e *env) callRaw(pr *oauth.Principal, name, args string) (map[string]any, bool) {
+	e.t.Helper()
+	res := e.pipe.Call(context.Background(), e.byName[name], pr, json.RawMessage(args))
+	b, _ := json.Marshal(res.StructuredContent)
+	var out map[string]any
+	_ = json.Unmarshal(b, &out)
 	return out, res.IsError
 }
 
@@ -652,4 +673,14 @@ func TestIntegration_GatewayCannotReachOAuthRoutes(t *testing.T) {
 	if err := gw.Do(context.Background(), "GET", "/oauth/connections", nil, nil, nil); err == nil {
 		t.Error("o Gateway não pode alcançar /oauth/*")
 	}
+}
+
+func uuidNew() string { return uuid.NewString() }
+
+func sp() *time.Location {
+	loc, err := time.LoadLocation("America/Sao_Paulo")
+	if err != nil {
+		return time.FixedZone("BRT", -3*60*60)
+	}
+	return loc
 }

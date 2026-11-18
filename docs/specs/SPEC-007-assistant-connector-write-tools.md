@@ -2,7 +2,7 @@
 id: SPEC-007
 type: spec
 title: Assistant connector — ferramentas de escrita, confirmação, deduplicação e catálogo completo 1.0.0 (api)
-status: approved
+status: done
 updated: 2026-11-18
 parents: [AYD-006@context]
 related: [ADR-002@context, SPEC-006, GLO]
@@ -232,22 +232,31 @@ com erro tipado `{Status, Message}`; o mapeamento de erros HTTP → `code` já c
 
 ## Desvios / decisões
 
-_(preencher na implementação; contrato divergente volta ao AYD-006, nunca é ajustado aqui.)_
+Nenhum desvio do contrato (AYD-006 §§ 3–5). Decisões de implementação, todas dentro do contrato:
+
+- **Pontos de extensão do SPEC-006 confirmados:** `toolkit.Define`, `Meta`, `Gateway.Do` (inclui `PATCH`), `PipelineOptions.Deduper` e o scope `write` já existiam; o pipeline não mudou (o passo de dedupe e o `result` só nas `dd` já estavam lá). Novo: `internal/mcp/dedupe.go` (`DBDeduper`, relógio injetável) ligado em `cmd/server/main.go`.
+- **`toolkit.Define` ganhou opções de schema** (`MinItems`, `OutConst`, `NotZero`) para o que as tags não expressam: `items`/`sale_item_ids` ≥ 1, `cancel_sale.delivery_status` = `"CANCELED"`, `record_supplier_payment.payment_status` = `"PAID"`, `quantity ≠ 0`.
+- **`null` explícito** (§ 3.2) só em `update_sale.expected_delivery_date`/`notes` e `update_sale_item.supplier_id`, via `toolkit.Nullable[T]` (`anyOf [T, null]`); o teste do catálogo permite `null` apenas nesses três campos.
+- **Casas decimais** (dinheiro 2, quantidade 3) são conferidas na ferramenta (`INVALID_INPUT`); o schema só carrega os limites (≥ 0 / > 0), pois `multipleOf` em ponto flutuante é instável.
+- **`update_sale_item`:** `custo_unit` do PUT é o atual, salvo `unit_cost` informado; se a `origin` muda e não vem custo, `custo_unit` é omitido para a API aplicar a RN-16 (custo da última entrada). Ao trocar `supplier_id`, o `fornecedor_nome` do item acompanha o Supplier (lido por `GET /fornecedores/{id}`); `null` limpa id e nome.
+- **`record_supplier_payment`:** `to_pay` é o devolvido pela API (um pagamento `PAID` quita o acerto da Purchase, mesmo com `paid_amount` menor que o custo — regra da API, não do conector).
+- **Falha na releitura pós-escrita** vira `INTERNAL` com `call_id` (erro opaco `afterWrite`); em ferramentas `dd` a chamada fica auditada como `ERROR` (sem `result`), então uma nova tentativa do modelo não é deduplicada.
+- **Testes:** integração em `tools_write_integration_test.go` e `e2e_integration_test.go` (Connection `read` e `write`), unitários em `tools_test.go`, `pipeline_test.go` e `catalog_test.go` (golden + convenções de escrita + anotações da § 4.1).
 
 ## Checklist de entrega
 
-- [ ] SPEC-006@api entregue e mergeado (dependência)
-- [ ] 16 ferramentas de escrita registradas nos módulos, com anotações da tabela do AYD § 4.1
-- [ ] `allow_duplicate` só nas 6 ferramentas `dd`; dedupe de 120 s com JSON canônico e `deduplicated: true`
-- [ ] `result` auditado só nas `dd`; chamadas deduplicadas também auditadas
-- [ ] Scope `write` enforced em `tools/list` e `tools/call` (`FORBIDDEN`)
-- [ ] `update_sale`/`update_sale_item` parciais (GET + PUT completo)
-- [ ] Golden regenerado com 34 ferramentas, `catalog_version` 1.0.0; convenções validadas
-- [ ] Testes unitários e de integração cobrindo cada critério de aceite
-- [ ] Changelog e `CLAUDE.md` atualizados; nenhuma rota REST nem migração alteradas
+- [x] SPEC-006@api entregue e mergeado (dependência)
+- [x] 16 ferramentas de escrita registradas nos módulos, com anotações da tabela do AYD § 4.1
+- [x] `allow_duplicate` só nas 6 ferramentas `dd`; dedupe de 120 s com JSON canônico e `deduplicated: true`
+- [x] `result` auditado só nas `dd`; chamadas deduplicadas também auditadas
+- [x] Scope `write` enforced em `tools/list` e `tools/call` (`FORBIDDEN`)
+- [x] `update_sale`/`update_sale_item` parciais (GET + PUT completo)
+- [x] Golden regenerado com 34 ferramentas, `catalog_version` 1.0.0; convenções validadas
+- [x] Testes unitários e de integração cobrindo cada critério de aceite
+- [x] Changelog e `CLAUDE.md` atualizados; nenhuma rota REST nem migração alteradas
 
 ## Notas de integração com a SPEC-006 (implementada)
 - Funções de módulo por domínio em `internal/mcp/tools` (`CatalogTools()`, `SalesTools()`, …), concatenadas em `registry.go`; núcleo em `internal/mcp/toolkit`.
 - Deduplicação: implementar `mcp.Deduper` (`Lookup(ctx, connID, tool, argsHash)`) e passar em `PipelineOptions.Deduper`; o pipeline já o chama.
 - Scope `write` já é exigido pelo pipeline para `ReadOnly:false`.
-- Trocar `CatalogVersion` de `1.0.0-rc.1` para `1.0.0` ao completar as 34 ferramentas.
+- `CatalogVersion` agora é `1.0.0` (34 ferramentas).

@@ -69,7 +69,7 @@ func main() {
 		mcpHandler, err := mcp.NewHandler(mcp.Options{
 			Config:   mcpCfg,
 			Verifier: oauthServer,
-			Pipeline: mcp.PipelineOptions{Gateway: gateway.New(apiMux), Audit: mcp.NewDBAuditor(db)},
+			Pipeline: mcp.PipelineOptions{Gateway: gateway.New(apiMux), Audit: mcp.NewDBAuditor(db), Deduper: mcp.NewDBDeduper(db, nil)},
 		})
 		if err != nil {
 			log.Fatalf("Assistant connector: %v", err)

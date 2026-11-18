@@ -7,8 +7,8 @@ import (
 	"github.com/silvioubaldino/sales-backend/internal/mcp/toolkit"
 )
 
-// StockTools: Stock (AYD-006 §4.1 — módulo Stock).
-func StockTools() []toolkit.Tool { return []toolkit.Tool{getStockBalance} }
+// StockTools: Stock, leitura e escrita (AYD-006 §4.1 — módulo Stock).
+func StockTools() []toolkit.Tool { return []toolkit.Tool{getStockBalance, createStockAdjustment} }
 
 type GetStockBalanceIn struct {
 	ProductID    UUID   `json:"product_id,omitempty" jsonschema:"id do produto: devolve o saldo dele com o extrato de movimentos"`
@@ -58,3 +58,63 @@ var getStockBalance = toolkit.Define(toolkit.Meta{
 	p := toolkit.Paginate(rows, in.Page)
 	return GetStockBalanceOut{Items: &p.Items, Total: &p.Total, Offset: &p.Offset, HasMore: &p.HasMore}, nil
 })
+
+// --- create_stock_adjustment (W · dd) ---
+
+type CreateStockAdjustmentIn struct {
+	ProductID  UUID                          `json:"product_id" jsonschema:"id do produto (obtenha com search_products)"`
+	Quantity   toolkit.SignedQty             `json:"quantity" jsonschema:"quantidade do ajuste, com sinal (+ soma, - subtrai); não pode ser 0"`
+	Reason     toolkit.StockAdjustmentReason `json:"reason" jsonschema:"motivo: INITIAL (carga inicial), COUNT (contagem) ou OTHER (outro)"`
+	UnitCost   *toolkit.Money                `json:"unit_cost,omitempty" jsonschema:"custo unitário em BRL (opcional)"`
+	AdjustedAt Date                          `json:"adjusted_at,omitempty" jsonschema:"data do ajuste (padrão: hoje em São Paulo)"`
+	Notes      string                        `json:"notes,omitempty" jsonschema:"observações"`
+	toolkit.Dedupable
+}
+
+type StockAdjustment struct {
+	ID         UUID                          `json:"id"`
+	ProductID  UUID                          `json:"product_id"`
+	Quantity   float64                       `json:"quantity"`
+	UnitCost   *float64                      `json:"unit_cost,omitempty"`
+	Reason     toolkit.StockAdjustmentReason `json:"reason"`
+	AdjustedAt Date                          `json:"adjusted_at"`
+	Notes      *string                       `json:"notes,omitempty"`
+}
+
+type CreateStockAdjustmentOut struct {
+	Adjustment   StockAdjustment `json:"adjustment"`
+	Balance      StockBalanceRow `json:"balance"`
+	Warnings     []string        `json:"warnings"`
+	Deduplicated bool            `json:"deduplicated,omitempty"`
+}
+
+var createStockAdjustment = toolkit.Define(toolkit.Meta{
+	Name:  "create_stock_adjustment",
+	Title: "Ajustar estoque",
+	Description: "Registra um Stock adjustment (ajuste de estoque) de um Product (produto): quantidade com sinal " +
+		"(+ soma, - subtrai), motivo (INITIAL carga inicial, COUNT contagem, OTHER outro), custo unitário " +
+		"opcional e data (padrão: hoje). Use para carga inicial ou para corrigir o saldo após uma contagem. " +
+		"Pré-requisito: product_id de search_products. Devolve o ajuste e o novo Balance (saldo). Ajuste é " +
+		"imutável: erro se corrige com outro ajuste. Não registra compras nem vendas.",
+	Dedupe: true,
+}, func(ctx context.Context, gw toolkit.Gateway, in CreateStockAdjustmentIn) (CreateStockAdjustmentOut, error) {
+	if err := checkQty("quantity", float64(in.Quantity)); err != nil {
+		return CreateStockAdjustmentOut{}, err
+	}
+	if err := checkMoneyPtr("unit_cost", (*float64)(in.UnitCost)); err != nil {
+		return CreateStockAdjustmentOut{}, err
+	}
+	a, err := send[StockAdjustment](ctx, gw, "POST", "/stock/adjustments", map[string]any{
+		"product_id": in.ProductID, "quantity": in.Quantity, "unit_cost": in.UnitCost, "reason": in.Reason,
+		"adjusted_at": optStr(string(in.AdjustedAt)), "notes": optStr(in.Notes),
+	})
+	if err != nil {
+		return CreateStockAdjustmentOut{}, err
+	}
+	a.Notes = opt(a.Notes)
+	b, err := get[StockBalanceRow](ctx, gw, "/stock/balance/"+pathID(string(a.ProductID)), nil)
+	if err != nil {
+		return CreateStockAdjustmentOut{}, afterWrite(err)
+	}
+	return CreateStockAdjustmentOut{Adjustment: a, Balance: b, Warnings: noWarnings()}, nil
+}, toolkit.NotZero("quantity"))

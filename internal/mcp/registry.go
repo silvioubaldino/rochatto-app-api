@@ -6,9 +6,9 @@ import (
 )
 
 // CatalogVersion é a catalog_version (SemVer, AYD-006 §3.9), publicada em serverInfo.version.
-// "-rc.1": a SPEC-006 registra só as ferramentas de leitura; a SPEC-007 completa o catálogo
-// 1.0.0 (escrita + deduplicação) e troca esta constante por "1.0.0".
-const CatalogVersion = "1.0.0-rc.1"
+// 1.0.0: catálogo completo — 34 ferramentas (18 de leitura da SPEC-006 + 16 de escrita da
+// SPEC-007, com deduplicação). Mudar o catálogo muda esta versão (§3.9) e o golden.
+const CatalogVersion = "1.0.0"
 
 // Catalog concatena os módulos de ferramentas (regra 4 do AYD: o registro só concatena).
 // Uma feature nova declara a ferramenta no módulo do seu domínio; módulo novo entra aqui.

@@ -2,15 +2,19 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"slices"
 
 	"github.com/silvioubaldino/sales-backend/internal/mcp/toolkit"
 )
 
-// ProcurementTools: Purchases (AYD-006 §4.1 — módulo Procurement).
+// ProcurementTools: Purchases, leitura e escrita (AYD-006 §4.1 — módulo Procurement).
 func ProcurementTools() []toolkit.Tool {
-	return []toolkit.Tool{listPendingPurchaseItems, listPurchases, getPurchase}
+	return []toolkit.Tool{
+		listPendingPurchaseItems, listPurchases, getPurchase,
+		createPurchase, addSaleItemsToPurchase, setPurchaseStatus, recordSupplierPayment,
+	}
 }
 
 // --- list_pending_purchase_items ---
@@ -159,6 +163,12 @@ var getPurchase = toolkit.Define(toolkit.Meta{
 	if err != nil {
 		return GetPurchaseOut{}, err
 	}
+	p := r.toEN()
+	return GetPurchaseOut{Purchase: p}, nil
+})
+
+// toEN traduz o PurchaseDetail do REST (sale_items com campos PT) para o contrato EN (§4.2/§5).
+func (r restPurchaseDetail) toEN() PurchaseDetail {
 	p := PurchaseDetail{PurchaseSummary: r.PurchaseSummary.normalized(), SaleItems: make([]PurchaseSaleItem, 0, len(r.SaleItems)), Items: r.Items}
 	for _, i := range r.SaleItems {
 		p.SaleItems = append(p.SaleItems, PurchaseSaleItem{
@@ -169,5 +179,184 @@ var getPurchase = toolkit.Define(toolkit.Meta{
 	if p.Items == nil {
 		p.Items = []PurchaseLine{}
 	}
-	return GetPurchaseOut{Purchase: p}, nil
+	return p
+}
+
+// --- create_purchase (W · dd) ---
+
+type PurchaseLineIn struct {
+	ProductID UUID          `json:"product_id" jsonschema:"id do produto (obtenha com search_products)"`
+	Quantity  toolkit.Qty   `json:"quantity" jsonschema:"quantidade comprada"`
+	UnitCost  toolkit.Money `json:"unit_cost" jsonschema:"custo unitário em BRL"`
+}
+
+type CreatePurchaseIn struct {
+	Kind         toolkit.PurchaseKind `json:"kind" jsonschema:"MADE_TO_ORDER (atende itens de venda sob encomenda) ou STOCK_REPLENISHMENT (repor estoque)"`
+	SupplierID   UUID                 `json:"supplier_id" jsonschema:"id do fornecedor (obtenha com search_suppliers)"`
+	ExpectedDate Date                 `json:"expected_date,omitempty" jsonschema:"data prevista de entrega pelo fornecedor"`
+	Notes        string               `json:"notes,omitempty" jsonschema:"observações"`
+	SaleItemIDs  []UUID               `json:"sale_item_ids,omitempty" jsonschema:"só MADE_TO_ORDER: ids dos itens de venda a comprar (obtenha com list_pending_purchase_items)"`
+	Items        []PurchaseLineIn     `json:"items,omitempty" jsonschema:"só STOCK_REPLENISHMENT: linhas de reposição"`
+	toolkit.Dedupable
+}
+
+type PurchaseOut struct {
+	Purchase PurchaseDetail `json:"purchase"`
+	Warnings []string       `json:"warnings"`
+}
+
+type CreatePurchaseOut struct {
+	Purchase     PurchaseDetail `json:"purchase"`
+	Warnings     []string       `json:"warnings"`
+	Deduplicated bool           `json:"deduplicated,omitempty"`
+}
+
+var createPurchase = toolkit.Define(toolkit.Meta{
+	Name:  "create_purchase",
+	Title: "Criar compra",
+	Description: "Cria uma Purchase (compra) OPEN (aberta) a um Supplier (fornecedor). MADE_TO_ORDER (sob " +
+		"encomenda) agrupa itens de venda pendentes (sale_item_ids, de list_pending_purchase_items) de um mesmo " +
+		"fornecedor; STOCK_REPLENISHMENT (reposição) leva linhas items (produto, quantidade, custo) e, quando " +
+		"recebida, gera entrada no estoque. Use quando o dono for comprar. Pré-requisito: supplier_id " +
+		"(search_suppliers). Só um dos dois campos, conforme o tipo. Não registra pagamento ao fornecedor.",
+	Dedupe: true,
+}, func(ctx context.Context, gw toolkit.Gateway, in CreatePurchaseIn) (CreatePurchaseOut, error) {
+	lines := make([]map[string]any, 0, len(in.Items))
+	for i, l := range in.Items {
+		if err := checkQty(fmt.Sprintf("items[%d].quantity", i), float64(l.Quantity)); err != nil {
+			return CreatePurchaseOut{}, err
+		}
+		if err := checkMoney(fmt.Sprintf("items[%d].unit_cost", i), float64(l.UnitCost)); err != nil {
+			return CreatePurchaseOut{}, err
+		}
+		lines = append(lines, map[string]any{"product_id": l.ProductID, "quantity": l.Quantity, "unit_cost": l.UnitCost})
+	}
+	body := map[string]any{
+		"kind": in.Kind, "supplier_id": in.SupplierID, "expected_date": optStr(string(in.ExpectedDate)), "notes": optStr(in.Notes),
+	}
+	if len(in.SaleItemIDs) > 0 {
+		body["sale_item_ids"] = in.SaleItemIDs
+	}
+	if len(in.Items) > 0 {
+		body["items"] = lines
+	}
+	r, err := send[restPurchaseDetail](ctx, gw, "POST", "/purchases", body)
+	if err != nil {
+		return CreatePurchaseOut{}, err
+	}
+	return CreatePurchaseOut{Purchase: r.toEN(), Warnings: noWarnings()}, nil
 })
+
+// --- add_sale_items_to_purchase (W) ---
+
+type AddSaleItemsToPurchaseIn struct {
+	PurchaseID  UUID   `json:"purchase_id" jsonschema:"id da compra MADE_TO_ORDER aberta (obtenha com list_purchases)"`
+	SaleItemIDs []UUID `json:"sale_item_ids" jsonschema:"ids dos itens de venda a incluir (obtenha com list_pending_purchase_items); pelo menos 1"`
+}
+
+var addSaleItemsToPurchase = toolkit.Define(toolkit.Meta{
+	Name:  "add_sale_items_to_purchase",
+	Title: "Incluir itens na compra",
+	Description: "Inclui itens de venda pendentes (sob encomenda) numa Purchase (compra) MADE_TO_ORDER ainda OPEN " +
+		"(aberta). Use para acrescentar à compra de um fornecedor itens que entraram na fila depois. " +
+		"Pré-requisitos: purchase_id (list_purchases) e sale_item_ids (list_pending_purchase_items), todos do " +
+		"mesmo fornecedor da compra. Devolve a compra atualizada. Não remove itens nem altera compra pedida " +
+		"ou recebida.",
+}, func(ctx context.Context, gw toolkit.Gateway, in AddSaleItemsToPurchaseIn) (PurchaseOut, error) {
+	r, err := send[restPurchaseDetail](ctx, gw, "POST", "/purchases/"+pathID(string(in.PurchaseID))+"/sale-items",
+		map[string]any{"sale_item_ids": in.SaleItemIDs})
+	if err != nil {
+		return PurchaseOut{}, err
+	}
+	return PurchaseOut{Purchase: r.toEN(), Warnings: noWarnings()}, nil
+}, toolkit.MinItems("sale_item_ids", 1))
+
+// --- set_purchase_status (W · I) ---
+
+type SetPurchaseStatusIn struct {
+	PurchaseID UUID                   `json:"purchase_id" jsonschema:"id da compra (obtenha com list_purchases)"`
+	Status     toolkit.PurchaseStatus `json:"status" jsonschema:"OPEN (aberta), ORDERED (pedida) ou RECEIVED (recebida)"`
+}
+
+type SetPurchaseStatusOut struct {
+	PurchaseID UUID                   `json:"purchase_id"`
+	Status     toolkit.PurchaseStatus `json:"status"`
+	OrderedAt  *Date                  `json:"ordered_at,omitempty"`
+	ReceivedAt *Date                  `json:"received_at,omitempty"`
+	Warnings   []string               `json:"warnings"`
+}
+
+var setPurchaseStatus = toolkit.Define(toolkit.Meta{
+	Name:  "set_purchase_status",
+	Title: "Atualizar status da compra",
+	Description: "Atualiza o status de uma Purchase (compra): OPEN (aberta), ORDERED (pedida ao fornecedor) ou " +
+		"RECEIVED (recebida). Use quando o pedido for feito ao Supplier (fornecedor) ou a mercadoria chegar; " +
+		"as datas de pedido e recebimento são gravadas. Compra de reposição recebida gera entrada no estoque. " +
+		"Pré-requisito: purchase_id de list_purchases. As transições seguem as regras da API. Não registra o " +
+		"pagamento ao fornecedor (use record_supplier_payment).",
+	Idempotent: true,
+}, func(ctx context.Context, gw toolkit.Gateway, in SetPurchaseStatusIn) (SetPurchaseStatusOut, error) {
+	r, err := send[struct {
+		ID         UUID                   `json:"id"`
+		Status     toolkit.PurchaseStatus `json:"status"`
+		OrderedAt  *Date                  `json:"ordered_at"`
+		ReceivedAt *Date                  `json:"received_at"`
+	}](ctx, gw, "PATCH", "/purchases/"+pathID(string(in.PurchaseID))+"/status", map[string]any{"status": in.Status})
+	if err != nil {
+		return SetPurchaseStatusOut{}, err
+	}
+	return SetPurchaseStatusOut{PurchaseID: r.ID, Status: r.Status, OrderedAt: optDate(r.OrderedAt), ReceivedAt: optDate(r.ReceivedAt), Warnings: noWarnings()}, nil
+})
+
+// --- record_supplier_payment (W · I) ---
+
+type RecordSupplierPaymentIn struct {
+	PurchaseID UUID           `json:"purchase_id" jsonschema:"id da compra (obtenha com list_purchases)"`
+	PaidAmount *toolkit.Money `json:"paid_amount,omitempty" jsonschema:"valor pago em BRL (padrão: custo total da compra)"`
+	PaidAt     Date           `json:"paid_at,omitempty" jsonschema:"data do pagamento (padrão: hoje em São Paulo)"`
+}
+
+type RecordSupplierPaymentOut struct {
+	PurchaseID    UUID     `json:"purchase_id"`
+	PaymentStatus string   `json:"payment_status"`
+	PaidAmount    float64  `json:"paid_amount"`
+	PaidAt        Date     `json:"paid_at"`
+	ToPay         float64  `json:"to_pay"`
+	Warnings      []string `json:"warnings"`
+}
+
+var recordSupplierPayment = toolkit.Define(toolkit.Meta{
+	Name:  "record_supplier_payment",
+	Title: "Registrar pagamento ao fornecedor",
+	Description: "Registra o Supplier payment (pagamento ao fornecedor) de uma Purchase (compra): um acerto " +
+		"consolidado por compra, marcado como PAID (pago), com valor (padrão: custo total) e data (padrão: " +
+		"hoje). Use quando o dono pagar o fornecedor. Pré-requisito: purchase_id de list_purchases. Devolve o " +
+		"que ainda resta a pagar (to_pay). O frete não entra na compra. Não desfaz pagamento: isso só no app " +
+		"web.",
+	Idempotent: true,
+}, func(ctx context.Context, gw toolkit.Gateway, in RecordSupplierPaymentIn) (RecordSupplierPaymentOut, error) {
+	body := map[string]any{"payment_status": "PAID", "paid_at": optStr(string(in.PaidAt))}
+	if in.PaidAmount != nil {
+		if err := checkMoney("paid_amount", float64(*in.PaidAmount)); err != nil {
+			return RecordSupplierPaymentOut{}, err
+		}
+		body["paid_amount"] = float64(*in.PaidAmount)
+	}
+	r, err := send[struct {
+		ID         UUID     `json:"id"`
+		PaidAmount *float64 `json:"paid_amount"`
+		PaidAt     *Date    `json:"paid_at"`
+		ToPay      float64  `json:"to_pay"`
+	}](ctx, gw, "PATCH", "/purchases/"+pathID(string(in.PurchaseID))+"/payment", body)
+	if err != nil {
+		return RecordSupplierPaymentOut{}, err
+	}
+	out := RecordSupplierPaymentOut{PurchaseID: r.ID, PaymentStatus: "PAID", ToPay: r.ToPay, Warnings: noWarnings()}
+	if r.PaidAmount != nil {
+		out.PaidAmount = *r.PaidAmount
+	}
+	if r.PaidAt != nil {
+		out.PaidAt = *r.PaidAt
+	}
+	return out, nil
+}, toolkit.OutConst("payment_status", "PAID"))

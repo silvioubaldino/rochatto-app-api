@@ -3,6 +3,8 @@
 package toolkit
 
 import (
+	"bytes"
+	"encoding/json"
 	"reflect"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -17,6 +19,18 @@ type (
 	Limit  int
 	Offset int
 	Months int
+
+	// Money (BRL, ≥ 0), PosMoney (> 0), Qty (> 0) e SignedQty (≠ 0 é imposto por NotZero).
+	// O número de casas (2 e 3) é conferido pelos handlers das escritas (CheckMoney/CheckQty).
+	Money     float64
+	PosMoney  float64
+	Qty       float64
+	SignedQty float64
+
+	// Enums de entrada das escritas (subconjuntos dos enums da API).
+	SettableQuoteStatus    string // OPEN | LOST (WON só por convert)
+	SettableDeliveryStatus string // TO_DELIVER | DELIVERED (CANCELED é cancel_sale)
+	StockAdjustmentReason  string // INITIAL | COUNT | OTHER
 
 	// Enums canônicos da API (maiúsculas).
 	LeadSource            string
@@ -49,6 +63,10 @@ var Enums = map[reflect.Type][]string{
 	reflect.TypeFor[SupplierPaymentStatus](): {"PENDING", "PAID"},
 	reflect.TypeFor[AlertKind]():             {"OVERDUE", "DUE_SOON"},
 	reflect.TypeFor[MovementKind]():          {"INFLOW", "OUTFLOW", "ADJUSTMENT"},
+
+	reflect.TypeFor[SettableQuoteStatus]():    {"OPEN", "LOST"},
+	reflect.TypeFor[SettableDeliveryStatus](): {"TO_DELIVER", "DELIVERED"},
+	reflect.TypeFor[StockAdjustmentReason]():  {"INITIAL", "COUNT", "OTHER"},
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -60,8 +78,15 @@ func TypeSchemas() map[reflect.Type]*jsonschema.Schema {
 		reflect.TypeFor[Date](): {Type: "string", Pattern: `^\d{4}-\d{2}-\d{2}$`, Description: "YYYY-MM-DD"},
 		reflect.TypeFor[Limit](): {Type: "integer", Minimum: ptr(1.0), Maximum: ptr(100.0),
 			Description: "itens por página (padrão 20, máximo 100)"},
-		reflect.TypeFor[Months](): {Type: "integer", Minimum: ptr(1.0), Maximum: ptr(60.0), Description: "quantidade de meses (1 a 60; padrão 12)"},
-		reflect.TypeFor[Offset](): {Type: "integer", Minimum: ptr(0.0), Description: "quantos itens pular (padrão 0)"},
+		reflect.TypeFor[Months]():           {Type: "integer", Minimum: ptr(1.0), Maximum: ptr(60.0), Description: "quantidade de meses (1 a 60; padrão 12)"},
+		reflect.TypeFor[Money]():            {Type: "number", Minimum: ptr(0.0), Description: "valor em BRL (≥ 0, até 2 casas)"},
+		reflect.TypeFor[PosMoney]():         {Type: "number", ExclusiveMinimum: ptr(0.0), Description: "valor em BRL (> 0, até 2 casas)"},
+		reflect.TypeFor[Qty]():              {Type: "number", ExclusiveMinimum: ptr(0.0), Description: "quantidade (> 0, até 3 casas)"},
+		reflect.TypeFor[SignedQty]():        {Type: "number", Description: "quantidade com sinal (≠ 0, até 3 casas)"},
+		reflect.TypeFor[Nullable[Date]]():   nullable(&jsonschema.Schema{Type: "string", Pattern: `^\d{4}-\d{2}-\d{2}$`, Description: "YYYY-MM-DD; null limpa"}),
+		reflect.TypeFor[Nullable[string]](): nullable(&jsonschema.Schema{Type: "string", Description: "texto; null limpa"}),
+		reflect.TypeFor[Nullable[UUID]]():   nullable(&jsonschema.Schema{Type: "string", Format: "uuid", Description: "id; null limpa"}),
+		reflect.TypeFor[Offset]():           {Type: "integer", Minimum: ptr(0.0), Description: "quantos itens pular (padrão 0)"},
 	}
 	for t, vals := range Enums {
 		enum := make([]any, len(vals))
@@ -114,4 +139,32 @@ func Paginate[T any](all []T, p Page) PageOut[T] {
 	items := make([]T, 0, end-offset)
 	items = append(items, all[offset:end]...)
 	return PageOut[T]{Items: items, Total: total, Offset: offset, HasMore: end < total}
+}
+
+func nullable(s *jsonschema.Schema) *jsonschema.Schema {
+	return &jsonschema.Schema{Description: s.Description, AnyOf: []*jsonschema.Schema{s, {Type: "null"}}}
+}
+
+// Nullable é um campo opcional de entrada em que null tem significado explícito (limpar o
+// valor — §3.2): Present distingue "omitido" de enviado; Null, "enviado como null".
+type Nullable[T any] struct {
+	Present bool
+	Null    bool
+	Value   T
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (n *Nullable[T]) UnmarshalJSON(b []byte) error {
+	n.Present = true
+	if bytes.Equal(bytes.TrimSpace(b), []byte("null")) {
+		n.Null = true
+		return nil
+	}
+	return json.Unmarshal(b, &n.Value)
+}
+
+// Dedupable é incorporado nas entradas das ferramentas dedupe (§3.7). O pipeline lê o
+// argumento dos argumentos brutos; o campo existe para entrar no schema.
+type Dedupable struct {
+	AllowDuplicate bool `json:"allow_duplicate,omitempty" jsonschema:"true força a criação mesmo que o mesmo lançamento tenha acabado de ser feito (padrão false: repetições em 120 s são ignoradas)"`
 }

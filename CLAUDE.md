@@ -42,10 +42,10 @@ internal/
   dbmigrate/                → golang-migrate sobre as migrations embutidas
   models/                   → structs GORM de domínio e tipos compartilhados
   oauth/                    → servidor de autorização OAuth 2.1 do Assistant connector (discovery, DCR, authorize, consentimento, token, revoke, Connections, verificador — SPEC-006)
-  mcp/                      → servidor MCP `/mcp` (stateless): pipeline único (scope → rate limit → validação → dedupe → handler → erro → auditoria), registro por módulo, auditoria
+  mcp/                      → servidor MCP `/mcp` (stateless): pipeline único (scope → rate limit → validação → dedupe → handler → erro → auditoria), registro por módulo, auditoria, `dedupe.go` (deduplicação de criações sobre `mcp_tool_calls` — SPEC-007)
     toolkit/                → Meta + Define[In,Out] (schemas derivados dos tipos), Gateway, erros, paginação
     gateway/                → Gateway em processo para os handlers /api/v1 (mesmas regras do app)
-    tools/                  → ferramentas por domínio (catalog, crm, sales, procurement, stock, financial, analytics) + adaptadores EN↔PT
+    tools/                  → ferramentas por domínio (catalog, crm, sales, procurement, stock, financial, analytics): leitura (SPEC-006) e escrita (SPEC-007) + adaptadores EN↔PT
   testdb/                   → banco Postgres descartável por teste de integração (TEST_DATABASE_URL)
 migrations/                 → NNN_nome.{up,down}.sql + embed.go (package migrations)
 docs/ops/                   → operação: baseline de migrations, backup, nota de remoção do pg_cron
@@ -109,7 +109,7 @@ Com `MCP_ENABLED=true` e `PUBLIC_BASE_URL`/`WEB_APP_URL` ausentes ou inválidas 
 
 Testes de integração: `TEST_DATABASE_URL` (banco descartável com migrations aplicadas; os testes do conector — `oauth`, `mcp`, migração 009 — criam um banco próprio por teste e exigem permissão de `CREATE DATABASE`, senão são pulados).
 
-Catálogo do Assistant connector: `internal/mcp/testdata/catalog.golden.json` é contrato — mudou ferramenta,
+Catálogo do Assistant connector (`catalog_version` **1.0.0** = `CatalogVersion` em `internal/mcp/registry.go`, publicada em `serverInfo.version`; 34 ferramentas: 18 de leitura + 16 de escrita; mudança de catálogo muda a versão — AYD-006 §3.9): `internal/mcp/testdata/catalog.golden.json` é contrato — mudou ferramenta,
 schema ou anotação? Atualize o AYD-006 no repo de contexto e regenere com
 `go test ./internal/mcp -run TestCatalogGolden -update` no mesmo PR.
 
@@ -141,7 +141,8 @@ go vet ./... && TEST_DATABASE_URL=$DATABASE_URL go test ./...
 | 6 | `docs/specs/SPEC-002-sale-fulfillment.md` | Atendimento da Sale: Purchase, Stock (Balance/ajustes), delivery/payment status (substitui o antigo módulo `/estoque`) |
 | 7 | `docs/specs/SPEC-004-finance.md` | Financeiro: payment method e soft-delete do Receipt, saldos da Sale, `GET /finance/summary`, alertas sem pg_cron |
 | 8 | `docs/specs/SPEC-005-dashboard.md` | Dashboard: `GET /dashboard/kpis` (ticket médio, conversão Quote → Sale, saldos), `quotes.quick_sale`, `/relatorios/vendas` com N meses exatos e `/relatorios/produtos` com `from`/`to` e `unit` |
-| 9 | `docs/specs/SPEC-006-assistant-connector-platform.md` | Assistant connector: migração 009, OAuth 2.1, `/mcp`, pipeline/extensão e ferramentas de leitura (a escrita e a deduplicação vêm na SPEC-007) |
+| 9 | `docs/specs/SPEC-006-assistant-connector-platform.md` | Assistant connector: migração 009, OAuth 2.1, `/mcp`, pipeline/extensão e ferramentas de leitura |
+| 10 | `docs/specs/SPEC-007-assistant-connector-write-tools.md` | Assistant connector: 16 ferramentas de escrita, deduplicação de criações (120 s, `allow_duplicate`), scope `write` e catálogo completo `1.0.0` (34 ferramentas) |
 
 ## Deploy (Google Cloud Run — free tier)
 
