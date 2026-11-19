@@ -79,7 +79,7 @@ func TestIntegration_Migration007Finance(t *testing.T) {
 	exec(`INSERT INTO vendas (id, cliente_id, frete_valor, frete_pago) VALUES ($1, $2, 30, 10)`, sale, cust)
 	exec(`INSERT INTO itens_venda (venda_id, produto_nome, quantidade, preco_venda_unit, custo_unit) VALUES ($1, 'x', 1, 100, 60)`, sale)
 	exec(`INSERT INTO pagamentos_cliente (id, venda_id, valor, status, data_pagamento) VALUES ($1, $2, 40, 'recebido', '2026-01-01')`, recv, sale)
-	exec(`INSERT INTO pagamentos_cliente (id, venda_id, valor, status, data_agendada) VALUES ($1, $2, 60, 'pendente', CURRENT_DATE - 1)`, pend, sale)
+	exec(`INSERT INTO pagamentos_cliente (id, venda_id, valor, status, data_agendada) VALUES ($1, $2, 60, 'pendente', (now() AT TIME ZONE 'America/Sao_Paulo')::date - 1)`, pend, sale)
 
 	// Act: up.
 	if err := m.M.Migrate(7); err != nil {

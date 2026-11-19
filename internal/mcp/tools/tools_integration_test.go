@@ -154,7 +154,16 @@ func (e *env) fail(name string, args any, code, msg string) {
 func items(out map[string]any) []any { return out["items"].([]any) }
 func obj(v any) map[string]any       { return v.(map[string]any) }
 
-func day(offset int) string { return time.Now().AddDate(0, 0, offset).Format("2006-01-02") }
+func nowSP() time.Time {
+	loc, err := time.LoadLocation("America/Sao_Paulo")
+	if err != nil {
+		return time.Now()
+	}
+	return time.Now().In(loc)
+}
+
+// day devolve a data no fuso do negócio, como o app (todaySP).
+func day(offset int) string { return nowSP().AddDate(0, 0, offset).Format("2006-01-02") }
 
 type seed struct {
 	catID, partnerID, joao, joaoPereira, maria       string
@@ -625,7 +634,7 @@ func TestIntegration_FinanceAndAnalyticsReadTools(t *testing.T) {
 		m := e.ok("get_monthly_sales", map[string]any{"months": 3})
 		ms := items(m)
 		cur := obj(ms[2])
-		if len(ms) != 3 || cur["month"] != time.Now().Format("2006-01") || cur["sales_count"] != float64(2) || cur["revenue"] != float64(4800) {
+		if len(ms) != 3 || cur["month"] != nowSP().Format("2006-01") || cur["sales_count"] != float64(2) || cur["revenue"] != float64(4800) {
 			t.Errorf("monthly = %v", ms)
 		}
 		if obj(ms[0])["sales_count"] != float64(0) || obj(ms[0])["revenue"] != float64(0) {
