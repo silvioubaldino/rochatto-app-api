@@ -586,10 +586,12 @@ func accountKinds(tx *gorm.DB, ids []uuid.UUID, rows map[uuid.UUID]obligationRow
 		ObligationID uuid.UUID `gorm:"column:obligation_id"`
 		Type         string    `gorm:"column:type"`
 	}
-	if err := tx.Raw(`SELECT o.id AS obligation_id, c.type
+	if err := tx.Raw(`SELECT o.id AS obligation_id,
+			CASE WHEN c.type = 'SALE_COST' THEN 'SALE_COST_' || sc.kind::text ELSE c.type END AS type
 		FROM vw_obligations o
 		JOIN vw_obligation_components c ON c.origin_type = o.origin_type AND c.origin_id = o.origin_id
 		  AND c.direction = o.direction AND c.counterparty_id IS NOT DISTINCT FROM o.counterparty_id
+		LEFT JOIN sale_costs sc ON c.type = 'SALE_COST' AND sc.id = c.component_id
 		WHERE o.id IN ?`, ids).Scan(&comps).Error; err != nil {
 		return nil, err
 	}

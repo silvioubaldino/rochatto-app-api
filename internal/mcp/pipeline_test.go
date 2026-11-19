@@ -324,12 +324,12 @@ func TestPipeline_ReadScopeBlocksAllRealWriteTools(t *testing.T) {
 			t.Errorf("auditoria de %s = %+v", tool.Meta.Name, e)
 		}
 	}
-	if writes != 17 || calls != 0 {
-		t.Errorf("escritas=%d, chamadas ao Gateway/Deduper=%d (quero 17 e 0)", writes, calls)
+	if writes != 19 || calls != 0 {
+		t.Errorf("escritas=%d, chamadas ao Gateway/Deduper=%d (quero 19 e 0)", writes, calls)
 	}
 }
 
-// Só as ferramentas dedupe do catálogo real (8: 6 criações + settle_obligations e record_expense)
+// Só as ferramentas dedupe do catálogo real (9: 7 criações + settle_obligations e record_expense)
 // aceitam allow_duplicate e gravam result; o hash ignora allow_duplicate.
 func TestPipeline_RealDedupeToolsAreTheCreations(t *testing.T) {
 	var dd []string
@@ -338,14 +338,14 @@ func TestPipeline_RealDedupeToolsAreTheCreations(t *testing.T) {
 			dd = append(dd, tool.Meta.Name)
 		}
 	}
-	want := "create_customer create_quote create_quick_sale create_purchase add_purchase_charge create_stock_adjustment settle_obligations record_expense"
+	want := "create_customer create_quote create_quick_sale add_sale_charge create_purchase add_purchase_charge create_stock_adjustment settle_obligations record_expense"
 	got := strings.Join(dd, " ")
 	for _, n := range strings.Fields(want) {
 		if !strings.Contains(got, n) {
 			t.Errorf("%s deveria ser dedupe (got %s)", n, got)
 		}
 	}
-	if len(dd) != 8 {
-		t.Errorf("dedupe = %v, quero 8", dd)
+	if len(dd) != 9 {
+		t.Errorf("dedupe = %v, quero 9", dd)
 	}
 }

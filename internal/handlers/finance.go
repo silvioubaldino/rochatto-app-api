@@ -38,6 +38,7 @@ type financeSales struct {
 	Cost       float64 `json:"cost" gorm:"column:cost"`
 	Freight    float64 `json:"freight" gorm:"column:freight"`
 	Commission float64 `json:"commission" gorm:"column:commission"`
+	OtherCosts float64 `json:"other_costs" gorm:"column:other_costs"`
 	Profit     float64 `json:"profit" gorm:"column:profit"`
 	Received   float64 `json:"received" gorm:"column:received"`
 	Receivable float64 `json:"receivable" gorm:"column:receivable"`
@@ -48,8 +49,8 @@ type financeSales struct {
 type financeBalances struct {
 	Receivable         float64 `json:"receivable"`
 	PayableToSuppliers float64 `json:"payable_to_suppliers"`
-	FreightPayable     float64 `json:"freight_payable"`
-	CommissionPayable  float64 `json:"commission_payable"`
+	FreightPayable     float64 `json:"freight_payable"`    // custos da venda a pagar que não são de Partner (frete, instalador, outros)
+	CommissionPayable  float64 `json:"commission_payable"` // custos da venda a pagar a Partner (comissão)
 }
 
 type financeResult struct {
@@ -127,8 +128,9 @@ func querySalesBlock(db *gorm.DB, from, to time.Time, out *financeSales) error {
 			COUNT(*)                                         AS count,
 			ROUND(COALESCE(SUM(vr.total_venda), 0), 2)       AS revenue,
 			ROUND(COALESCE(SUM(vr.total_custo), 0), 2)       AS cost,
-			ROUND(COALESCE(SUM(vr.frete_valor), 0), 2)       AS freight,
-			ROUND(COALESCE(SUM(vr.comissao_valor), 0), 2)    AS commission,
+			ROUND(COALESCE(SUM(vr.costs_freight), 0), 2)    AS freight,
+			ROUND(COALESCE(SUM(vr.costs_commission), 0), 2) AS commission,
+			ROUND(COALESCE(SUM(vr.costs_other), 0), 2)      AS other_costs,
 			ROUND(COALESCE(SUM(vr.lucro), 0), 2)             AS profit,
 			ROUND(COALESCE(SUM(vr.total_recebido), 0), 2)    AS received,
 			ROUND(COALESCE(SUM(vr.receivable), 0), 2)        AS receivable
@@ -154,14 +156,14 @@ func queryBalances(db *gorm.DB, out *financeBalances) (string, error) {
 		return "balances.payable_to_suppliers", err
 	}
 	if err := db.Raw(`
-		SELECT ROUND(COALESCE(SUM(vr.freight_payable), 0), 2)
-		FROM vw_vendas_resumo vr WHERE vr.delivery_status <> 'CANCELED'
+		SELECT ROUND(COALESCE(SUM(o.open) FILTER (WHERE o.counterparty_type IS DISTINCT FROM 'PARTNER'), 0), 2)
+		FROM vw_obligations o WHERE o.direction = 'PAYABLE' AND o.sale_id IS NOT NULL
 	`).Scan(&out.FreightPayable).Error; err != nil {
 		return "balances.freight_payable", err
 	}
 	if err := db.Raw(`
-		SELECT ROUND(COALESCE(SUM(vr.commission_payable), 0), 2)
-		FROM vw_vendas_resumo vr WHERE vr.delivery_status <> 'CANCELED'
+		SELECT ROUND(COALESCE(SUM(o.open) FILTER (WHERE o.counterparty_type = 'PARTNER'), 0), 2)
+		FROM vw_obligations o WHERE o.direction = 'PAYABLE' AND o.sale_id IS NOT NULL
 	`).Scan(&out.CommissionPayable).Error; err != nil {
 		return "balances.commission_payable", err
 	}

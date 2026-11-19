@@ -176,64 +176,103 @@ func TestIntegration_WriteDedupeLimits(t *testing.T) {
 func TestIntegration_WriteSalePartialUpdate(t *testing.T) {
 	e := newEnv(t)
 	f := e.writeFixture()
-	e.mustREST("PUT", "/vendas/"+f.sale, map[string]any{"frete_valor": 300, "observacoes": "x", "data_entrega_prevista": "2026-12-20", "comissao_valor": 40}, 200)
+	e.mustREST("PUT", "/vendas/"+f.sale, map[string]any{"observacoes": "x", "data_entrega_prevista": "2026-12-20"}, 200)
 
-	// Critério de aceite: só o frete pago muda — vira quitação da conta a pagar do frete (AYD-007).
-	out := e.ok("update_sale", map[string]any{"sale_id": f.sale, "freight_paid": 300})
+	// Só o prazo muda; o que não foi enviado permanece.
+	out := e.ok("update_sale", map[string]any{"sale_id": f.sale, "expected_delivery_date": "2026-12-25"})
 	s := obj(out["sale"])
-	if s["freight_paid"] != float64(300) || s["freight_amount"] != float64(300) || s["notes"] != "x" || s["expected_delivery_date"] != "2026-12-20" ||
-		s["commission_amount"] != float64(40) || s["freight_payable"] != float64(0) || s["commission_paid"] != false {
+	if s["notes"] != "x" || s["expected_delivery_date"] != "2026-12-25" {
 		t.Fatalf("update_sale = %v", s)
 	}
-	got := e.mustREST("GET", "/vendas/"+f.sale, nil, 200)
-	if got["freight_payable"] != float64(0) || got["commission_payable"] != float64(40) || got["frete_valor"] != float64(300) || got["observacoes"] != "x" {
-		t.Errorf("REST = %v", got)
-	}
-	if _, has := got["frete_pago"]; has {
-		t.Error("frete_pago não existe mais na API")
-	}
-	var freightMovements int64
-	e.db.Raw(`SELECT COUNT(*) FROM financial_movements m JOIN settlements s ON s.movement_id = m.id AND s.deleted_at IS NULL
-		JOIN obligations o ON o.id = s.obligation_id WHERE o.sale_id = ? AND m.category = 'FREIGHT' AND m.amount = -300`, f.sale).Scan(&freightMovements)
-	if freightMovements != 1 {
-		t.Errorf("o frete pago deveria ser 1 movimentação FREIGHT de −300 quitando a conta: %d", freightMovements)
-	}
-	// Repetir o mesmo valor não paga de novo (idempotente).
-	e.ok("update_sale", map[string]any{"sale_id": f.sale, "freight_paid": 300})
-	e.db.Raw(`SELECT COUNT(*) FROM financial_movements m JOIN settlements s ON s.movement_id = m.id JOIN obligations o ON o.id = s.obligation_id WHERE o.sale_id = ? AND m.category = 'FREIGHT'`, f.sale).Scan(&freightMovements)
-	if freightMovements != 1 {
-		t.Errorf("update_sale deveria ser idempotente: %d movimentações de frete", freightMovements)
-	}
-
-	// commission_paid true quita a comissão (movimentação COMMISSION); false não desfaz pagamento.
-	if c := obj(e.ok("update_sale", map[string]any{"sale_id": f.sale, "commission_paid": true})["sale"]); c["commission_paid"] != true || c["freight_paid"] != float64(300) {
-		t.Errorf("commission_paid = %v", c)
-	}
-	if got = e.mustREST("GET", "/vendas/"+f.sale, nil, 200); got["commission_payable"] != float64(0) || got["freight_payable"] != float64(0) {
-		t.Errorf("commission_paid REST = %v", got)
-	}
-	e.fail("update_sale", map[string]any{"sale_id": f.sale, "commission_paid": false}, "INVALID_INPUT", "desfazer")
-	e.fail("update_sale", map[string]any{"sale_id": f.sale, "freight_paid": 100}, "INVALID_INPUT", "reduzir")
-	e.ok("update_sale", map[string]any{"sale_id": f.sale, "freight_amount": 450})
-	if got = e.mustREST("GET", "/vendas/"+f.sale, nil, 200); got["frete_valor"] != float64(450) || got["freight_payable"] != float64(150) {
-		t.Errorf("freight_amount = %v", got)
+	for _, gone := range []string{"freight_amount", "freight_paid", "freight_payable", "commission_amount", "commission_paid"} {
+		if _, has := s[gone]; has {
+			t.Errorf("update_sale não expõe mais %s", gone)
+		}
 	}
 	e.ok("update_sale", map[string]any{"sale_id": f.sale, "expected_delivery_date": nil, "notes": nil})
-	if got = e.mustREST("GET", "/vendas/"+f.sale, nil, 200); got["data_entrega_prevista"] != nil || got["observacoes"] != nil || got["frete_valor"] != float64(450) {
+	if got := e.mustREST("GET", "/vendas/"+f.sale, nil, 200); got["data_entrega_prevista"] != nil || got["observacoes"] != nil {
 		t.Errorf("null limpa = %v", got)
 	}
 	e.ok("update_sale", map[string]any{"sale_id": f.sale, "expected_delivery_date": "2027-01-10", "notes": "novo"})
-	if got = e.mustREST("GET", "/vendas/"+f.sale, nil, 200); got["data_entrega_prevista"] != "2027-01-10" || got["observacoes"] != "novo" {
+	if got := e.mustREST("GET", "/vendas/"+f.sale, nil, 200); got["data_entrega_prevista"] != "2027-01-10" || got["observacoes"] != "novo" {
 		t.Errorf("novos = %v", got)
 	}
 
-	// Validações: ≥ 1 campo; regra da API (frete pago > frete); campo fora do schema; null onde não pode.
+	// Validações: ≥ 1 campo; campos removidos/fora do schema; venda inexistente.
 	e.fail("update_sale", map[string]any{"sale_id": f.sale}, "INVALID_INPUT", "ao menos um campo")
-	e.fail("update_sale", map[string]any{"sale_id": f.sale, "freight_paid": 9999}, "INVALID_INPUT", "frete_pago não pode ser maior")
-	e.fail("update_sale", map[string]any{"sale_id": f.sale, "freight_amount": nil}, "INVALID_INPUT", "")
-	e.fail("update_sale", map[string]any{"sale_id": f.sale, "freight_amount": -1}, "INVALID_INPUT", "")
+	e.fail("update_sale", map[string]any{"sale_id": f.sale, "freight_amount": 10}, "INVALID_INPUT", "")
+	e.fail("update_sale", map[string]any{"sale_id": f.sale, "commission_paid": true}, "INVALID_INPUT", "")
 	e.fail("update_sale", map[string]any{"sale_id": f.sale, "customer_id": uuidNew()}, "INVALID_INPUT", "")
 	e.fail("update_sale", map[string]any{"sale_id": uuidNew(), "notes": "x"}, "NOT_FOUND", "venda não encontrada")
+}
+
+func TestIntegration_WriteSaleComposition(t *testing.T) {
+	e := newEnv(t)
+	f := e.writeFixture() // venda de 4 × 500 = 2000, custo 4 × 300
+	driver := e.mustREST("POST", "/fornecedores", map[string]any{"nome": "Motorista X", "kind": "TRANSPORT"}, 201)["id"].(string)
+	partner := e.mustREST("POST", "/partners", map[string]any{"name": "Arq Ana", "type": "ARCHITECT"}, 201)["id"].(string)
+
+	// add_sale_charge: frete cobrado de 100 soma ao preço e à conta a receber; dedupe.
+	out := e.ok("add_sale_charge", map[string]any{"sale_id": f.sale, "kind": "FREIGHT", "amount": 100})
+	ch := obj(out["charge"])
+	sale := obj(out["sale"])
+	comp := obj(sale["composition"])
+	if ch["kind"] != "FREIGHT" || ch["amount"] != float64(100) || ch["obligation_id"] == nil ||
+		sale["total"] != float64(2100) || sale["charges_total"] != float64(100) || comp["price_total"] != float64(2100) ||
+		comp["items_total"] != float64(2000) || len(comp["charges"].([]any)) != 1 || sale["receivable"] != float64(2100) {
+		t.Fatalf("add_sale_charge = %v", out)
+	}
+	if dup := e.ok("add_sale_charge", map[string]any{"sale_id": f.sale, "kind": "FREIGHT", "amount": 100}); dup["deduplicated"] != true {
+		t.Errorf("dedupe = %v", dup)
+	}
+
+	// set_sale_costs: frete pago 150 ao motorista e comissão 50 (padrão: Partner indicador, aqui nenhum).
+	e.mustREST("PUT", "/vendas/"+f.sale, map[string]any{"vendedor_externo_id": partner}, 200)
+	args := map[string]any{"sale_id": f.sale, "costs": []map[string]any{
+		{"kind": "FREIGHT", "amount": 150, "payee_supplier_id": driver},
+		{"kind": "COMMISSION", "amount": 50},
+	}}
+	out = e.ok("set_sale_costs", args)
+	sale = obj(out["sale"])
+	if sale["costs_total"] != float64(200) || sale["costs_open"] != float64(200) || sale["costs_paid"] != float64(0) ||
+		sale["profit"] != float64(2100-1200-200) || len(out["costs"].([]any)) != 2 || len(sale["obligations"].([]any)) != 3 {
+		t.Fatalf("set_sale_costs = %v", out)
+	}
+	comm := obj(out["costs"].([]any)[1])
+	if obj(comm["payee"])["type"] != "PARTNER" || obj(comm["payee"])["id"] != partner {
+		t.Errorf("comissão deveria ter o Partner indicador como credor: %v", comm)
+	}
+	// Repetir atualiza em vez de duplicar.
+	args["costs"].([]map[string]any)[0]["amount"] = 175
+	out = e.ok("set_sale_costs", args)
+	if n := len(obj(obj(out["sale"])["composition"])["costs"].([]any)); n != 2 || obj(out["sale"])["costs_total"] != float64(225) {
+		t.Errorf("set_sale_costs idempotente = %v", out)
+	}
+	// Validações.
+	e.fail("set_sale_costs", map[string]any{"sale_id": f.sale, "costs": []map[string]any{{"kind": "COMMISSION", "amount": 1, "payee_supplier_id": driver}}}, "INVALID_INPUT", "Partner")
+	e.fail("set_sale_costs", map[string]any{"sale_id": f.sale, "costs": []map[string]any{{"kind": "FREIGHT", "amount": 1, "payee_partner_id": partner}}}, "INVALID_INPUT", "comissão")
+	e.fail("set_sale_costs", map[string]any{"sale_id": f.sale, "costs": []map[string]any{}}, "INVALID_INPUT", "")
+	e.fail("set_sale_costs", map[string]any{"sale_id": f.sale, "costs": []map[string]any{{"kind": "FREIGHT", "amount": -1}}}, "INVALID_INPUT", "")
+
+	// get_sale traz a composição, o Profit e as contas.
+	got := obj(e.ok("get_sale", map[string]any{"sale_id": f.sale})["sale"])
+	if obj(got["composition"])["costs_total"] != float64(225) || len(got["obligations"].([]any)) != 3 {
+		t.Errorf("get_sale = %v", got)
+	}
+
+	// create_quick_sale com charges.
+	q := e.ok("create_quick_sale", map[string]any{"customer_id": f.customer, "items": []map[string]any{
+		{"product_id": f.product, "product_name": "Granito Escrita", "quantity": 1, "unit_price": 500, "unit_cost": 300}},
+		"charges": []map[string]any{{"kind": "FREIGHT", "amount": 80}}})
+	if qs := obj(q["sale"]); qs["total"] != float64(580) || len(obj(qs["composition"])["charges"].([]any)) != 1 {
+		t.Errorf("quick sale com charges = %v", q)
+	}
+	qq := obj(e.ok("create_quote", map[string]any{"customer_id": f.customer, "items": []map[string]any{
+		{"product_name": "Granito", "quantity": 1, "unit_price": 500, "unit_cost": 300}},
+		"charges": []map[string]any{{"kind": "OTHER", "amount": 20, "description": "descarga"}}})["quote"])
+	if qq["total_quote"] != float64(520) || len(qq["charges"].([]any)) != 1 {
+		t.Errorf("quote com charges = %v", qq)
+	}
 }
 
 func TestIntegration_WriteSaleItemsDeliveryAndCancel(t *testing.T) {
@@ -441,8 +480,8 @@ func TestIntegration_WriteRequiresWriteScope(t *testing.T) {
 	}
 	var n int64
 	e.db.Raw(`SELECT COUNT(*) FROM mcp_tool_calls WHERE connection_id = ? AND outcome = 'ERROR' AND error_code = 'FORBIDDEN'`, ro.ConnectionID).Scan(&n)
-	if n != 17 {
-		t.Errorf("auditoria FORBIDDEN = %d, quero 17", n)
+	if n != 19 {
+		t.Errorf("auditoria FORBIDDEN = %d, quero 19", n)
 	}
 	_ = context.Background
 }

@@ -13,7 +13,8 @@ por credor (OPEN, PARTIAL, SETTLED), com Installments (parcelas do plano) e Sett
 Financial movement = dinheiro que entrou ou saiu (um Pix pode quitar várias contas); Expense = despesa
 sem conta; Receipt (recebimento) é só o termo antigo da parcela/quitação a receber;
 payment_method PIX, CASH dinheiro, CARD cartão, BOLETO, TRANSFER transferência; Freight = frete;
-Profit = lucro. Entrega da Sale: TO_DELIVER a entregar, DELIVERED entregue, CANCELED cancelada.
+Sale charge = cobrança adicional ao cliente (frete cobrado), soma ao preço; Sale cost = custo da venda além das
+pedras (frete pago, instalador, comissão, outro) com credor; Profit = lucro. Entrega da Sale: TO_DELIVER a entregar, DELIVERED entregue, CANCELED cancelada.
 Pagamento da Sale (calculado): PENDING pendente, PARTIAL parcial, PAID quitado.
 
 Regras de uso:

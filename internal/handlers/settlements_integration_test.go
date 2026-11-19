@@ -94,7 +94,8 @@ func TestIntegration_SettlementDefaultCategory(t *testing.T) {
 	e := newFinanceEnv(t)
 	partner := e.partner()
 	sale := e.simpleSale(1, 1000, 400)
-	e.api.do("PUT", "/vendas/"+sale, map[string]any{"frete_valor": 100, "comissao_valor": 50, "vendedor_externo_id": partner})
+	e.api.do("PUT", "/vendas/"+sale, map[string]any{"vendedor_externo_id": partner})
+	setLegacyCosts(t, e.db, sale, 100, 50)
 	freight := e.api.payableOf("SALE", sale, "")
 	commission := e.api.payableOf("SALE", sale, partner)
 
@@ -120,7 +121,7 @@ func TestIntegration_SettlementDefaultCategory(t *testing.T) {
 	}
 	// Frete e comissão SEM Partner na mesma conta → misto.
 	sale2 := e.simpleSale(1, 1000, 400)
-	e.api.do("PUT", "/vendas/"+sale2, map[string]any{"frete_valor": 100, "comissao_valor": 50})
+	setLegacyCosts(t, e.db, sale2, 100, 50)
 	if got := catOf(alloc(e.api.payableOf("SALE", sale2, ""), 10)); got != "OTHER_EXPENSE" {
 		t.Errorf("conta sem credor com frete e comissão = %s, want OTHER_EXPENSE", got)
 	}

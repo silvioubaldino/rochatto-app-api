@@ -122,36 +122,34 @@ func TestIntegration_ReceiveBlockedOnCanceledSale(t *testing.T) {
 	}
 }
 
-// RN-05 / RF-10: receivable e freight_payable (nunca negativos); filtros novos de /vendas;
-// frete e comissão pagos são quitações das contas a pagar da venda (AYD-007).
+// RN-05: receivable (nunca negativo); custos da venda e o que já foi pago vêm das contas (AYD-007/009);
+// filtros de /vendas.
 func TestIntegration_SaleBalancesAndFilters(t *testing.T) {
 	e := newFinanceEnv(t)
 	sale := e.simpleSale(2, 100, 60) // 200
 	_, d := e.api.do("GET", "/vendas/"+sale, nil)
 	e.wantNum("novo", d, "receivable", 200)
-	e.wantNum("novo", d, "freight_payable", 0)
+	e.wantNum("novo", d, "costs_total", 0)
 
-	// PUT: frete 50, comissão 10 (sem Partner: as duas caem na conta "a definir").
-	put := func(freight, commission float64) (int, map[string]any) {
-		return e.api.do("PUT", "/vendas/"+sale, map[string]any{"frete_valor": freight, "comissao_valor": commission})
+	// Custos da venda (AYD-009): frete 50 e comissão 10, sem credor ("a definir"): uma conta a pagar.
+	for _, c := range []map[string]any{{"kind": "FREIGHT", "amount": 50}, {"kind": "COMMISSION", "amount": 10}} {
+		if code, res := e.api.do("POST", "/vendas/"+sale+"/costs", c); code != 201 {
+			t.Fatalf("POST costs = %d %v", code, res)
+		}
 	}
-	code, d := put(50, 10)
-	if code != 200 {
-		t.Fatalf("PUT = %d %v", code, d)
+	_, d = e.api.do("GET", "/vendas/"+sale, nil)
+	e.wantNum("custos", d, "costs_total", 60)
+	e.wantNum("custos", d, "costs_open", 60)
+	e.wantNum("custos", d, "costs_paid", 0)
+	if _, has := d["freight_payable"]; has {
+		t.Error("freight_payable saiu da Sale (AYD-009)")
 	}
-	e.wantNum("put", d, "freight_payable", 50)
-	e.wantNum("put", d, "a_pagar_frete", 50)
-	e.wantNum("put", d, "commission_payable", 10)
 
-	// Validação do PUT; os campos de "pago" foram removidos (AYD-007).
-	if code, res := put(-1, 0); code != 400 {
-		t.Errorf("frete negativo = %d %v, want 400", code, res)
-	}
-	if code, res := e.api.do("PUT", "/vendas/"+sale, map[string]any{"frete_valor": 50, "frete_pago": 20}); code != 400 {
-		t.Errorf("frete_pago = %d %v, want 400", code, res)
-	}
-	if code, res := e.api.do("PUT", "/vendas/"+sale, map[string]any{"comissao_valor": 10, "comissao_paga": true}); code != 400 {
-		t.Errorf("comissao_paga = %d %v, want 400", code, res)
+	// Os campos legados do PUT foram removidos.
+	for _, body := range []map[string]any{{"frete_valor": 50}, {"comissao_valor": 10}, {"frete_pago": 20}, {"comissao_paga": true}} {
+		if code, res := e.api.do("PUT", "/vendas/"+sale, body); code != 400 {
+			t.Errorf("PUT %v = %d %v, want 400", body, code, res)
+		}
 	}
 
 	// Frete pago em parte: quitação da conta com categoria FREIGHT.
@@ -165,8 +163,8 @@ func TestIntegration_SaleBalancesAndFilters(t *testing.T) {
 	}
 	pay(20, "FREIGHT")
 	_, d = e.api.do("GET", "/vendas/"+sale, nil)
-	e.wantNum("frete parcial", d, "freight_payable", 30)
-	e.wantNum("frete parcial", d, "commission_payable", 10)
+	e.wantNum("frete parcial", d, "costs_paid", 20)
+	e.wantNum("frete parcial", d, "costs_open", 40)
 
 	// Recebido parcial e a maior (Σ não passa do devido: receivable = max(total − recebido, 0)).
 	e.api.receive(sale, 80, "2026-11-01", "PIX")
@@ -175,12 +173,11 @@ func TestIntegration_SaleBalancesAndFilters(t *testing.T) {
 	e.api.receive(sale, 120, "2026-11-02", "PIX")
 	_, d = e.api.do("GET", "/vendas/"+sale, nil)
 	e.wantNum("quitada", d, "receivable", 0)
-	_, list := e.api.list("/vendas?cliente_id=" + e.cid + "&freight_pending=true")
-	if !containsID(list, sale) || list[0]["freight_payable"] == nil || list[0]["receivable"] == nil {
-		t.Errorf("lista deveria expor receivable/freight_payable: %v", list)
+	_, list := e.api.list("/vendas?cliente_id=" + e.cid)
+	if !containsID(list, sale) || list[0]["costs_open"] == nil || list[0]["receivable"] == nil {
+		t.Errorf("lista deveria expor receivable/costs_open: %v", list)
 	}
 
-	// freight_pending / commission_pending.
 	has := func(q string) bool {
 		t.Helper()
 		code, l := e.api.list("/vendas?" + q)
@@ -189,17 +186,8 @@ func TestIntegration_SaleBalancesAndFilters(t *testing.T) {
 		}
 		return containsID(l, sale)
 	}
-	if !has("freight_pending=true") || !has("commission_pending=true") {
-		t.Error("Sale com frete e comissão pendentes deveria aparecer nos filtros")
-	}
-	pay(30, "FREIGHT") // frete quitado
-	pay(10, "COMMISSION")
-	if has("freight_pending=true") || has("commission_pending=true") {
-		t.Error("Sale quitada não deveria aparecer em freight_pending/commission_pending")
-	}
-	put(50, 0) // comissão 0 não é pendente
-	if has("commission_pending=true") {
-		t.Error("comissão 0 não é pendente")
+	if !has("cliente_id=" + e.cid) {
+		t.Error("filtro por cliente")
 	}
 
 	// from/to inclusivos por data_venda; data inválida → 400.
@@ -258,7 +246,8 @@ func TestIntegration_FinanceSummary(t *testing.T) {
 	// Sale A (ativa): 2×100 (custo 60), frete 10, comissão 5 (Partner).
 	partner := e.partner()
 	saleA := e.simpleSale(2, 100, 60)
-	mustExec(t, e.db, `UPDATE vendas SET data_venda = ?, frete_valor = 10, comissao_valor = 5, vendedor_externo_id = ? WHERE id = ?`, inP, partner, saleA)
+	mustExec(t, e.db, `UPDATE vendas SET data_venda = ?, vendedor_externo_id = ? WHERE id = ?`, inP, partner, saleA)
+	setLegacyCosts(t, e.db, saleA, 10, 5)
 	e.api.receive(saleA, 80, inP, "PIX")
 	e.api.receive(saleA, 20, inP, "") // sem forma de pagamento
 	_, undone := e.api.receive(saleA, 30, inP, "CARD")
@@ -279,7 +268,8 @@ func TestIntegration_FinanceSummary(t *testing.T) {
 
 	// Sale B (cancelada) no período: nada dela entra em sales/balances.
 	saleB := e.simpleSale(1, 500, 100)
-	mustExec(t, e.db, `UPDATE vendas SET data_venda = ?, frete_valor = 7, comissao_valor = 3 WHERE id = ?`, inP, saleB)
+	mustExec(t, e.db, `UPDATE vendas SET data_venda = ? WHERE id = ?`, inP, saleB)
+	setLegacyCosts(t, e.db, saleB, 7, 3)
 	e.api.receive(saleB, 50, inP, "PIX")
 	if code, _ := e.api.do("PATCH", "/vendas/"+saleB+"/delivery-status", map[string]any{"delivery_status": "CANCELED"}); code != 200 {
 		t.Fatal("cancelar Sale B")

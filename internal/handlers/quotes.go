@@ -62,17 +62,36 @@ type quoteItemRequest struct {
 	UnitCost    float64    `json:"unit_cost"`
 }
 
+// quoteChargeRequest: cobrança adicional ao cliente (AYD-009). id só vale no PUT (mantém a linha).
+type quoteChargeRequest struct {
+	ID          *uuid.UUID `json:"id"`
+	Kind        string     `json:"kind"`
+	Amount      float64    `json:"amount"`
+	Description *string    `json:"description"`
+}
+
+type quoteChargeResponse struct {
+	ID          uuid.UUID `json:"id"`
+	Kind        string    `json:"kind"`
+	Amount      float64   `json:"amount"`
+	Description *string   `json:"description"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 type quoteCreateRequest struct {
-	CustomerID uuid.UUID          `json:"customer_id"`
-	ReferrerID *uuid.UUID         `json:"referrer_id"`
-	QuoteDate  string             `json:"quote_date"`
-	Notes      *string            `json:"notes"`
-	Items      []quoteItemRequest `json:"items"`
+	CustomerID uuid.UUID            `json:"customer_id"`
+	ReferrerID *uuid.UUID           `json:"referrer_id"`
+	QuoteDate  string               `json:"quote_date"`
+	Notes      *string              `json:"notes"`
+	Items      []quoteItemRequest   `json:"items"`
+	Charges    []quoteChargeRequest `json:"charges"`
 }
 
 type quoteUpdateRequest struct {
 	ReferrerID *uuid.UUID `json:"referrer_id"`
 	Notes      *string    `json:"notes"`
+	// Charges: ausente/null = não mexe; lista (mesmo vazia) = substitui o conjunto (id mantém a linha).
+	Charges *[]quoteChargeRequest `json:"charges"`
 }
 
 type quoteStatusRequest struct {
@@ -93,13 +112,16 @@ type quoteListResponse struct {
 	QuoteDate    string     `json:"quote_date"`
 	Notes        *string    `json:"notes"`
 	QuickSale    bool       `json:"quick_sale"`
-	TotalQuote   float64    `json:"total_quote"`
+	TotalQuote   float64    `json:"total_quote"` // Items + cobranças (preço ao cliente)
+	ItemsTotal   float64    `json:"items_total"`
+	ChargesTotal float64    `json:"charges_total"`
 	CreatedAt    time.Time  `json:"created_at"`
 }
 
 type quoteDetailResponse struct {
 	quoteListResponse
-	Items []quoteItemResponse `json:"items"`
+	Items   []quoteItemResponse   `json:"items"`
+	Charges []quoteChargeResponse `json:"charges"`
 }
 
 type quoteItemResponse struct {
@@ -131,6 +153,8 @@ type quoteResumoRow struct {
 	QuickSale    bool       `gorm:"column:quick_sale"`
 	CreatedAt    time.Time  `gorm:"column:created_at"`
 	TotalQuote   float64    `gorm:"column:total_quote"`
+	ItemsTotal   float64    `gorm:"column:items_total"`
+	ChargesTotal float64    `gorm:"column:charges_total"`
 	CustomerName string     `gorm:"column:customer_name"`
 	ReferrerName *string    `gorm:"column:referrer_name"`
 }
@@ -148,6 +172,8 @@ func (row quoteResumoRow) toListResponse() quoteListResponse {
 		Notes:        row.Notes,
 		QuickSale:    row.QuickSale,
 		TotalQuote:   row.TotalQuote,
+		ItemsTotal:   row.ItemsTotal,
+		ChargesTotal: row.ChargesTotal,
 		CreatedAt:    row.CreatedAt,
 	}
 }
@@ -210,10 +236,79 @@ func (h *QuotesHandler) buildDetailResponse(ctx context.Context, quoteID uuid.UU
 		itemsResp = append(itemsResp, quoteItemToResponse(item))
 	}
 
+	charges, err := fetchQuoteCharges(h.db.WithContext(ctx), quoteID)
+	if err != nil {
+		return nil, fmt.Errorf("fetch charges: %w", err)
+	}
+
 	return &quoteDetailResponse{
 		quoteListResponse: row.toListResponse(),
 		Items:             itemsResp,
+		Charges:           charges,
 	}, nil
+}
+
+func fetchQuoteCharges(db *gorm.DB, quoteID uuid.UUID) ([]quoteChargeResponse, error) {
+	out := []quoteChargeResponse{}
+	err := db.Raw(`SELECT id, kind::text AS kind, amount, description, created_at
+		FROM quote_charges WHERE quote_id = ? AND deleted_at IS NULL ORDER BY created_at, id`, quoteID).Scan(&out).Error
+	return out, err
+}
+
+func validateQuoteCharges(charges []quoteChargeRequest) error {
+	for i, c := range charges {
+		if _, err := validateChargeFields(c.Kind, c.Amount, c.Description); err != nil {
+			var he *httpError
+			if errors.As(err, &he) {
+				return errStatus(he.status, fmt.Sprintf("charges[%d]: %s", i, he.msg))
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+// replaceQuoteCharges grava o conjunto de cobranças do Quote: id existente é atualizado, sem id é
+// criado e o que ficou de fora é excluído (soft-delete).
+func replaceQuoteCharges(tx *gorm.DB, quoteID uuid.UUID, charges []quoteChargeRequest) error {
+	var existing []models.QuoteCharge
+	if err := tx.Where("quote_id = ?", quoteID).Find(&existing).Error; err != nil {
+		return err
+	}
+	keep := map[uuid.UUID]bool{}
+	for _, c := range charges {
+		desc := nullIfBlank(c.Description)
+		if c.ID != nil {
+			found := false
+			for _, e := range existing {
+				if e.ID == *c.ID {
+					found = true
+				}
+			}
+			if !found {
+				return errStatus(http.StatusBadRequest, "charges: id não pertence ao quote")
+			}
+			if err := tx.Model(&models.QuoteCharge{}).Where("id = ?", *c.ID).
+				Updates(map[string]any{"kind": c.Kind, "amount": c.Amount, "description": desc}).Error; err != nil {
+				return err
+			}
+			keep[*c.ID] = true
+			continue
+		}
+		row := models.QuoteCharge{QuoteID: quoteID, Kind: c.Kind, Amount: c.Amount, Description: desc}
+		if err := tx.Create(&row).Error; err != nil {
+			return err
+		}
+		keep[row.ID] = true
+	}
+	for _, e := range existing {
+		if !keep[e.ID] {
+			if err := tx.Delete(&models.QuoteCharge{}, "id = ?", e.ID).Error; err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func validateQuoteItemFields(req quoteItemRequest) string {
@@ -359,6 +454,13 @@ func (h *QuotesHandler) validateQuoteRequest(w http.ResponseWriter, ctx context.
 			return time.Time{}, false
 		}
 	}
+	if err := validateQuoteCharges(req.Charges); err != nil {
+		var he *httpError
+		if errors.As(err, &he) {
+			models.WriteError(w, he.status, he.msg)
+		}
+		return time.Time{}, false
+	}
 	return quoteDate, true
 }
 
@@ -386,6 +488,12 @@ func insertQuote(tx *gorm.DB, req quoteCreateRequest, quoteDate time.Time, quick
 		}
 		if err := tx.Create(&item).Error; err != nil {
 			return nil, fmt.Errorf("insert quote item: %w", err)
+		}
+	}
+	for _, c := range req.Charges {
+		row := models.QuoteCharge{QuoteID: quote.ID, Kind: c.Kind, Amount: c.Amount, Description: nullIfBlank(c.Description)}
+		if err := tx.Create(&row).Error; err != nil {
+			return nil, fmt.Errorf("insert quote charge: %w", err)
 		}
 	}
 	return &quote, nil
@@ -467,9 +575,23 @@ func (h *QuotesHandler) update(w http.ResponseWriter, r *http.Request) {
 	quote.ReferrerID = req.ReferrerID
 	quote.Notes = req.Notes
 
-	if err := h.db.WithContext(r.Context()).Save(quote).Error; err != nil {
-		log.Printf("ERROR UpdateQuote save: %v", err)
-		models.WriteError(w, http.StatusInternalServerError, "erro interno")
+	if req.Charges != nil {
+		if err := validateQuoteCharges(*req.Charges); err != nil {
+			writeTxError(w, "UpdateQuote charges", err)
+			return
+		}
+	}
+	err = h.db.WithContext(r.Context()).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(quote).Error; err != nil {
+			return err
+		}
+		if req.Charges != nil {
+			return replaceQuoteCharges(tx, quote.ID, *req.Charges)
+		}
+		return nil
+	})
+	if err != nil {
+		writeTxError(w, "UpdateQuote save", err)
 		return
 	}
 
@@ -797,6 +919,18 @@ func convertQuote(tx *gorm.DB, id uuid.UUID) (*models.Quote, *models.Venda, erro
 			Origin:         fulfillment.OriginMadeToOrder,
 		}
 		if err := tx.Create(&item).Error; err != nil {
+			return nil, nil, err
+		}
+	}
+
+	// AYD-009: a conversão copia as cobranças ao cliente (frete cobrado…) para a Sale.
+	var qcharges []models.QuoteCharge
+	if err := tx.Where("quote_id = ?", id).Order("created_at, id").Find(&qcharges).Error; err != nil {
+		return nil, nil, err
+	}
+	for _, qc := range qcharges {
+		sc := models.SaleCharge{SaleID: venda.ID, Kind: qc.Kind, Amount: qc.Amount, Description: qc.Description}
+		if err := tx.Create(&sc).Error; err != nil {
 			return nil, nil, err
 		}
 	}

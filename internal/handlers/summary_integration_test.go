@@ -59,10 +59,10 @@ func insertPlanned(t *testing.T, db *gorm.DB, saleID string, amount float64) {
 func insertSale(t *testing.T, db *gorm.DB, customerID string, freight, commission float64) string {
 	t.Helper()
 	var id string
-	if err := db.Raw(`INSERT INTO vendas (cliente_id, frete_valor, comissao_valor) VALUES (?, ?, ?) RETURNING id`,
-		customerID, freight, commission).Scan(&id).Error; err != nil {
+	if err := db.Raw(`INSERT INTO vendas (cliente_id) VALUES (?) RETURNING id`, customerID).Scan(&id).Error; err != nil {
 		t.Fatal(err)
 	}
+	setLegacyCosts(t, db, id, freight, commission)
 	return id
 }
 

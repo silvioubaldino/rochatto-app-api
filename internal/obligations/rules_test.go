@@ -41,14 +41,18 @@ func TestCheckSign(t *testing.T) {
 func TestDefaultCategory(t *testing.T) {
 	recv := AccountKind{Direction: Receivable, OriginType: OriginSale, ComponentTypes: []string{ComponentSaleItems}}
 	purchase := AccountKind{Direction: Payable, OriginType: OriginPurchase, ComponentTypes: []string{ComponentPurchaseItems}}
-	freight := AccountKind{Direction: Payable, OriginType: OriginSale, ComponentTypes: []string{ComponentLegacyFreight}}
-	commission := AccountKind{Direction: Payable, OriginType: OriginSale, ComponentTypes: []string{ComponentLegacyCommis}}
-	mixed := AccountKind{Direction: Payable, OriginType: OriginSale, ComponentTypes: []string{ComponentLegacyFreight, ComponentLegacyCommis}}
+	freight := AccountKind{Direction: Payable, OriginType: OriginSale, ComponentTypes: []string{ComponentCostFreight}}
+	commission := AccountKind{Direction: Payable, OriginType: OriginSale, ComponentTypes: []string{ComponentCostCommission}}
+	mixed := AccountKind{Direction: Payable, OriginType: OriginSale, ComponentTypes: []string{ComponentCostFreight, ComponentCostCommission}}
+	labor := AccountKind{Direction: Payable, OriginType: OriginSale, ComponentTypes: []string{ComponentCostLabor, ComponentCostLabor}}
+	other := AccountKind{Direction: Payable, OriginType: OriginSale, ComponentTypes: []string{ComponentCostOther}}
 	cases := []struct {
 		name string
 		in   []AccountKind
 		want string
 	}{
+		{"só mão de obra", []AccountKind{labor}, CatLabor},
+		{"outro custo", []AccountKind{other}, CatOtherExpense},
 		{"receber", []AccountKind{recv}, CatSaleReceipt},
 		{"compra", []AccountKind{purchase}, CatPurchasePayment},
 		{"duas compras", []AccountKind{purchase, purchase}, CatPurchasePayment},

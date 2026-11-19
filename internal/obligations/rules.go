@@ -70,11 +70,15 @@ const (
 	OriginPurchase       = "PURCHASE"
 )
 
-// Tipos de componente (§7a; AYD-008/009 acrescentarão os seus).
+// Tipos de componente. SALE_COST_<kind> é o SALE_COST (AYD-009) já com o tipo do custo — só
+// existe aqui, para a categoria padrão; a view expõe SALE_COST.
 const (
 	ComponentSaleItems      = "SALE_ITEMS"
-	ComponentLegacyFreight  = "LEGACY_FREIGHT"
-	ComponentLegacyCommis   = "LEGACY_COMMISSION"
+	ComponentSaleCharge     = "SALE_CHARGE"
+	ComponentCostFreight    = "SALE_COST_FREIGHT"
+	ComponentCostLabor      = "SALE_COST_LABOR"
+	ComponentCostCommission = "SALE_COST_COMMISSION"
+	ComponentCostOther      = "SALE_COST_OTHER"
 	ComponentPurchaseItems  = "PURCHASE_ITEMS"
 	WarningOversettled      = "OVERSETTLED"
 	WarningMixedCounterpart = "MIXED_COUNTERPARTIES"
@@ -175,29 +179,33 @@ func CheckSign(category string, amount float64) error {
 	return nil
 }
 
-// ComponentCategory mapeia os tipos de componente de uma conta PAYABLE de Sale para a
-// categoria "do tipo do custo": só frete → FREIGHT; só comissão → COMMISSION; misto → OTHER_EXPENSE.
+// componentCategory mapeia os tipos de componente de uma conta PAYABLE de Sale para a
+// categoria "do tipo do custo": só frete → FREIGHT; só mão de obra → LABOR; só comissão →
+// COMMISSION; qualquer mistura ou outro → OTHER_EXPENSE.
 func componentCategory(types []string) string {
-	hasFreight, hasCommission, other := false, false, false
+	cat := ""
 	for _, t := range types {
+		var c string
 		switch t {
-		case ComponentLegacyFreight:
-			hasFreight = true
-		case ComponentLegacyCommis:
-			hasCommission = true
+		case ComponentCostFreight:
+			c = CatFreight
+		case ComponentCostLabor:
+			c = CatLabor
+		case ComponentCostCommission:
+			c = CatCommission
 		default:
-			other = true
+			return CatOtherExpense
+		}
+		if cat == "" {
+			cat = c
+		} else if cat != c {
+			return CatOtherExpense
 		}
 	}
-	switch {
-	case other, hasFreight && hasCommission:
+	if cat == "" {
 		return CatOtherExpense
-	case hasFreight:
-		return CatFreight
-	case hasCommission:
-		return CatCommission
 	}
-	return CatOtherExpense
+	return cat
 }
 
 // AccountKind descreve a conta para o cálculo da categoria padrão da movimentação.
