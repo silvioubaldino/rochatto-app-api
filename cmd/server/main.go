@@ -52,6 +52,7 @@ func main() {
 	handlers.NewFornecedoresHandler(db).Register(apiMux)
 	handlers.NewPartnersHandler(db).Register(apiMux)
 	handlers.NewProductCategoriesHandler(db).Register(apiMux)
+	handlers.NewServicesHandler(db).Register(apiMux)
 	handlers.NewVendasHandler(db).Register(apiMux)
 	handlers.NewQuotesHandler(db).Register(apiMux)
 	handlers.NewObligationsHandler(db).Register(apiMux)

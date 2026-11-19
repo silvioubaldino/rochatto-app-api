@@ -205,6 +205,92 @@
       }
     },
     {
+      "name": "search_services",
+      "title": "Buscar serviços",
+      "description": "Busca Services (serviços vendidos na venda: instalação, consultoria) por trecho do nome, sem diferenciar acentos nem maiúsculas. Devolve unidade (m², hora, visita) e preço/custo de referência, que são só sugestões editáveis. Use para obter o service_id e sugerir preço e custo ao montar um orçamento com item de serviço (kind SERVICE). Lista paginada, ordenada por nome. Não cria nem altera serviços.",
+      "scope": "read",
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "dedupe": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "trecho do nome do serviço (sem diferenciar acentos nem maiúsculas)"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "itens por página (padrão 20, máximo 100)",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "offset": {
+            "type": "integer",
+            "description": "quantos itens pular (padrão 0)",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "unit": {
+                  "type": "string"
+                },
+                "reference_price": {
+                  "type": "number"
+                },
+                "reference_cost": {
+                  "type": "number"
+                },
+                "notes": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "offset",
+          "has_more"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "search_customers",
       "title": "Buscar clientes",
       "description": "Busca Customers (clientes) por trecho do nome, sem diferenciar acentos nem maiúsculas, com filtros opcionais de origem (lead_source) e de Partner (parceiro) indicador (referrer_id). Use para descobrir o customer_id antes de consultar ou lançar algo para um cliente; se houver mais de um candidato, pergunte ao dono qual é. Devolve a lista paginada, ordenada por nome. Não cria nem altera clientes.",
@@ -966,7 +1052,18 @@
                       "type": "string",
                       "format": "uuid"
                     },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "PRODUCT",
+                        "SERVICE"
+                      ]
+                    },
                     "product_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "service_id": {
                       "type": "string",
                       "format": "uuid"
                     },
@@ -988,6 +1085,7 @@
                   },
                   "required": [
                     "id",
+                    "kind",
                     "product_name",
                     "quantity",
                     "unit_price",
@@ -1052,7 +1150,7 @@
     {
       "name": "create_quote",
       "title": "Criar orçamento",
-      "description": "Cria um Quote (orçamento) OPEN (aberto) para um Customer (cliente) com os itens informados: produto, quantidade, preço unitário e custo unitário estimado. Use quando o dono passar os itens e preços de uma proposta. Pré-requisitos: customer_id (search_customers) e, para cada item, preencha product_name, unit_price e unit_cost a partir de search_products (preço e custo de referência são só sugestões editáveis, RN-02). O orçamento não define fornecedor. Não gera Sale (venda): use convert_quote_to_sale para isso.",
+      "description": "Cria um Quote (orçamento) OPEN (aberto) para um Customer (cliente) com os itens informados: produto ou serviço (kind SERVICE: instalação, consultoria), quantidade, preço unitário e custo unitário estimado. Use quando o dono passar os itens e preços de uma proposta. Pré-requisitos: customer_id (search_customers) e, para cada item, preencha product_name, unit_price e unit_cost a partir de search_products (preço e custo de referência são só sugestões editáveis, RN-02; serviços vêm de search_services). O orçamento não define fornecedor. Não gera Sale (venda): use convert_quote_to_sale para isso.",
       "scope": "write",
       "annotations": {
         "readOnlyHint": false,
@@ -1088,14 +1186,27 @@
             "items": {
               "type": "object",
               "properties": {
+                "kind": {
+                  "type": "string",
+                  "description": "PRODUCT (pedra; padrão) ou SERVICE (serviço, ex.: instalação, consultoria)",
+                  "enum": [
+                    "PRODUCT",
+                    "SERVICE"
+                  ]
+                },
                 "product_id": {
                   "type": "string",
-                  "description": "id do produto do catálogo (obtenha com search_products)",
+                  "description": "só PRODUCT: id do produto do catálogo (obtenha com search_products)",
+                  "format": "uuid"
+                },
+                "service_id": {
+                  "type": "string",
+                  "description": "só SERVICE: id do serviço do catálogo (obtenha com search_services); opcional, o serviço pode ser texto livre",
                   "format": "uuid"
                 },
                 "product_name": {
                   "type": "string",
-                  "description": "nome do produto como aparece no orçamento"
+                  "description": "nome do produto ou do serviço como aparece no orçamento"
                 },
                 "quantity": {
                   "type": "number",
@@ -1109,7 +1220,7 @@
                 },
                 "unit_cost": {
                   "type": "number",
-                  "description": "custo unitário estimado em BRL",
+                  "description": "custo unitário estimado em BRL; em SERVICE é o que o instalador cobra (0 se o serviço é do próprio dono) e vira um custo da venda ao converter",
                   "minimum": 0
                 }
               },
@@ -1224,7 +1335,18 @@
                       "type": "string",
                       "format": "uuid"
                     },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "PRODUCT",
+                        "SERVICE"
+                      ]
+                    },
                     "product_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "service_id": {
                       "type": "string",
                       "format": "uuid"
                     },
@@ -1246,6 +1368,7 @@
                   },
                   "required": [
                     "id",
+                    "kind",
                     "product_name",
                     "quantity",
                     "unit_price",
@@ -1392,7 +1515,7 @@
     {
       "name": "convert_quote_to_sale",
       "title": "Converter orçamento em venda",
-      "description": "Converte um Quote (orçamento) OPEN (aberto) em Sale (venda): os itens e valores são copiados, o orçamento passa a WON (ganho) e a venda nasce com entrega TO_DELIVER (a entregar). Use quando o cliente aprovar a proposta. Pré-requisito: obtenha o quote_id com list_quotes e confirme com o dono. Ação com efeitos em cascata e sem desfazer pelo chat. Origem dos itens e fornecedor são definidos depois, na venda. Não registra recebimentos.",
+      "description": "Converte um Quote (orçamento) OPEN (aberto) em Sale (venda): os itens e valores são copiados, o orçamento passa a WON (ganho) e a venda nasce com entrega TO_DELIVER (a entregar). Use quando o cliente aprovar a proposta. Pré-requisito: obtenha o quote_id com list_quotes e confirme com o dono. Ação com efeitos em cascata e sem desfazer pelo chat. Origem dos itens e fornecedor são definidos depois, na venda; item de serviço não tem origem e seu custo estimado vira um custo da venda (LABOR, credor a definir). Não registra recebimentos.",
       "scope": "write",
       "annotations": {
         "readOnlyHint": false,
@@ -1508,7 +1631,18 @@
                       "type": "string",
                       "format": "uuid"
                     },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "PRODUCT",
+                        "SERVICE"
+                      ]
+                    },
                     "product_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "service_id": {
                       "type": "string",
                       "format": "uuid"
                     },
@@ -1545,8 +1679,8 @@
                   },
                   "required": [
                     "id",
+                    "kind",
                     "product_name",
-                    "origin",
                     "quantity",
                     "unit_price",
                     "unit_cost"
@@ -1907,7 +2041,7 @@
     {
       "name": "create_quick_sale",
       "title": "Registrar venda rápida",
-      "description": "Registra uma venda rápida (quick sale): cria o Quote (orçamento) e já o converte em Sale (venda) num passo só, mantendo que toda venda nasce de um orçamento. Use quando o dono já fechou o negócio e não há proposta aberta. Entrada igual à de create_quote (customer_id, itens com product_name, unit_price e unit_cost). Origem dos itens e fornecedor são definidos depois, na venda. Não registra recebimentos.",
+      "description": "Registra uma venda rápida (quick sale): cria o Quote (orçamento) e já o converte em Sale (venda) num passo só, mantendo que toda venda nasce de um orçamento. Use quando o dono já fechou o negócio e não há proposta aberta. Entrada igual à de create_quote (customer_id, itens — pedras ou serviços (kind SERVICE) — com product_name, unit_price e unit_cost). Origem dos itens e fornecedor são definidos depois, na venda. Não registra recebimentos.",
       "scope": "write",
       "annotations": {
         "readOnlyHint": false,
@@ -1943,14 +2077,27 @@
             "items": {
               "type": "object",
               "properties": {
+                "kind": {
+                  "type": "string",
+                  "description": "PRODUCT (pedra; padrão) ou SERVICE (serviço, ex.: instalação, consultoria)",
+                  "enum": [
+                    "PRODUCT",
+                    "SERVICE"
+                  ]
+                },
                 "product_id": {
                   "type": "string",
-                  "description": "id do produto do catálogo (obtenha com search_products)",
+                  "description": "só PRODUCT: id do produto do catálogo (obtenha com search_products)",
+                  "format": "uuid"
+                },
+                "service_id": {
+                  "type": "string",
+                  "description": "só SERVICE: id do serviço do catálogo (obtenha com search_services); opcional, o serviço pode ser texto livre",
                   "format": "uuid"
                 },
                 "product_name": {
                   "type": "string",
-                  "description": "nome do produto como aparece no orçamento"
+                  "description": "nome do produto ou do serviço como aparece no orçamento"
                 },
                 "quantity": {
                   "type": "number",
@@ -1964,7 +2111,7 @@
                 },
                 "unit_cost": {
                   "type": "number",
-                  "description": "custo unitário estimado em BRL",
+                  "description": "custo unitário estimado em BRL; em SERVICE é o que o instalador cobra (0 se o serviço é do próprio dono) e vira um custo da venda ao converter",
                   "minimum": 0
                 }
               },
@@ -2114,7 +2261,18 @@
                       "type": "string",
                       "format": "uuid"
                     },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "PRODUCT",
+                        "SERVICE"
+                      ]
+                    },
                     "product_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "service_id": {
                       "type": "string",
                       "format": "uuid"
                     },
@@ -2151,8 +2309,8 @@
                   },
                   "required": [
                     "id",
+                    "kind",
                     "product_name",
-                    "origin",
                     "quantity",
                     "unit_price",
                     "unit_cost"
@@ -2709,7 +2867,7 @@
     {
       "name": "get_sale",
       "title": "Ver venda",
-      "description": "Mostra uma Sale (venda) completa: cliente, status de entrega e de pagamento, totais, a composição (itens + cobranças = preço ao cliente; custos da venda com credor e conta), as contas, os itens (produto, origem MADE_TO_ORDER sob encomenda ou FROM_STOCK de estoque, fornecedor, compra) e os recebimentos (receipts: quitações RECEIVED e parcelas PENDING da conta a receber, com forma de pagamento). Use para conferir uma venda antes de lançar recebimento ou ajuste. Pré-requisito: obtenha o sale_id com list_sales. Não altera dados.",
+      "description": "Mostra uma Sale (venda) completa: cliente, status de entrega e de pagamento, totais, a composição (itens + cobranças = preço ao cliente; custos da venda com credor e conta), as contas, os itens (tipo PRODUCT ou SERVICE; produto ou serviço, origem MADE_TO_ORDER sob encomenda ou FROM_STOCK de estoque, fornecedor, compra — serviço não tem origem nem compra) e os recebimentos (receipts: quitações RECEIVED e parcelas PENDING da conta a receber, com forma de pagamento). Use para conferir uma venda antes de lançar recebimento ou ajuste. Pré-requisito: obtenha o sale_id com list_sales. Não altera dados.",
       "scope": "read",
       "annotations": {
         "readOnlyHint": true,
@@ -2824,7 +2982,18 @@
                       "type": "string",
                       "format": "uuid"
                     },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "PRODUCT",
+                        "SERVICE"
+                      ]
+                    },
                     "product_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "service_id": {
                       "type": "string",
                       "format": "uuid"
                     },
@@ -2861,8 +3030,8 @@
                   },
                   "required": [
                     "id",
+                    "kind",
                     "product_name",
-                    "origin",
                     "quantity",
                     "unit_price",
                     "unit_cost"
@@ -3380,7 +3549,7 @@
     {
       "name": "update_sale_item",
       "title": "Ajustar item da venda",
-      "description": "Ajusta um item de uma Sale (venda): origem (MADE_TO_ORDER sob encomenda ou FROM_STOCK de estoque), fornecedor (Supplier), quantidade, preço e custo unitários. Só os campos enviados mudam. Use para definir a origem e o fornecedor depois de fechar a venda ou corrigir valores. Pré-requisitos: sale_id e item_id (get_sale); envie ao menos um campo. Item já em compra pedida ou recebida não aceita mudar origem, fornecedor, quantidade nem custo. Item FROM_STOCK sem saldo é permitido, com aviso INSUFFICIENT_STOCK. Não cria nem remove itens.",
+      "description": "Ajusta um item de uma Sale (venda): origem (MADE_TO_ORDER sob encomenda ou FROM_STOCK de estoque), fornecedor (Supplier), quantidade, preço e custo unitários. Só os campos enviados mudam. Item de serviço (kind SERVICE) só aceita quantidade e preço: não tem origem nem fornecedor, e o custo dele é um custo da venda (set_sale_costs). Use para definir a origem e o fornecedor depois de fechar a venda ou corrigir valores. Pré-requisitos: sale_id e item_id (get_sale); envie ao menos um campo. Item já em compra pedida ou recebida não aceita mudar origem, fornecedor, quantidade nem custo. Item FROM_STOCK sem saldo é permitido, com aviso INSUFFICIENT_STOCK. Não cria nem remove itens.",
       "scope": "write",
       "annotations": {
         "readOnlyHint": false,
@@ -3455,7 +3624,18 @@
                 "type": "string",
                 "format": "uuid"
               },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "PRODUCT",
+                  "SERVICE"
+                ]
+              },
               "product_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "service_id": {
                 "type": "string",
                 "format": "uuid"
               },
@@ -3492,8 +3672,8 @@
             },
             "required": [
               "id",
+              "kind",
               "product_name",
-              "origin",
               "quantity",
               "unit_price",
               "unit_cost"
@@ -3856,7 +4036,18 @@
                       "type": "string",
                       "format": "uuid"
                     },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "PRODUCT",
+                        "SERVICE"
+                      ]
+                    },
                     "product_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "service_id": {
                       "type": "string",
                       "format": "uuid"
                     },
@@ -3893,8 +4084,8 @@
                   },
                   "required": [
                     "id",
+                    "kind",
                     "product_name",
-                    "origin",
                     "quantity",
                     "unit_price",
                     "unit_cost"
@@ -4422,7 +4613,18 @@
                       "type": "string",
                       "format": "uuid"
                     },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "PRODUCT",
+                        "SERVICE"
+                      ]
+                    },
                     "product_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "service_id": {
                       "type": "string",
                       "format": "uuid"
                     },
@@ -4459,8 +4661,8 @@
                   },
                   "required": [
                     "id",
+                    "kind",
                     "product_name",
-                    "origin",
                     "quantity",
                     "unit_price",
                     "unit_cost"
@@ -9567,6 +9769,89 @@
               },
               "required": [
                 "product_name",
+                "sales_count",
+                "quantity",
+                "revenue",
+                "average_price",
+                "average_cost",
+                "average_margin_percent"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_top_services",
+      "title": "Serviços mais vendidos",
+      "description": "Ranking dos 20 Services (serviços: instalação, consultoria) que mais faturaram no período, com quantidade, receita, preço médio e custo médio ponderados pela quantidade e margem média em %. O custo vem dos custos da venda ligados ao item (instalador). Sem datas, considera todo o histórico. Serviços não entram em get_top_products. Vendas canceladas não entram. Não altera dados.",
+      "scope": "read",
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "dedupe": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "início do período (padrão: dia 1 do mês corrente)",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "to": {
+            "type": "string",
+            "description": "fim do período, inclusive (padrão: hoje)",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "service_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "service_name": {
+                  "type": "string"
+                },
+                "unit": {
+                  "type": "string"
+                },
+                "sales_count": {
+                  "type": "integer"
+                },
+                "quantity": {
+                  "type": "number"
+                },
+                "revenue": {
+                  "type": "number"
+                },
+                "average_price": {
+                  "type": "number"
+                },
+                "average_cost": {
+                  "type": "number"
+                },
+                "average_margin_percent": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "service_name",
                 "sales_count",
                 "quantity",
                 "revenue",

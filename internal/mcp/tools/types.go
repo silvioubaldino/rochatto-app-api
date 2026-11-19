@@ -49,13 +49,15 @@ type PartnerSummary struct {
 }
 
 type QuoteItem struct {
-	ID          UUID    `json:"id"`
-	ProductID   *UUID   `json:"product_id,omitempty"`
-	ProductName string  `json:"product_name"`
-	Quantity    float64 `json:"quantity"`
-	UnitPrice   float64 `json:"unit_price"`
-	UnitCost    float64 `json:"unit_cost"`
-	TotalPrice  float64 `json:"total_price"`
+	ID          UUID             `json:"id"`
+	Kind        toolkit.ItemKind `json:"kind"` // PRODUCT (pedra) ou SERVICE (serviço — AYD-010)
+	ProductID   *UUID            `json:"product_id,omitempty"`
+	ServiceID   *UUID            `json:"service_id,omitempty"`
+	ProductName string           `json:"product_name"` // nome do produto ou do serviço
+	Quantity    float64          `json:"quantity"`
+	UnitPrice   float64          `json:"unit_price"`
+	UnitCost    float64          `json:"unit_cost"`
+	TotalPrice  float64          `json:"total_price"`
 }
 
 // QuoteSummary é o QuoteDetail sem Items (listagens).
@@ -110,16 +112,28 @@ type SaleSummary struct {
 }
 
 type SaleItem struct {
-	ID           UUID               `json:"id"`
-	ProductID    *UUID              `json:"product_id,omitempty"`
-	ProductName  string             `json:"product_name"`
-	SupplierID   *UUID              `json:"supplier_id,omitempty"`
-	SupplierName *string            `json:"supplier_name,omitempty"`
-	Origin       toolkit.ItemOrigin `json:"origin"`
-	PurchaseID   *UUID              `json:"purchase_id,omitempty"`
-	Quantity     float64            `json:"quantity"`
-	UnitPrice    float64            `json:"unit_price"`
-	UnitCost     float64            `json:"unit_cost"`
+	ID           UUID                `json:"id"`
+	Kind         toolkit.ItemKind    `json:"kind"` // PRODUCT (pedra) ou SERVICE (serviço — AYD-010)
+	ProductID    *UUID               `json:"product_id,omitempty"`
+	ServiceID    *UUID               `json:"service_id,omitempty"`
+	ProductName  string              `json:"product_name"` // nome do produto ou do serviço
+	SupplierID   *UUID               `json:"supplier_id,omitempty"`
+	SupplierName *string             `json:"supplier_name,omitempty"`
+	Origin       *toolkit.ItemOrigin `json:"origin,omitempty"` // ausente em Item de serviço
+	PurchaseID   *UUID               `json:"purchase_id,omitempty"`
+	Quantity     float64             `json:"quantity"`
+	UnitPrice    float64             `json:"unit_price"`
+	UnitCost     float64             `json:"unit_cost"` // serviço: sempre 0 (o custo é um custo da venda LABOR)
+}
+
+// ServiceSummary é um Service do catálogo (AYD-010).
+type ServiceSummary struct {
+	ID             UUID     `json:"id"`
+	Name           string   `json:"name"`
+	Unit           *string  `json:"unit,omitempty"`
+	ReferencePrice *float64 `json:"reference_price,omitempty"`
+	ReferenceCost  *float64 `json:"reference_cost,omitempty"`
+	Notes          *string  `json:"notes,omitempty"`
 }
 
 type Receipt struct {
@@ -457,21 +471,27 @@ func optDate(d *Date) *Date {
 }
 
 type legacySaleItem struct {
-	ID             UUID               `json:"id"`
-	ProdutoID      *UUID              `json:"produto_id"`
-	ProdutoNome    string             `json:"produto_nome"`
-	FornecedorID   *UUID              `json:"fornecedor_id"`
-	FornecedorNome *string            `json:"fornecedor_nome"`
-	Origin         toolkit.ItemOrigin `json:"origin"`
-	PurchaseID     *UUID              `json:"purchase_id"`
-	Quantidade     float64            `json:"quantidade"`
-	PrecoVendaUnit float64            `json:"preco_venda_unit"`
-	CustoUnit      float64            `json:"custo_unit"`
+	ID             UUID                `json:"id"`
+	ProdutoID      *UUID               `json:"produto_id"`
+	ProdutoNome    string              `json:"produto_nome"`
+	FornecedorID   *UUID               `json:"fornecedor_id"`
+	FornecedorNome *string             `json:"fornecedor_nome"`
+	Origin         *toolkit.ItemOrigin `json:"origin"`
+	Kind           toolkit.ItemKind    `json:"kind"`
+	ServiceID      *UUID               `json:"service_id"`
+	PurchaseID     *UUID               `json:"purchase_id"`
+	Quantidade     float64             `json:"quantidade"`
+	PrecoVendaUnit float64             `json:"preco_venda_unit"`
+	CustoUnit      float64             `json:"custo_unit"`
 }
 
 func (i legacySaleItem) toEN() SaleItem {
+	kind := i.Kind
+	if kind == "" {
+		kind = "PRODUCT"
+	}
 	return SaleItem{
-		ID: i.ID, ProductID: optUUID(i.ProdutoID), ProductName: i.ProdutoNome,
+		ID: i.ID, Kind: kind, ServiceID: optUUID(i.ServiceID), ProductID: optUUID(i.ProdutoID), ProductName: i.ProdutoNome,
 		SupplierID: optUUID(i.FornecedorID), SupplierName: opt(i.FornecedorNome), Origin: i.Origin,
 		PurchaseID: optUUID(i.PurchaseID), Quantity: i.Quantidade, UnitPrice: i.PrecoVendaUnit, UnitCost: i.CustoUnit,
 	}

@@ -30,6 +30,7 @@ func newFulfillmentEnv(t *testing.T) fxEnv {
 	NewPurchasesHandler(db).Register(mux)
 	NewStockHandler(db).Register(mux)
 	NewDashboardHandler(db).Register(mux)
+	NewServicesHandler(db).Register(mux)
 	return fxEnv{t, apiClient{t, mux}, db, cid}
 }
 

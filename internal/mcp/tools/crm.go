@@ -239,11 +239,13 @@ var createCustomer = toolkit.Define(toolkit.Meta{
 // --- create_quote (W · dd) e create_quick_sale (W · dd): mesma entrada (§4.3) ---
 
 type QuoteItemIn struct {
-	ProductID   UUID          `json:"product_id,omitempty" jsonschema:"id do produto do catálogo (obtenha com search_products)"`
-	ProductName string        `json:"product_name" jsonschema:"nome do produto como aparece no orçamento"`
-	Quantity    toolkit.Qty   `json:"quantity" jsonschema:"quantidade (na unidade do produto)"`
-	UnitPrice   toolkit.Money `json:"unit_price" jsonschema:"preço de venda unitário em BRL (editável; o preço de referência é só sugestão)"`
-	UnitCost    toolkit.Money `json:"unit_cost" jsonschema:"custo unitário estimado em BRL"`
+	Kind        toolkit.ItemKind `json:"kind,omitempty" jsonschema:"PRODUCT (pedra; padrão) ou SERVICE (serviço, ex.: instalação, consultoria)"`
+	ProductID   UUID             `json:"product_id,omitempty" jsonschema:"só PRODUCT: id do produto do catálogo (obtenha com search_products)"`
+	ServiceID   UUID             `json:"service_id,omitempty" jsonschema:"só SERVICE: id do serviço do catálogo (obtenha com search_services); opcional, o serviço pode ser texto livre"`
+	ProductName string           `json:"product_name" jsonschema:"nome do produto ou do serviço como aparece no orçamento"`
+	Quantity    toolkit.Qty      `json:"quantity" jsonschema:"quantidade (na unidade do produto)"`
+	UnitPrice   toolkit.Money    `json:"unit_price" jsonschema:"preço de venda unitário em BRL (editável; o preço de referência é só sugestão)"`
+	UnitCost    toolkit.Money    `json:"unit_cost" jsonschema:"custo unitário estimado em BRL; em SERVICE é o que o instalador cobra (0 se o serviço é do próprio dono) e vira um custo da venda ao converter"`
 }
 
 type QuoteChargeIn struct {
@@ -273,7 +275,14 @@ func (in CreateQuoteIn) body() (map[string]any, error) {
 		if err := checkQty(fmt.Sprintf("items[%d].quantity", i), float64(it.Quantity)); err != nil {
 			return nil, err
 		}
+		if it.Kind == "SERVICE" && it.ProductID != "" {
+			return nil, invalid("items[%d]: item SERVICE não aceita product_id", i)
+		}
+		if it.Kind != "SERVICE" && it.ServiceID != "" {
+			return nil, invalid("items[%d]: service_id só vale em item SERVICE", i)
+		}
 		items = append(items, map[string]any{
+			"kind": optStr(string(it.Kind)), "service_id": optUUIDStr(it.ServiceID),
 			"product_id": optUUIDStr(it.ProductID), "product_name": it.ProductName, "quantity": it.Quantity,
 			"unit_price": it.UnitPrice, "unit_cost": it.UnitCost,
 		})
@@ -301,10 +310,10 @@ var createQuote = toolkit.Define(toolkit.Meta{
 	Name:  "create_quote",
 	Title: "Criar orçamento",
 	Description: "Cria um Quote (orçamento) OPEN (aberto) para um Customer (cliente) com os itens informados: " +
-		"produto, quantidade, preço unitário e custo unitário estimado. Use quando o dono passar os itens e " +
+		"produto ou serviço (kind SERVICE: instalação, consultoria), quantidade, preço unitário e custo unitário estimado. Use quando o dono passar os itens e " +
 		"preços de uma proposta. Pré-requisitos: customer_id (search_customers) e, para cada item, preencha " +
 		"product_name, unit_price e unit_cost a partir de search_products (preço e custo de referência são só " +
-		"sugestões editáveis, RN-02). O orçamento não define fornecedor. Não gera Sale (venda): use " +
+		"sugestões editáveis, RN-02; serviços vêm de search_services). O orçamento não define fornecedor. Não gera Sale (venda): use " +
 		"convert_quote_to_sale para isso.",
 	Dedupe: true,
 }, func(ctx context.Context, gw toolkit.Gateway, in CreateQuoteIn) (CreateQuoteOut, error) {
@@ -403,7 +412,8 @@ var convertQuoteToSale = toolkit.Define(toolkit.Meta{
 		"orçamento passa a WON (ganho) e a venda nasce com entrega TO_DELIVER (a entregar). Use quando o " +
 		"cliente aprovar a proposta. Pré-requisito: obtenha o quote_id com list_quotes e confirme com o dono. " +
 		"Ação com efeitos em cascata e sem desfazer pelo chat. Origem dos itens e fornecedor são definidos " +
-		"depois, na venda. Não registra recebimentos.",
+		"depois, na venda; item de serviço não tem origem e seu custo estimado vira um custo da venda (LABOR, " +
+		"credor a definir). Não registra recebimentos.",
 	Destructive: true,
 }, func(ctx context.Context, gw toolkit.Gateway, in ConvertQuoteToSaleIn) (ConvertQuoteToSaleOut, error) {
 	r, err := send[convertResult](ctx, gw, "POST", "/quotes/"+pathID(string(in.QuoteID))+"/convert", nil)
@@ -419,7 +429,8 @@ var createQuickSale = toolkit.Define(toolkit.Meta{
 	Title: "Registrar venda rápida",
 	Description: "Registra uma venda rápida (quick sale): cria o Quote (orçamento) e já o converte em Sale (venda) " +
 		"num passo só, mantendo que toda venda nasce de um orçamento. Use quando o dono já fechou o negócio e " +
-		"não há proposta aberta. Entrada igual à de create_quote (customer_id, itens com product_name, " +
+		"não há proposta aberta. Entrada igual à de create_quote (customer_id, itens — pedras ou serviços " +
+		"(kind SERVICE) — com product_name, " +
 		"unit_price e unit_cost). Origem dos itens e fornecedor são definidos depois, na venda. Não registra " +
 		"recebimentos.",
 	Dedupe: true,

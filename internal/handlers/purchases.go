@@ -19,6 +19,7 @@ import (
 	"github.com/silvioubaldino/sales-backend/internal/models"
 	"github.com/silvioubaldino/sales-backend/internal/obligations"
 	"github.com/silvioubaldino/sales-backend/internal/purchasing"
+	"github.com/silvioubaldino/sales-backend/internal/saleitem"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -376,14 +377,15 @@ func attachToPurchase(tx *gorm.DB, p *models.Purchase, ids []uuid.UUID) error {
 	type row struct {
 		ID             uuid.UUID  `gorm:"column:id"`
 		FornecedorID   *uuid.UUID `gorm:"column:fornecedor_id"`
-		Origin         string     `gorm:"column:origin"`
+		Origin         *string    `gorm:"column:origin"`
+		Kind           string     `gorm:"column:kind"`
 		PurchaseID     *uuid.UUID `gorm:"column:purchase_id"`
 		DeliveryStatus string     `gorm:"column:delivery_status"`
 		SaleDeleted    bool       `gorm:"column:sale_deleted"`
 	}
 	var rows []row
 	if err := tx.Raw(`
-		SELECT i.id, i.fornecedor_id, i.origin, i.purchase_id, v.delivery_status,
+		SELECT i.id, i.fornecedor_id, i.origin, i.kind::text AS kind, i.purchase_id, v.delivery_status,
 		       v.deleted_at IS NOT NULL AS sale_deleted
 		FROM itens_venda i
 		JOIN vendas v ON v.id = i.venda_id
@@ -402,7 +404,9 @@ func attachToPurchase(tx *gorm.DB, p *models.Purchase, ids []uuid.UUID) error {
 			return errStatus(http.StatusNotFound, "item de venda não encontrado: "+id.String())
 		case r.SaleDeleted || r.DeliveryStatus == fulfillment.DeliveryCanceled:
 			return errStatus(http.StatusConflict, "item de venda cancelada: "+id.String())
-		case r.Origin == fulfillment.OriginFromStock:
+		case r.Kind == saleitem.KindService:
+			return errStatus(http.StatusConflict, "item de serviço não entra em compra: "+id.String())
+		case r.Origin != nil && *r.Origin == fulfillment.OriginFromStock:
 			return errStatus(http.StatusConflict, "item FROM_STOCK não entra em compra: "+id.String())
 		case r.FornecedorID == nil || *r.FornecedorID != p.SupplierID:
 			return errStatus(http.StatusConflict, "item de outro fornecedor (ou sem fornecedor): "+id.String())

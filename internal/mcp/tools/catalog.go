@@ -9,7 +9,7 @@ import (
 
 // CatalogTools: Products e Suppliers (AYD-006 §4.1 — módulo Catalog).
 func CatalogTools() []toolkit.Tool {
-	return []toolkit.Tool{searchProducts, searchSuppliers}
+	return []toolkit.Tool{searchProducts, searchSuppliers, searchServices}
 }
 
 type SearchProductsIn struct {
@@ -68,6 +68,46 @@ var searchSuppliers = toolkit.Define(toolkit.Meta{
 	for _, r := range rows {
 		if nameMatches(in.Query, r.Nome) {
 			all = append(all, r.toEN())
+		}
+	}
+	return toolkit.Paginate(all, in.Page), nil
+})
+
+type SearchServicesIn struct {
+	Query string `json:"query,omitempty" jsonschema:"trecho do nome do serviço (sem diferenciar acentos nem maiúsculas)"`
+	toolkit.Page
+}
+
+type legacyService struct {
+	ID             UUID     `json:"id"`
+	Name           string   `json:"name"`
+	Unit           *string  `json:"unit"`
+	ReferencePrice *float64 `json:"reference_price"`
+	ReferenceCost  *float64 `json:"reference_cost"`
+	Notes          *string  `json:"notes"`
+}
+
+var searchServices = toolkit.Define(toolkit.Meta{
+	Name:  "search_services",
+	Title: "Buscar serviços",
+	Description: "Busca Services (serviços vendidos na venda: instalação, consultoria) por trecho do nome, sem " +
+		"diferenciar acentos nem maiúsculas. Devolve unidade (m², hora, visita) e preço/custo de referência, " +
+		"que são só sugestões editáveis. Use para obter o service_id e sugerir preço e custo ao montar um " +
+		"orçamento com item de serviço (kind SERVICE). Lista paginada, ordenada por nome. Não cria nem " +
+		"altera serviços.",
+	ReadOnly: true, Idempotent: true,
+}, func(ctx context.Context, gw toolkit.Gateway, in SearchServicesIn) (toolkit.PageOut[ServiceSummary], error) {
+	rows, err := get[[]legacyService](ctx, gw, "/services", url.Values{})
+	if err != nil {
+		return toolkit.PageOut[ServiceSummary]{}, err
+	}
+	all := make([]ServiceSummary, 0, len(rows))
+	for _, r := range rows {
+		if nameMatches(in.Query, r.Name) {
+			all = append(all, ServiceSummary{
+				ID: r.ID, Name: r.Name, Unit: opt(r.Unit), ReferencePrice: r.ReferencePrice,
+				ReferenceCost: r.ReferenceCost, Notes: opt(r.Notes),
+			})
 		}
 	}
 	return toolkit.Paginate(all, in.Page), nil

@@ -35,6 +35,7 @@ func (h *DashboardHandler) Register(mux *http.ServeMux) {
 	// Relatorios
 	mux.HandleFunc("GET /relatorios/vendas", h.getVendasPorMes)
 	mux.HandleFunc("GET /relatorios/produtos", h.getProdutosMaisVendidos)
+	mux.HandleFunc("GET /relatorios/servicos", h.getServicosMaisVendidos)
 }
 
 // --- Response types ---
@@ -471,8 +472,9 @@ func (h *DashboardHandler) getVendasPorMes(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, vendasPorMesResponse{Dados: dados})
 }
 
-func (h *DashboardHandler) getProdutosMaisVendidos(w http.ResponseWriter, r *http.Request) {
-	// from/to (AYD-005) vencem os legados data_inicio/data_fim, limite a limite.
+// reportPeriod lê from/to (AYD-005) — vencem os legados data_inicio/data_fim, limite a limite —
+// e valida a ordem. Escreve o 400 e devolve ok=false quando inválido.
+func reportPeriod(w http.ResponseWriter, r *http.Request) (from, to *time.Time, ok bool) {
 	q := r.URL.Query()
 	parseBound := func(names ...string) (*time.Time, bool) {
 		for _, name := range names {
@@ -487,16 +489,24 @@ func (h *DashboardHandler) getProdutosMaisVendidos(w http.ResponseWriter, r *htt
 		}
 		return nil, true
 	}
-	dataInicio, ok := parseBound("from", "data_inicio")
+	from, ok = parseBound("from", "data_inicio")
 	if !ok {
-		return
+		return nil, nil, false
 	}
-	dataFim, ok := parseBound("to", "data_fim")
+	to, ok = parseBound("to", "data_fim")
 	if !ok {
-		return
+		return nil, nil, false
 	}
-	if dataInicio != nil && dataFim != nil && dataInicio.After(*dataFim) {
+	if from != nil && to != nil && from.After(*to) {
 		models.WriteError(w, http.StatusBadRequest, "from deve ser anterior ou igual a to")
+		return nil, nil, false
+	}
+	return from, to, true
+}
+
+func (h *DashboardHandler) getProdutosMaisVendidos(w http.ResponseWriter, r *http.Request) {
+	dataInicio, dataFim, ok := reportPeriod(w, r)
+	if !ok {
 		return
 	}
 
@@ -533,7 +543,8 @@ func (h *DashboardHandler) getProdutosMaisVendidos(w http.ResponseWriter, r *htt
 		FROM itens_venda i
 		JOIN vendas v ON v.id = i.venda_id
 		LEFT JOIN produtos p ON p.id = i.produto_id
-		WHERE v.deleted_at IS NULL AND v.delivery_status <> 'CANCELED'`
+		WHERE v.deleted_at IS NULL AND v.delivery_status <> 'CANCELED'
+		  AND i.kind = 'PRODUCT'`
 
 	args := []any{}
 	if dataInicio != nil {
@@ -573,4 +584,78 @@ func (h *DashboardHandler) getProdutosMaisVendidos(w http.ResponseWriter, r *htt
 	}
 
 	writeJSON(w, http.StatusOK, produtosRankingResponse{Dados: dados})
+}
+
+type servicoRankingItem struct {
+	ServiceID          *uuid.UUID `json:"service_id"` // null para Items de serviço em texto livre
+	ServiceName        string     `json:"service_name"`
+	Unit               *string    `json:"unit"`
+	TotalVendas        int64      `json:"total_vendas"`
+	TotalQuantidade    float64    `json:"total_quantidade"`
+	TotalReceita       float64    `json:"total_receita"`
+	PrecoMedio         float64    `json:"preco_medio"`
+	CustoMedio         float64    `json:"custo_medio"`
+	MargemMediaPercent float64    `json:"margem_media_percent"`
+}
+
+type servicosRankingResponse struct {
+	Dados []servicoRankingItem `json:"dados"`
+}
+
+// getServicosMaisVendidos: GET /relatorios/servicos?from&to (AYD-010) — só Items SERVICE, mesmas
+// regras do ranking de Products (médias ponderadas pela quantidade; margem sobre os totais). O
+// custo do serviço é o dos custos da venda ligados ao Item (sale_costs.sale_item_id), já que
+// custo_unit do Item de serviço é sempre 0.
+func (h *DashboardHandler) getServicosMaisVendidos(w http.ResponseWriter, r *http.Request) {
+	from, to, ok := reportPeriod(w, r)
+	if !ok {
+		return
+	}
+	query := `
+		SELECT
+			i.service_id,
+			COALESCE(MAX(sv.name), MAX(i.produto_nome))                    AS service_name,
+			MAX(sv.unit)                                                   AS unit,
+			COUNT(DISTINCT v.id)                                           AS total_vendas,
+			SUM(i.quantidade)                                              AS total_quantidade,
+			SUM(i.quantidade * i.preco_venda_unit)                         AS total_receita,
+			COALESCE(SUM(i.quantidade * i.preco_venda_unit) / NULLIF(SUM(i.quantidade), 0), 0) AS preco_medio,
+			COALESCE(SUM(COALESCE(c.cost, 0)) / NULLIF(SUM(i.quantidade), 0), 0)               AS custo_medio,
+			COALESCE(
+				(SUM(i.quantidade * i.preco_venda_unit) - SUM(COALESCE(c.cost, 0)))
+				/ NULLIF(SUM(i.quantidade * i.preco_venda_unit), 0) * 100, 0
+			) AS margem_media_percent
+		FROM itens_venda i
+		JOIN vendas v ON v.id = i.venda_id
+		LEFT JOIN services sv ON sv.id = i.service_id
+		LEFT JOIN (
+			SELECT sale_item_id, SUM(amount) AS cost
+			FROM sale_costs WHERE deleted_at IS NULL AND sale_item_id IS NOT NULL
+			GROUP BY sale_item_id
+		) c ON c.sale_item_id = i.id
+		WHERE i.kind = 'SERVICE' AND v.deleted_at IS NULL AND v.delivery_status <> 'CANCELED'`
+	args := []any{}
+	if from != nil {
+		query += "\n\t\tAND v.data_venda >= ?"
+		args = append(args, *from)
+	}
+	if to != nil {
+		query += "\n\t\tAND v.data_venda <= ?"
+		args = append(args, *to)
+	}
+	query += `
+		GROUP BY i.service_id, CASE WHEN i.service_id IS NULL THEN lower(btrim(i.produto_nome)) END
+		ORDER BY total_receita DESC
+		LIMIT 20`
+
+	var rows []servicoRankingItem
+	if err := h.db.WithContext(r.Context()).Raw(query, args...).Scan(&rows).Error; err != nil {
+		log.Printf("ERROR GetServicosMaisVendidos: %v", err)
+		models.WriteError(w, http.StatusInternalServerError, "erro interno")
+		return
+	}
+	if rows == nil {
+		rows = []servicoRankingItem{}
+	}
+	writeJSON(w, http.StatusOK, servicosRankingResponse{Dados: rows})
 }

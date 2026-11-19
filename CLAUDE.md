@@ -8,6 +8,7 @@ API REST em **Go** responsável por toda a lógica de negócio, persistência de
 
 Fornecer endpoints HTTP seguros, validados e tipados para:
 - Gerenciar o ciclo completo de vendas (criação, itens, status, entrega)
+- Vender serviços (instalação, consultoria) ao lado das pedras: catálogo `/services` e Items `kind = SERVICE` no Quote/Sale, custo via custo da venda LABOR (SPEC-011)
 - Compor a venda: preço ao cliente (Items + cobranças, ex.: frete cobrado) e custos da venda com credor (`/vendas/{id}/charges` e `/costs`, SPEC-010)
 - Controlar o fluxo financeiro: contas a pagar/receber por credor (`/obligations`), parcelas, quitações (`/settlements`) e movimentações (`/financial-movements`) — substituem Receipts e o pagamento único da Purchase (SPEC-008)
 - Manter cadastros de clientes, produtos, fornecedores e vendedores externos
@@ -38,9 +39,10 @@ cmd/server/                 → bootstrap: env, allowlist, migrations (opcional)
 cmd/migrate/                → CLI de migrations: up | down N | version | force N
 internal/
   auth/                     → middleware: Firebase JWT + allowlist do dono (ALLOWED_EMAILS); CORS
-  handlers/                 → um arquivo por recurso (clientes, vendas, quotes, purchases, stock, obligations, settlements, financial_movements etc.)
+  handlers/                 → um arquivo por recurso (clientes, vendas, quotes, purchases, stock, obligations, settlements, financial_movements, services etc.)
   fulfillment/              → regras puras do atendimento da Sale (transições, cancelamento — SPEC-002)
   purchasing/               → regras puras da composição da compra (SPEC-009): tipos/métodos, rateio (`Allocate`), unidades, rótulo
+  saleitem/                 → regras puras do tipo de Item PRODUCT × SERVICE (coerência, valor do custo LABOR da conversão — SPEC-011)
   obligations/              → contas, parcelas, quitações e movimentações (SPEC-008): regras puras (`rules.go`: categoria × sinal, categoria padrão, geração/validação/cobertura de parcelas, alocação) + acesso a dados transacional (`store.go`, `movements.go`, `summary.go`)
   dbmigrate/                → golang-migrate sobre as migrations embutidas
   models/                   → structs GORM de domínio e tipos compartilhados
@@ -112,7 +114,7 @@ Com `MCP_ENABLED=true` e `PUBLIC_BASE_URL`/`WEB_APP_URL` ausentes ou inválidas 
 
 Testes de integração: `TEST_DATABASE_URL` (banco descartável com migrations aplicadas; os testes do conector — `oauth`, `mcp`, migração 009 — criam um banco próprio por teste e exigem permissão de `CREATE DATABASE`, senão são pulados).
 
-Catálogo do Assistant connector (`catalog_version` **1.0.0** = `CatalogVersion` em `internal/mcp/registry.go`, publicada em `serverInfo.version`; 39 ferramentas: 20 de leitura + 19 de escrita; mudança de catálogo muda a versão — AYD-006 §3.9): `internal/mcp/testdata/catalog.golden.json` é contrato — mudou ferramenta,
+Catálogo do Assistant connector (`catalog_version` **1.0.0** = `CatalogVersion` em `internal/mcp/registry.go`, publicada em `serverInfo.version`; 41 ferramentas: 22 de leitura + 19 de escrita; mudança de catálogo muda a versão — AYD-006 §3.9): `internal/mcp/testdata/catalog.golden.json` é contrato — mudou ferramenta,
 schema ou anotação? Atualize o AYD-006 no repo de contexto e regenere com
 `go test ./internal/mcp -run TestCatalogGolden -update` no mesmo PR.
 
@@ -149,6 +151,7 @@ go vet ./... && TEST_DATABASE_URL=$DATABASE_URL go test ./...
 | 11 | `docs/specs/SPEC-008-obligations-and-movements.md` | Contas e movimentações (AYD-007): `fornecedores.kind`, Obligation/Installment/Settlement/Financial movement, migração 010 (substitui Receipts e `purchases.paid_*`), `/finance/summary` com cash/despesas/resultado, alertas a pagar, catálogo do connector `1.0.0` (36 ferramentas) |
 | 12 | `docs/specs/SPEC-009-purchase-composition.md` | Composição da compra (AYD-008): `purchase_charges` (frete de compra, descarga, imposto, outros, com credor), `allocation_method`, rateio e custo de entrada (`vw_purchase_line_costs`), migração 011, `stock_value`, rateio no Profit dos Items sob encomenda, `add_purchase_charge` no connector (catálogo `1.0.0`, 37 ferramentas) |
 | 13 | `docs/specs/SPEC-010-sale-composition.md` | Composição da venda (AYD-009): `quote_charges`/`sale_charges` (frete cobrado), `sale_costs` (frete pago, instalador, comissão, outro, com credor), rotas `/vendas/{id}/charges` e `/costs`, Quote → Sale copia cobranças, `vw_vendas_resumo` com preço/custos/Profit novos, migração 012 (remove `frete_*`/`comissao_*`), `set_sale_costs` e `add_sale_charge` no connector (catálogo `1.0.0`, 39 ferramentas) |
+| 14 | `docs/specs/SPEC-011-services-on-sale.md` | Serviços na Sale (AYD-010): `services` (`/services`), Items `kind`/`service_id` em Quote/Sale (`origin` anulável), conversão cria custo da venda `LABOR` ligado ao Item, fora da fila de compra/Stock/ranking de Products, `GET /relatorios/servicos`, migração 013, `search_services` e `get_top_services` no connector (catálogo `1.0.0`, 41 ferramentas) |
 
 ## Deploy (Google Cloud Run — free tier)
 
