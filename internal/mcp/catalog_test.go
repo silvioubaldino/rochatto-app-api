@@ -202,8 +202,8 @@ func TestCatalogComplete(t *testing.T) {
 		t.Errorf("catalog_version = %s, quero 1.0.0", CatalogVersion)
 	}
 	cat := Catalog()
-	if len(cat) != 39 {
-		t.Fatalf("catálogo tem %d ferramentas, quero 39", len(cat))
+	if len(cat) != 41 {
+		t.Fatalf("catálogo tem %d ferramentas, quero 41", len(cat))
 	}
 	reads, writes := 0, map[string]bool{}
 	for _, tool := range cat {
@@ -224,8 +224,8 @@ func TestCatalogComplete(t *testing.T) {
 			t.Errorf("%s: anotações %+v dedupe=%v, esperado %+v", m.Name, a, m.Dedupe, want)
 		}
 	}
-	if reads != 20 || len(writes) != 19 {
-		t.Errorf("leituras=%d escritas=%d, quero 20 e 19", reads, len(writes))
+	if reads != 22 || len(writes) != 19 {
+		t.Errorf("leituras=%d escritas=%d, quero 22 e 19", reads, len(writes))
 	}
 	for name := range writeTools {
 		if !writes[name] {

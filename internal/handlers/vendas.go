@@ -14,6 +14,7 @@ import (
 	"github.com/silvioubaldino/sales-backend/internal/fulfillment"
 	"github.com/silvioubaldino/sales-backend/internal/models"
 	"github.com/silvioubaldino/sales-backend/internal/obligations"
+	"github.com/silvioubaldino/sales-backend/internal/saleitem"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -91,6 +92,9 @@ type itemRequest struct {
 	PrecoVendaUnit float64    `json:"preco_venda_unit"`
 	CustoUnit      *float64   `json:"custo_unit"`
 	Origin         *string    `json:"origin"`
+	// AYD-010: tipo do Item (default PRODUCT) e serviço do catálogo (só SERVICE; opcional).
+	Kind      *string    `json:"kind"`
+	ServiceID *uuid.UUID `json:"service_id"`
 }
 
 // --- Response types ---
@@ -137,7 +141,9 @@ type itemResponse struct {
 	ProdutoNome    string     `json:"produto_nome"`
 	FornecedorID   *uuid.UUID `json:"fornecedor_id"`
 	FornecedorNome *string    `json:"fornecedor_nome"`
-	Origin         string     `json:"origin"`
+	Kind           string     `json:"kind"`
+	ServiceID      *uuid.UUID `json:"service_id"`
+	Origin         *string    `json:"origin"` // null em Item de serviço
 	PurchaseID     *uuid.UUID `json:"purchase_id"`
 	PurchaseStatus *string    `json:"purchase_status"` // só leitura: status da Purchase do Item (null se não está em Purchase)
 	Quantidade     float64    `json:"quantidade"`
@@ -222,6 +228,8 @@ func itemToResponse(item models.ItemVenda, purchaseStatus *string) itemResponse 
 		ProdutoNome:    item.ProdutoNome,
 		FornecedorID:   item.FornecedorID,
 		FornecedorNome: item.FornecedorNome,
+		Kind:           item.Kind,
+		ServiceID:      item.ServiceID,
 		Origin:         item.Origin,
 		PurchaseID:     item.PurchaseID,
 		PurchaseStatus: purchaseStatus,
@@ -315,8 +323,14 @@ func (h *VendasHandler) buildDetailResponse(ctx context.Context, vendaID uuid.UU
 
 // validateItemFields valida o payload do Item (regras que não dependem do banco).
 func validateItemFields(req itemRequest) string {
-	if strings.TrimSpace(req.ProdutoNome) == "" {
+	// Item de serviço do catálogo pode vir sem nome: assume o nome do serviço (AYD-010).
+	if strings.TrimSpace(req.ProdutoNome) == "" && req.ServiceID == nil {
 		return "campo 'produto_nome' é obrigatório"
+	}
+	if req.Kind != nil {
+		if _, ok := saleitem.Resolve(req.Kind); !ok {
+			return "kind inválido (PRODUCT | SERVICE)"
+		}
 	}
 	if req.Quantidade <= 0 {
 		return "campo 'quantidade' deve ser maior que zero"
@@ -667,7 +681,7 @@ func lastInflowCost(tx *gorm.DB, productID uuid.UUID) (*float64, error) {
 // stockWarnings devolve ["INSUFFICIENT_STOCK"] se o Item FROM_STOCK deixou o Balance negativo.
 func stockWarnings(tx *gorm.DB, item models.ItemVenda) ([]string, error) {
 	warnings := []string{}
-	if item.Origin != fulfillment.OriginFromStock || item.ProdutoID == nil {
+	if item.Origin == nil || *item.Origin != fulfillment.OriginFromStock || item.ProdutoID == nil {
 		return warnings, nil
 	}
 	var balance float64
@@ -700,6 +714,48 @@ func resolveItemCost(tx *gorm.DB, req itemRequest, origin string, fallback float
 	return fallback, nil
 }
 
+// checkServiceRef confere que service_id existe (404). current é o service_id já gravado no Item:
+// mantê-lo é permitido mesmo que o serviço tenha sido excluído depois (o vínculo se preserva).
+func checkServiceRef(tx *gorm.DB, id, current *uuid.UUID) (*models.Service, error) {
+	if id == nil {
+		return nil, nil
+	}
+	q := tx
+	if current != nil && *current == *id {
+		q = tx.Unscoped()
+	}
+	var svc models.Service
+	if err := q.First(&svc, "id = ?", *id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errStatus(http.StatusNotFound, "serviço não encontrado")
+		}
+		return nil, err
+	}
+	return &svc, nil
+}
+
+// itemKindError aplica a coerência do Item com o tipo (AYD-010 §2) e o custo do serviço (sempre 0).
+func itemKindError(kind string, req itemRequest) error {
+	if msg := saleitem.Validate(saleitem.Fields{
+		Kind: kind, HasProduct: req.ProdutoID != nil, HasService: req.ServiceID != nil,
+		HasOrigin: req.Origin != nil, HasSupplier: req.FornecedorID != nil,
+	}); msg != "" {
+		return errStatus(http.StatusBadRequest, msg)
+	}
+	if kind == saleitem.KindService && req.CustoUnit != nil && *req.CustoUnit != 0 {
+		return errStatus(http.StatusBadRequest, "item SERVICE tem custo_unit 0: o custo do serviço é um custo da venda (POST /vendas/{id}/costs)")
+	}
+	return nil
+}
+
+// serviceItemName: nome do Item de serviço — o informado ou, se vazio, o do catálogo.
+func serviceItemName(req itemRequest, svc *models.Service) string {
+	if name := strings.TrimSpace(req.ProdutoNome); name != "" || svc == nil {
+		return name
+	}
+	return svc.Name
+}
+
 func (h *VendasHandler) createItem(w http.ResponseWriter, r *http.Request) {
 	vendaID, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
@@ -721,6 +777,25 @@ func (h *VendasHandler) createItem(w http.ResponseWriter, r *http.Request) {
 	err = h.db.WithContext(r.Context()).Transaction(func(tx *gorm.DB) error {
 		if _, err := lockOpenSale(tx, vendaID); err != nil {
 			return err
+		}
+		kind, _ := saleitem.Resolve(req.Kind)
+		if err := itemKindError(kind, req); err != nil {
+			return err
+		}
+		if kind == saleitem.KindService {
+			svc, err := checkServiceRef(tx, req.ServiceID, nil)
+			if err != nil {
+				return err
+			}
+			item := models.ItemVenda{
+				VendaID: vendaID, ProdutoNome: serviceItemName(req, svc), Kind: kind, ServiceID: req.ServiceID,
+				Quantidade: req.Quantidade, PrecoVendaUnit: req.PrecoVendaUnit,
+			}
+			if err := tx.Create(&item).Error; err != nil {
+				return err
+			}
+			resp = itemMutationResponse{itemResponse: itemToResponse(item, nil), Warnings: []string{}}
+			return nil
 		}
 		produto, err := checkItemRefs(tx, req)
 		if err != nil {
@@ -745,7 +820,8 @@ func (h *VendasHandler) createItem(w http.ResponseWriter, r *http.Request) {
 			ProdutoNome:    strings.TrimSpace(req.ProdutoNome),
 			FornecedorID:   req.FornecedorID,
 			FornecedorNome: req.FornecedorNome,
-			Origin:         origin,
+			Origin:         &origin,
+			Kind:           saleitem.KindProduct,
 			Quantidade:     req.Quantidade,
 			PrecoVendaUnit: req.PrecoVendaUnit,
 			CustoUnit:      cost,
@@ -826,12 +902,39 @@ func (h *VendasHandler) updateItem(w http.ResponseWriter, r *http.Request) {
 			}
 			return err
 		}
+		// Mudar o tipo de um Item existente é 409: remova e adicione outro (AYD-010).
+		if req.Kind != nil {
+			if k, _ := saleitem.Resolve(req.Kind); k != item.Kind {
+				return errStatus(http.StatusConflict, "o tipo (kind) do item não muda: remova o item e adicione outro")
+			}
+		}
+		if err := itemKindError(item.Kind, req); err != nil {
+			return err
+		}
+		if item.Kind == saleitem.KindService {
+			svc, err := checkServiceRef(tx, req.ServiceID, item.ServiceID)
+			if err != nil {
+				return err
+			}
+			item.ProdutoNome = serviceItemName(req, svc)
+			item.ServiceID = req.ServiceID
+			item.Quantidade = req.Quantidade
+			item.PrecoVendaUnit = req.PrecoVendaUnit
+			if err := tx.Save(&item).Error; err != nil {
+				return err
+			}
+			resp = itemMutationResponse{itemResponse: itemToResponse(item, nil), Warnings: []string{}}
+			return nil
+		}
 		if _, err := checkItemRefs(tx, req); err != nil {
 			return err
 		}
 
 		// origin ausente no PUT mantém a atual.
-		origin := item.Origin
+		origin := ""
+		if item.Origin != nil {
+			origin = *item.Origin
+		}
 		if req.Origin != nil {
 			origin = *req.Origin
 		}
@@ -843,12 +946,16 @@ func (h *VendasHandler) updateItem(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 
+		origin0 := ""
+		if item.Origin != nil {
+			origin0 = *item.Origin
+		}
 		purchaseStatus, err := purchaseStatusOf(tx, item)
 		if err != nil {
 			return err
 		}
 		if purchaseStatus != "" {
-			before := fulfillment.ItemLockFields{Origin: item.Origin, SupplierID: supplierKey(item.FornecedorID), Quantity: item.Quantidade, UnitCost: item.CustoUnit}
+			before := fulfillment.ItemLockFields{Origin: origin0, SupplierID: supplierKey(item.FornecedorID), Quantity: item.Quantidade, UnitCost: item.CustoUnit}
 			after := fulfillment.ItemLockFields{Origin: origin, SupplierID: supplierKey(req.FornecedorID), Quantity: req.Quantidade, UnitCost: cost}
 			if fulfillment.LockedFieldsChanged(before, after) {
 				return itemInPurchaseError(purchaseStatus)
@@ -859,7 +966,7 @@ func (h *VendasHandler) updateItem(w http.ResponseWriter, r *http.Request) {
 		item.ProdutoNome = strings.TrimSpace(req.ProdutoNome)
 		item.FornecedorID = req.FornecedorID
 		item.FornecedorNome = req.FornecedorNome
-		item.Origin = origin
+		item.Origin = &origin
 		item.Quantidade = req.Quantidade
 		item.PrecoVendaUnit = req.PrecoVendaUnit
 		item.CustoUnit = cost
@@ -924,6 +1031,9 @@ func (h *VendasHandler) deleteItem(w http.ResponseWriter, r *http.Request) {
 		if count <= 1 {
 			return errStatus(http.StatusBadRequest, "a venda deve ter ao menos 1 item")
 		}
+		if err := releaseItemCosts(tx, item); err != nil {
+			return err
+		}
 		return tx.Delete(&item).Error
 	})
 	if err != nil {
@@ -931,4 +1041,28 @@ func (h *VendasHandler) deleteItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// releaseItemCosts trata os custos da venda ligados ao Item (sale_costs.sale_item_id) antes de
+// excluí-lo. Item de serviço leva o custo junto (soft-delete) — 409 se a conta do credor desse
+// custo já tem quitação (AYD-010). Qualquer vínculo restante é desfeito (FK).
+func releaseItemCosts(tx *gorm.DB, item models.ItemVenda) error {
+	if item.Kind == saleitem.KindService {
+		var settled int64
+		if err := tx.Raw(`
+			SELECT COUNT(*)
+			FROM sale_costs c
+			JOIN vw_obligations o ON o.sale_id = c.sale_id AND o.direction = 'PAYABLE'
+			 AND o.counterparty_id IS NOT DISTINCT FROM COALESCE(c.payee_supplier_id, c.payee_partner_id)
+			WHERE c.sale_item_id = ? AND c.deleted_at IS NULL AND o.settled > 0`, item.ID).Scan(&settled).Error; err != nil {
+			return err
+		}
+		if settled > 0 {
+			return errStatus(http.StatusConflict, "o custo deste serviço já tem quitação na conta do credor: estorne a quitação antes de remover o item")
+		}
+		if err := tx.Where("sale_item_id = ?", item.ID).Delete(&models.SaleCost{}).Error; err != nil {
+			return err
+		}
+	}
+	return tx.Exec(`UPDATE sale_costs SET sale_item_id = NULL WHERE sale_item_id = ?`, item.ID).Error
 }

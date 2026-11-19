@@ -129,6 +129,16 @@ auto-verifica (valor de cada conta da Sale igual antes e depois) e aborta se div
 re-cria as colunas com a soma dos custos FREIGHT/COMMISSION — **lossy** (cobranças, custos
 LABOR/OTHER e credores se perdem). Reinicie o serviço após migrar (plano em cache do pgx).
 
+### Migration 013 (AYD-010 — serviços na Sale)
+
+A 013 cria `services` (nome único entre ativos, sem diferenciar caixa), o enum `item_kind` e as colunas
+`kind`/`service_id` em `quote_items` e `itens_venda` (Items existentes = `PRODUCT`), com CHECKs de
+coerência por tipo; `itens_venda.origin` vira anulável (o default `MADE_TO_ORDER` continua, e o Item
+de serviço grava NULL explícito). Nenhuma view muda: somam os Items inteiros, e Stock/fila só leem
+`origin` FROM_STOCK/MADE_TO_ORDER. O `down 1` remove `services`, `kind` e `service_id` — **lossy**:
+os Items de serviço viram Items sob encomenda (sem Product nem Supplier) e passam a aparecer na
+fila "a comprar"; revise-os antes de reverter.
+
 ## Alertas de pagamento (sem pg_cron)
 
 Desde a 007 a função `gerar_notificacoes_pagamentos()` é **migration** (idempotente; "hoje" =

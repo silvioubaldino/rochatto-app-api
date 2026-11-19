@@ -10,7 +10,7 @@ import (
 
 // AnalyticsTools: indicadores (AYD-006 §4.1 — módulo Analytics).
 func AnalyticsTools() []toolkit.Tool {
-	return []toolkit.Tool{getDashboardKPIs, getTopProducts, getMonthlySales}
+	return []toolkit.Tool{getDashboardKPIs, getTopProducts, getTopServices, getMonthlySales}
 }
 
 // --- get_dashboard_kpis (resposta de /dashboard/kpis — AYD-005, já EN) ---
@@ -163,6 +163,61 @@ var getMonthlySales = toolkit.Define(toolkit.Meta{
 			month = month[:7]
 		}
 		out.Items = append(out.Items, MonthlySales{Month: month, Revenue: d.TotalVenda, Profit: d.Lucro, SalesCount: d.SalesCount})
+	}
+	return out, nil
+})
+
+// --- get_top_services (AYD-010) ---
+
+type TopService struct {
+	ServiceID            *UUID   `json:"service_id,omitempty"`
+	ServiceName          string  `json:"service_name"`
+	Unit                 *string `json:"unit,omitempty"`
+	SalesCount           int     `json:"sales_count"`
+	Quantity             float64 `json:"quantity"`
+	Revenue              float64 `json:"revenue"`
+	AveragePrice         float64 `json:"average_price"`
+	AverageCost          float64 `json:"average_cost"`
+	AverageMarginPercent float64 `json:"average_margin_percent"`
+}
+
+type GetTopServicesOut struct {
+	Items []TopService `json:"items"`
+}
+
+var getTopServices = toolkit.Define(toolkit.Meta{
+	Name:  "get_top_services",
+	Title: "Serviços mais vendidos",
+	Description: "Ranking dos 20 Services (serviços: instalação, consultoria) que mais faturaram no período, com " +
+		"quantidade, receita, preço médio e custo médio ponderados pela quantidade e margem média em %. O custo " +
+		"vem dos custos da venda ligados ao item (instalador). Sem datas, considera todo o histórico. Serviços " +
+		"não entram em get_top_products. Vendas canceladas não entram. Não altera dados.",
+	ReadOnly: true, Idempotent: true,
+}, func(ctx context.Context, gw toolkit.Gateway, in PeriodIn) (GetTopServicesOut, error) {
+	type legacy struct {
+		ServiceID          *UUID   `json:"service_id"`
+		ServiceName        string  `json:"service_name"`
+		Unit               *string `json:"unit"`
+		TotalVendas        int     `json:"total_vendas"`
+		TotalQuantidade    float64 `json:"total_quantidade"`
+		TotalReceita       float64 `json:"total_receita"`
+		PrecoMedio         float64 `json:"preco_medio"`
+		CustoMedio         float64 `json:"custo_medio"`
+		MargemMediaPercent float64 `json:"margem_media_percent"`
+	}
+	resp, err := get[struct {
+		Dados []legacy `json:"dados"`
+	}](ctx, gw, "/relatorios/servicos", in.query())
+	if err != nil {
+		return GetTopServicesOut{}, err
+	}
+	out := GetTopServicesOut{Items: make([]TopService, 0, len(resp.Dados))}
+	for _, d := range resp.Dados {
+		out.Items = append(out.Items, TopService{
+			ServiceID: optUUID(d.ServiceID), ServiceName: d.ServiceName, Unit: opt(d.Unit), SalesCount: d.TotalVendas,
+			Quantity: d.TotalQuantidade, Revenue: d.TotalReceita, AveragePrice: d.PrecoMedio,
+			AverageCost: d.CustoMedio, AverageMarginPercent: d.MargemMediaPercent,
+		})
 	}
 	return out, nil
 })

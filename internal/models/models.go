@@ -77,6 +77,18 @@ type ProductCategory struct {
 
 func (ProductCategory) TableName() string { return "product_categories" }
 
+// Service — serviço do catálogo vendido na Sale (instalação, consultoria — AYD-010).
+type Service struct {
+	Base
+	Name           string   `gorm:"column:name;not null"                          json:"name"`
+	Unit           *string  `gorm:"column:unit"                                   json:"unit"`
+	ReferencePrice *float64 `gorm:"column:reference_price;type:decimal(12,2)"     json:"reference_price"`
+	ReferenceCost  *float64 `gorm:"column:reference_cost;type:decimal(12,2)"      json:"reference_cost"`
+	Notes          *string  `gorm:"column:notes"                                  json:"notes"`
+}
+
+func (Service) TableName() string { return "services" }
+
 type Venda struct {
 	Base
 	ClienteID         uuid.UUID  `gorm:"type:uuid;not null"                             json:"cliente_id"`
@@ -102,8 +114,11 @@ type ItemVenda struct {
 	PrecoVendaUnit float64    `gorm:"type:decimal(12,2);not null"                     json:"preco_venda_unit"`
 	CustoUnit      float64    `gorm:"type:decimal(12,2);not null"                     json:"custo_unit"`
 	// AYD-002: origem do Item e Purchase que o atende (pagamento ao Supplier é da Purchase).
-	Origin     string     `gorm:"column:origin;type:item_origin;not null;default:'MADE_TO_ORDER'" json:"origin"`
+	// AYD-010: Item de serviço (kind SERVICE) não tem origem, Supplier nem Purchase (origin NULL).
+	Origin     *string    `gorm:"column:origin;type:item_origin"                                  json:"origin"`
 	PurchaseID *uuid.UUID `gorm:"column:purchase_id;type:uuid"                                   json:"purchase_id"`
+	Kind       string     `gorm:"column:kind;type:item_kind;not null;default:'PRODUCT'"           json:"kind"`
+	ServiceID  *uuid.UUID `gorm:"column:service_id;type:uuid"                                    json:"service_id"`
 	CreatedAt  time.Time  `                                                        json:"created_at"`
 }
 
@@ -133,7 +148,10 @@ type QuoteItem struct {
 	Quantity    float64    `gorm:"column:quantity;type:decimal(12,3);not null"     json:"quantity"`
 	UnitPrice   float64    `gorm:"column:unit_price;type:decimal(12,2);not null"   json:"unit_price"`
 	UnitCost    float64    `gorm:"column:unit_cost;type:decimal(12,2);not null"    json:"unit_cost"`
-	CreatedAt   time.Time  `                                                        json:"created_at"`
+	// AYD-010: tipo do Item e serviço do catálogo (só SERVICE).
+	Kind      string     `gorm:"column:kind;type:item_kind;not null;default:'PRODUCT'" json:"kind"`
+	ServiceID *uuid.UUID `gorm:"column:service_id;type:uuid"                           json:"service_id"`
+	CreatedAt time.Time  `                                                        json:"created_at"`
 }
 
 func (QuoteItem) TableName() string { return "quote_items" }

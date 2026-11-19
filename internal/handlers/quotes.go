@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/silvioubaldino/sales-backend/internal/fulfillment"
 	"github.com/silvioubaldino/sales-backend/internal/models"
+	"github.com/silvioubaldino/sales-backend/internal/saleitem"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -60,6 +61,9 @@ type quoteItemRequest struct {
 	Quantity    float64    `json:"quantity"`
 	UnitPrice   float64    `json:"unit_price"`
 	UnitCost    float64    `json:"unit_cost"`
+	// AYD-010: tipo do Item (default PRODUCT) e serviço do catálogo (só SERVICE; opcional).
+	Kind      *string    `json:"kind"`
+	ServiceID *uuid.UUID `json:"service_id"`
 }
 
 // quoteChargeRequest: cobrança adicional ao cliente (AYD-009). id só vale no PUT (mantém a linha).
@@ -131,6 +135,8 @@ type quoteItemResponse struct {
 	Quantity    float64    `json:"quantity"`
 	UnitPrice   float64    `json:"unit_price"`
 	UnitCost    float64    `json:"unit_cost"`
+	Kind        string     `json:"kind"`
+	ServiceID   *uuid.UUID `json:"service_id"`
 	TotalPrice  float64    `json:"total_price"`
 	CreatedAt   time.Time  `json:"created_at"`
 }
@@ -186,6 +192,8 @@ func quoteItemToResponse(item models.QuoteItem) quoteItemResponse {
 		Quantity:    item.Quantity,
 		UnitPrice:   item.UnitPrice,
 		UnitCost:    item.UnitCost,
+		Kind:        item.Kind,
+		ServiceID:   item.ServiceID,
 		TotalPrice:  item.Quantity * item.UnitPrice,
 		CreatedAt:   item.CreatedAt,
 	}
@@ -312,8 +320,16 @@ func replaceQuoteCharges(tx *gorm.DB, quoteID uuid.UUID, charges []quoteChargeRe
 }
 
 func validateQuoteItemFields(req quoteItemRequest) string {
-	if strings.TrimSpace(req.ProductName) == "" {
+	// Item de serviço do catálogo pode vir sem nome: assume o nome do serviço (AYD-010).
+	if strings.TrimSpace(req.ProductName) == "" && req.ServiceID == nil {
 		return "campo 'product_name' é obrigatório"
+	}
+	kind, ok := saleitem.Resolve(req.Kind)
+	if !ok {
+		return "kind inválido (PRODUCT | SERVICE)"
+	}
+	if msg := saleitem.Validate(saleitem.Fields{Kind: kind, HasProduct: req.ProductID != nil, HasService: req.ServiceID != nil}); msg != "" {
+		return msg
 	}
 	if req.Quantity <= 0 {
 		return "campo 'quantity' deve ser maior que zero"
@@ -325,6 +341,22 @@ func validateQuoteItemFields(req quoteItemRequest) string {
 		return "campo 'unit_cost' não pode ser negativo"
 	}
 	return ""
+}
+
+// resolveQuoteItem devolve o tipo e o nome do Item (o do catálogo, se o serviço veio sem nome) e
+// confere o service_id (404). current é o service_id já gravado (mantê-lo é permitido se o
+// serviço foi excluído depois).
+func resolveQuoteItem(db *gorm.DB, req quoteItemRequest, current *uuid.UUID) (string, string, error) {
+	kind, _ := saleitem.Resolve(req.Kind)
+	name := strings.TrimSpace(req.ProductName)
+	svc, err := checkServiceRef(db, req.ServiceID, current)
+	if err != nil {
+		return "", "", err
+	}
+	if name == "" && svc != nil {
+		name = svc.Name
+	}
+	return kind, name, nil
 }
 
 // fetchQuoteForWrite loads the quote and ensures it is OPEN, writing the
@@ -453,6 +485,10 @@ func (h *QuotesHandler) validateQuoteRequest(w http.ResponseWriter, ctx context.
 			models.WriteError(w, http.StatusBadRequest, fmt.Sprintf("items[%d]: %s", i, errMsg))
 			return time.Time{}, false
 		}
+		if _, _, err := resolveQuoteItem(h.db.WithContext(ctx), itemReq, nil); err != nil {
+			writeTxError(w, "validateQuoteRequest service", err)
+			return time.Time{}, false
+		}
 	}
 	if err := validateQuoteCharges(req.Charges); err != nil {
 		var he *httpError
@@ -478,13 +514,19 @@ func insertQuote(tx *gorm.DB, req quoteCreateRequest, quoteDate time.Time, quick
 		return nil, fmt.Errorf("insert quote: %w", err)
 	}
 	for _, itemReq := range req.Items {
+		kind, name, err := resolveQuoteItem(tx, itemReq, nil)
+		if err != nil {
+			return nil, err
+		}
 		item := models.QuoteItem{
 			QuoteID:     quote.ID,
 			ProductID:   itemReq.ProductID,
-			ProductName: strings.TrimSpace(itemReq.ProductName),
+			ProductName: name,
 			Quantity:    itemReq.Quantity,
 			UnitPrice:   itemReq.UnitPrice,
 			UnitCost:    itemReq.UnitCost,
+			Kind:        kind,
+			ServiceID:   itemReq.ServiceID,
 		}
 		if err := tx.Create(&item).Error; err != nil {
 			return nil, fmt.Errorf("insert quote item: %w", err)
@@ -693,13 +735,20 @@ func (h *QuotesHandler) createItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	kind, name, err := resolveQuoteItem(h.db.WithContext(r.Context()), req, nil)
+	if err != nil {
+		writeTxError(w, "CreateQuoteItem service", err)
+		return
+	}
 	item := models.QuoteItem{
 		QuoteID:     quoteID,
 		ProductID:   req.ProductID,
-		ProductName: strings.TrimSpace(req.ProductName),
+		ProductName: name,
 		Quantity:    req.Quantity,
 		UnitPrice:   req.UnitPrice,
 		UnitCost:    req.UnitCost,
+		Kind:        kind,
+		ServiceID:   req.ServiceID,
 	}
 
 	if err := h.db.WithContext(r.Context()).Create(&item).Error; err != nil {
@@ -733,11 +782,6 @@ func (h *QuotesHandler) updateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if errMsg := validateQuoteItemFields(req); errMsg != "" {
-		models.WriteError(w, http.StatusBadRequest, errMsg)
-		return
-	}
-
 	var item models.QuoteItem
 	if err := h.db.WithContext(r.Context()).First(&item, "id = ? AND quote_id = ?", itemID, quoteID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -749,8 +793,27 @@ func (h *QuotesHandler) updateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Mudar o tipo de um Item existente é 409: remova e adicione outro (AYD-010).
+	if req.Kind != nil {
+		if k, _ := saleitem.Resolve(req.Kind); k != item.Kind {
+			models.WriteError(w, http.StatusConflict, "o tipo (kind) do item não muda: remova o item e adicione outro")
+			return
+		}
+	}
+	// A coerência do tipo vale para o tipo atual do Item.
+	req.Kind = &item.Kind
+	if errMsg := validateQuoteItemFields(req); errMsg != "" {
+		models.WriteError(w, http.StatusBadRequest, errMsg)
+		return
+	}
+	_, name, err := resolveQuoteItem(h.db.WithContext(r.Context()), req, item.ServiceID)
+	if err != nil {
+		writeTxError(w, "UpdateQuoteItem service", err)
+		return
+	}
 	item.ProductID = req.ProductID
-	item.ProductName = strings.TrimSpace(req.ProductName)
+	item.ProductName = name
+	item.ServiceID = req.ServiceID
 	item.Quantity = req.Quantity
 	item.UnitPrice = req.UnitPrice
 	item.UnitCost = req.UnitCost
@@ -908,7 +971,10 @@ func convertQuote(tx *gorm.DB, id uuid.UUID) (*models.Quote, *models.Venda, erro
 		return nil, nil, err
 	}
 	// Supplier e origem do Item são definidos na Sale (PDR-001 / AYD-002), não no Quote.
+	// Item de serviço (AYD-010): sem origem; nasce com custo_unit 0 e o custo estimado do Quote vira
+	// um custo da venda LABOR (credor "a definir") ligado ao Item — o Profit conta o custo uma vez.
 	for _, quoteItem := range items {
+		origin := fulfillment.OriginMadeToOrder
 		item := models.ItemVenda{
 			VendaID:        venda.ID,
 			ProdutoID:      quoteItem.ProductID,
@@ -916,10 +982,24 @@ func convertQuote(tx *gorm.DB, id uuid.UUID) (*models.Quote, *models.Venda, erro
 			Quantidade:     quoteItem.Quantity,
 			PrecoVendaUnit: quoteItem.UnitPrice,
 			CustoUnit:      quoteItem.UnitCost,
-			Origin:         fulfillment.OriginMadeToOrder,
+			Origin:         &origin,
+			Kind:           quoteItem.Kind,
+			ServiceID:      quoteItem.ServiceID,
+		}
+		if quoteItem.Kind == saleitem.KindService {
+			item.Origin, item.CustoUnit = nil, 0
 		}
 		if err := tx.Create(&item).Error; err != nil {
 			return nil, nil, err
+		}
+		if quoteItem.Kind == saleitem.KindService {
+			if amount := saleitem.LaborCostAmount(quoteItem.Quantity, quoteItem.UnitCost); amount > 0 {
+				desc := quoteItem.ProductName
+				cost := models.SaleCost{SaleID: venda.ID, Kind: "LABOR", Amount: amount, Description: &desc, SaleItemID: &item.ID}
+				if err := tx.Create(&cost).Error; err != nil {
+					return nil, nil, err
+				}
+			}
 		}
 	}
 

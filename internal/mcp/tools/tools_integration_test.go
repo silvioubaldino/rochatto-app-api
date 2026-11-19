@@ -44,6 +44,7 @@ func newEnv(t *testing.T) *env {
 	handlers.NewFornecedoresHandler(db).Register(mux)
 	handlers.NewPartnersHandler(db).Register(mux)
 	handlers.NewProductCategoriesHandler(db).Register(mux)
+	handlers.NewServicesHandler(db).Register(mux)
 	handlers.NewVendasHandler(db).Register(mux)
 	handlers.NewQuotesHandler(db).Register(mux)
 	handlers.NewObligationsHandler(db).Register(mux)

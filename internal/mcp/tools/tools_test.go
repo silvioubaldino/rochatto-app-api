@@ -135,7 +135,8 @@ func TestToLegacySalePutAppliesOnlySentFields(t *testing.T) {
 
 func TestToLegacyItemPut(t *testing.T) {
 	sup := UUID("s1")
-	cur := legacySaleItem{ID: "i", ProdutoNome: "G", Origin: "MADE_TO_ORDER", Quantidade: 2, PrecoVendaUnit: 10, CustoUnit: 6, FornecedorID: &sup}
+	mto := toolkit.ItemOrigin("MADE_TO_ORDER")
+	cur := legacySaleItem{ID: "i", ProdutoNome: "G", Origin: &mto, Quantidade: 2, PrecoVendaUnit: 10, CustoUnit: 6, FornecedorID: &sup}
 	// Só a quantidade: o resto permanece, inclusive o custo.
 	q := toolkit.Qty(3)
 	b := toLegacyItemPut(cur, UpdateSaleItemIn{Quantity: &q})
@@ -155,6 +156,16 @@ func TestToLegacyItemPut(t *testing.T) {
 	b = toLegacyItemPut(cur, UpdateSaleItemIn{Origin: "MADE_TO_ORDER", SupplierID: toolkit.Nullable[UUID]{Present: true, Null: true}})
 	if b["custo_unit"] != 6.0 || b["fornecedor_id"] != nil || b["fornecedor_nome"] != nil {
 		t.Errorf("supplier null = %v", b)
+	}
+}
+
+func TestToLegacyItemPutService(t *testing.T) {
+	svc := UUID("sv1")
+	cur := legacySaleItem{ID: "i", ProdutoNome: "Instalação", Kind: "SERVICE", ServiceID: &svc, Quantidade: 12, PrecoVendaUnit: 300}
+	p := toolkit.Money(320)
+	b := toLegacyItemPut(cur, UpdateSaleItemIn{UnitPrice: &p})
+	if b["kind"] != toolkit.ItemKind("SERVICE") || b["service_id"] != &svc || b["origin"] != nil || b["preco_venda_unit"] != 320.0 {
+		t.Errorf("PUT de serviço = %v", b)
 	}
 }
 

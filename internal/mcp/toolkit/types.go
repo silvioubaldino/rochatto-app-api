@@ -39,6 +39,7 @@ type (
 	DeliveryStatus        string
 	PaymentStatus         string
 	ItemOrigin            string
+	ItemKind              string // PRODUCT | SERVICE (AYD-010)
 	ReceiptStatus         string
 	PaymentMethod         string
 	PurchaseKind          string
@@ -72,6 +73,7 @@ var Enums = map[reflect.Type][]string{
 	reflect.TypeFor[DeliveryStatus]():        {"TO_DELIVER", "DELIVERED", "CANCELED"},
 	reflect.TypeFor[PaymentStatus]():         {"PENDING", "PARTIAL", "PAID"},
 	reflect.TypeFor[ItemOrigin]():            {"MADE_TO_ORDER", "FROM_STOCK"},
+	reflect.TypeFor[ItemKind]():              {"PRODUCT", "SERVICE"},
 	reflect.TypeFor[ReceiptStatus]():         {"PENDING", "RECEIVED"},
 	reflect.TypeFor[PaymentMethod]():         {"PIX", "CASH", "CARD", "BOLETO", "TRANSFER"},
 	reflect.TypeFor[PurchaseKind]():          {"MADE_TO_ORDER", "STOCK_REPLENISHMENT"},

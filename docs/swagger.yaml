@@ -328,12 +328,81 @@ components:
       enum: [MADE_TO_ORDER, FROM_STOCK]
       default: MADE_TO_ORDER
 
+    ItemKind:
+      type: string
+      enum: [PRODUCT, SERVICE]
+      default: PRODUCT
+      description: |
+        Tipo do Item de Quote/Sale (AYD-010). SERVICE (instalação, consultoria): sem `produto_id`,
+        `origin`, `fornecedor_id` nem Purchase; `custo_unit` sempre 0 (o custo é um custo da venda LABOR
+        ligado ao Item). Não passa por Stock nem pela fila de compra e fica fora do ranking de Products.
+
+    Service:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: "Instalação"
+        unit:
+          type: string
+          nullable: true
+          example: "m²"
+        reference_price:
+          type: number
+          format: double
+          nullable: true
+        reference_cost:
+          type: number
+          format: double
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    ServiceRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        unit:
+          type: string
+          nullable: true
+        reference_price:
+          type: number
+          format: double
+          minimum: 0
+          nullable: true
+        reference_cost:
+          type: number
+          format: double
+          minimum: 0
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+
     ItemVendaRequest:
       type: object
       required:
         - produto_nome
         - quantidade
       properties:
+        kind:
+          allOf:
+            - $ref: "#/components/schemas/ItemKind"
+          description: "Ausente: PRODUCT no POST; no PUT mantém o atual (mudar o tipo = 409). `produto_nome` pode faltar em SERVICE com `service_id` (assume o nome do catálogo)"
+        service_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: "Só SERVICE (opcional; texto livre permitido). 400 em PRODUCT; 404 se não existe"
         produto_id:
           type: string
           format: uuid
@@ -380,6 +449,12 @@ components:
         id:
           type: string
           format: uuid
+        kind:
+          $ref: "#/components/schemas/ItemKind"
+        service_id:
+          type: string
+          format: uuid
+          nullable: true
         produto_id:
           type: string
           format: uuid
@@ -394,7 +469,10 @@ components:
           type: string
           nullable: true
         origin:
-          $ref: "#/components/schemas/ItemOrigin"
+          allOf:
+            - $ref: "#/components/schemas/ItemOrigin"
+          nullable: true
+          description: "null em Item SERVICE"
         purchase_id:
           type: string
           format: uuid
@@ -1666,6 +1744,43 @@ components:
                 type: number
                 format: double
 
+    ServicoRankingResponse:
+      type: object
+      properties:
+        dados:
+          type: array
+          items:
+            type: object
+            properties:
+              service_id:
+                type: string
+                format: uuid
+                nullable: true
+                description: "null = serviço em texto livre (agrupado por nome)"
+              service_name:
+                type: string
+              unit:
+                type: string
+                nullable: true
+              total_vendas:
+                type: integer
+              total_quantidade:
+                type: number
+                format: double
+              total_receita:
+                type: number
+                format: double
+              preco_medio:
+                type: number
+                format: double
+              custo_medio:
+                type: number
+                format: double
+                description: "Σ custos da venda ligados aos Items (sale_item_id) / Σ quantidade"
+              margem_media_percent:
+                type: number
+                format: double
+
     HealthResponse:
       type: object
       properties:
@@ -2444,6 +2559,162 @@ paths:
   # ============================================================
   # Product categories (AYD-003)
   # ============================================================
+  /api/v1/services:
+    get:
+      tags:
+        - Services
+      summary: Lista Services não excluídos (ordem alfabética)
+      description: "Catálogo de serviços vendidos na Sale (AYD-010). Sem `limit`, devolve todos."
+      operationId: listServices
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: "Trecho do nome, sem diferenciar acento nem caixa"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        "200":
+          description: Lista de serviços
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Service"
+        "400":
+          description: limit/offset inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+    post:
+      tags:
+        - Services
+      summary: Cria um Service
+      operationId: createService
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServiceRequest"
+      responses:
+        "201":
+          description: Serviço criado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Service"
+        "400":
+          description: name vazio ou valores inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Nome já usado por Service ativo (case-insensitive)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+
+  /api/v1/services/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags:
+        - Services
+      summary: Detalha um Service
+      operationId: getService
+      responses:
+        "200":
+          description: Serviço
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Service"
+        "404":
+          description: Não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+    put:
+      tags:
+        - Services
+      summary: Atualiza um Service (substituição completa)
+      operationId: updateService
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServiceRequest"
+      responses:
+        "200":
+          description: Serviço atualizado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Service"
+        "400":
+          description: Dados inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Nome já usado por outro Service ativo
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+    delete:
+      tags:
+        - Services
+      summary: Remove um Service (soft delete; Items já vendidos mantêm o vínculo)
+      operationId: deleteService
+      responses:
+        "204":
+          description: Removido
+        "404":
+          description: Não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+
   /api/v1/product-categories:
     get:
       tags:
@@ -4484,12 +4755,46 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/relatorios/servicos:
+    get:
+      tags:
+        - Relatórios
+      summary: Ranking dos serviços mais vendidos (AYD-010)
+      description: "Retorna os 20 serviços com maior receita no período (só Items SERVICE; Sales canceladas fora). Mesmas regras de cálculo do ranking de produtos; o custo vem dos custos da venda ligados ao Item."
+      operationId: getServicosMaisVendidos
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Ranking de serviços
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServicoRankingResponse"
+        "400":
+          description: Data inválida ou `from` > `to`
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+
   /api/v1/relatorios/produtos:
     get:
       tags:
         - Relatórios
       summary: Ranking dos produtos mais vendidos
-      description: "Retorna os 20 produtos com maior receita no período. Sem filtro de data, considera todas as vendas."
+      description: "Retorna os 20 produtos com maior receita no período (só Items PRODUCT — serviços têm /relatorios/servicos). Sem filtro de data, considera todas as vendas."
       operationId: getProdutosMaisVendidos
       parameters:
         - name: from

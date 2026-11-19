@@ -62,8 +62,8 @@ var getSale = toolkit.Define(toolkit.Meta{
 	Name:  "get_sale",
 	Title: "Ver venda",
 	Description: "Mostra uma Sale (venda) completa: cliente, status de entrega e de pagamento, totais, " +
-		"a composição (itens + cobranças = preço ao cliente; custos da venda com credor e conta), as contas, os itens (produto, origem MADE_TO_ORDER sob encomenda ou FROM_STOCK de " +
-		"estoque, fornecedor, compra) e os recebimentos (receipts: quitações RECEIVED e parcelas " +
+		"a composição (itens + cobranças = preço ao cliente; custos da venda com credor e conta), as contas, os itens (tipo PRODUCT ou SERVICE; produto ou serviço, origem MADE_TO_ORDER sob encomenda ou FROM_STOCK de " +
+		"estoque, fornecedor, compra — serviço não tem origem nem compra) e os recebimentos (receipts: quitações RECEIVED e parcelas " +
 		"PENDING da conta a receber, com forma de pagamento). Use para conferir uma venda antes de " +
 		"lançar recebimento ou ajuste. Pré-requisito: obtenha o sale_id com list_sales. Não altera dados.",
 	ReadOnly: true, Idempotent: true,
@@ -332,6 +332,8 @@ var updateSaleItem = toolkit.Define(toolkit.Meta{
 	Title: "Ajustar item da venda",
 	Description: "Ajusta um item de uma Sale (venda): origem (MADE_TO_ORDER sob encomenda ou FROM_STOCK de " +
 		"estoque), fornecedor (Supplier), quantidade, preço e custo unitários. Só os campos enviados mudam. " +
+		"Item de serviço (kind SERVICE) só aceita quantidade e preço: não tem origem nem fornecedor, e o custo " +
+		"dele é um custo da venda (set_sale_costs). " +
 		"Use para definir a origem e o fornecedor depois de fechar a venda ou corrigir valores. Pré-requisitos: " +
 		"sale_id e item_id (get_sale); envie ao menos um campo. Item já em compra pedida ou recebida não aceita " +
 		"mudar origem, fornecedor, quantidade nem custo. Item FROM_STOCK sem saldo é permitido, com aviso " +
@@ -366,6 +368,15 @@ var updateSaleItem = toolkit.Define(toolkit.Meta{
 	if item == nil {
 		return UpdateSaleItemOut{}, toolkit.NewToolError(toolkit.CodeNotFound, "item não encontrado")
 	}
+	if item.Kind == "SERVICE" {
+		// Item de serviço não tem origem nem fornecedor; o custo é um custo da venda (AYD-010).
+		if in.Origin != "" || (in.SupplierID.Present && !in.SupplierID.Null) {
+			return UpdateSaleItemOut{}, invalid("item de serviço não aceita origin nem supplier_id")
+		}
+		if in.UnitCost != nil && *in.UnitCost != 0 {
+			return UpdateSaleItemOut{}, invalid("item de serviço tem unit_cost 0: ajuste o custo com set_sale_costs")
+		}
+	}
 	body := toLegacyItemPut(*item, in)
 	if in.SupplierID.Present && !in.SupplierID.Null {
 		// O nome do fornecedor é texto no item: acompanha o novo id (falha aqui deixa a API validar o id).
@@ -393,11 +404,18 @@ func toLegacyItemPut(cur legacySaleItem, in UpdateSaleItemIn) map[string]any {
 	body := map[string]any{
 		"produto_id": cur.ProdutoID, "produto_nome": cur.ProdutoNome, "fornecedor_id": cur.FornecedorID,
 		"fornecedor_nome": cur.FornecedorNome, "quantidade": cur.Quantidade, "preco_venda_unit": cur.PrecoVendaUnit,
-		"custo_unit": cur.CustoUnit, "origin": cur.Origin,
+		"custo_unit": cur.CustoUnit, "origin": cur.Origin, "service_id": cur.ServiceID,
+	}
+	body["origin"] = nil // Item de serviço não tem origem
+	if cur.Origin != nil {
+		body["origin"] = *cur.Origin
+	}
+	if cur.Kind != "" {
+		body["kind"] = cur.Kind
 	}
 	if in.Origin != "" {
 		body["origin"] = in.Origin
-		if in.Origin != cur.Origin && in.UnitCost == nil {
+		if (cur.Origin == nil || in.Origin != *cur.Origin) && in.UnitCost == nil {
 			delete(body, "custo_unit")
 		}
 	}
