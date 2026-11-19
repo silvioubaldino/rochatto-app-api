@@ -376,7 +376,7 @@ func TestIntegration_SalesProcurementStockReadTools(t *testing.T) {
 		want := map[string]any{
 			"id": s.saleQuick, "customer_id": s.joao, "customer_name": "João Silva", "delivery_status": "TO_DELIVER", "payment_status": "PARTIAL",
 			"total": float64(2000), "total_cost": float64(1200), "total_received": float64(500), "receivable": float64(1500), "profit": float64(800),
-			"freight_amount": float64(0), "freight_payable": float64(0), "commission_amount": float64(0), "commission_paid": false,
+			"charges_total": float64(0), "costs_total": float64(0), "costs_paid": float64(0), "costs_open": float64(0),
 		}
 		for k, v := range want {
 			if sale[k] != v {

@@ -649,7 +649,7 @@ func TestIntegration_SaleStatuses(t *testing.T) {
 	if code, _ := e.api.do("PUT", "/vendas/"+saleID, map[string]any{"status": "ENTREGUE"}); code != 400 {
 		t.Errorf("PUT com status = %d, want 400", code)
 	}
-	if code, r := e.api.do("PUT", "/vendas/"+saleID, map[string]any{"frete_valor": 50, "observacoes": "ok"}); code != 200 || r["delivery_status"] != "DELIVERED" || num(r, "frete_valor") != 50 {
+	if code, r := e.api.do("PUT", "/vendas/"+saleID, map[string]any{"observacoes": "ok"}); code != 200 || r["delivery_status"] != "DELIVERED" || r["observacoes"] != "ok" {
 		t.Errorf("PUT = %d %v", code, r)
 	}
 	if code, _ := e.api.do("POST", "/vendas", map[string]any{"cliente_id": e.cid}); code == 201 {
@@ -666,7 +666,8 @@ func TestIntegration_DashboardExcludesCanceled(t *testing.T) {
 	pid := e.product()
 
 	saleID, _ := e.sale(qItem("D1", 2, 500, 200, pid))
-	mustExec(t, e.db, `UPDATE vendas SET data_venda = CURRENT_DATE, frete_valor = 100, comissao_valor = 50 WHERE id = ?`, saleID)
+	mustExec(t, e.db, `UPDATE vendas SET data_venda = CURRENT_DATE, vendedor_externo_id = ? WHERE id = ?`, e.partner(), saleID)
+	setLegacyCosts(t, e.db, saleID, 100, 50)
 	e.api.receive(saleID, 300, day, "PIX")
 
 	rankQty := func() float64 {

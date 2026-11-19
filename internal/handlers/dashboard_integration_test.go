@@ -57,7 +57,8 @@ func TestIntegration_KPIsPeriodSalesQuotesAndBalances(t *testing.T) {
 	// Sales: A (200, lucro 200-120-10-5 = 65) e D (100, custo 50, lucro 50) no período;
 	// B cancelada no período (fora de tudo); C fora do período.
 	saleA := e.simpleSale(2, 100, 60)
-	mustExec(t, e.db, `UPDATE vendas SET data_venda = ?, frete_valor = 10, comissao_valor = 5 WHERE id = ?`, mid, saleA)
+	mustExec(t, e.db, `UPDATE vendas SET data_venda = ? WHERE id = ?`, mid, saleA)
+	setLegacyCosts(t, e.db, saleA, 10, 5)
 	saleD := e.simpleSale(1, 100, 50)
 	mustExec(t, e.db, `UPDATE vendas SET data_venda = ? WHERE id = ?`, mid, saleD)
 	saleB := e.simpleSale(1, 500, 100)
@@ -145,7 +146,8 @@ func TestIntegration_KPIsMatchFinanceSummary(t *testing.T) {
 	e := newDashboardEnv(t)
 	from, to, mid := uniquePeriod()
 	sale := e.simpleSale(3, 100, 40)
-	mustExec(t, e.db, `UPDATE vendas SET data_venda = ?, frete_valor = 12, comissao_valor = 7 WHERE id = ?`, mid, sale)
+	mustExec(t, e.db, `UPDATE vendas SET data_venda = ? WHERE id = ?`, mid, sale)
+	setLegacyCosts(t, e.db, sale, 12, 7)
 	e.api.receive(sale, 100, mid, "PIX")
 	sup := e.supplier()
 	pid := e.product()

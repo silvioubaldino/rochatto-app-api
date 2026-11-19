@@ -86,8 +86,6 @@ type Venda struct {
 	DeliveryStatus      string     `gorm:"column:delivery_status;type:sale_delivery_status;not null;default:'TO_DELIVER'" json:"delivery_status"`
 	DataVenda           time.Time  `gorm:"type:date;not null"                              json:"data_venda"`
 	DataEntregaPrevista *time.Time `gorm:"type:date"                                       json:"data_entrega_prevista"`
-	FreteValor          float64    `gorm:"type:decimal(12,2);not null;default:0"            json:"frete_valor"`
-	ComissaoValor       float64    `gorm:"type:decimal(12,2);not null;default:0"            json:"comissao_valor"`
 	Observacoes         *string    `                                                        json:"observacoes"`
 }
 
@@ -139,6 +137,41 @@ type QuoteItem struct {
 }
 
 func (QuoteItem) TableName() string { return "quote_items" }
+
+// QuoteCharge / SaleCharge — cobrança adicional ao cliente, ex.: frete cobrado (AYD-009).
+type QuoteCharge struct {
+	Base
+	QuoteID     uuid.UUID `gorm:"column:quote_id;type:uuid;not null"          json:"quote_id"`
+	Kind        string    `gorm:"column:kind;type:sale_charge_kind;not null"  json:"kind"`
+	Amount      float64   `gorm:"column:amount;type:decimal(12,2);not null"   json:"amount"`
+	Description *string   `gorm:"column:description"                          json:"description"`
+}
+
+func (QuoteCharge) TableName() string { return "quote_charges" }
+
+type SaleCharge struct {
+	Base
+	SaleID      uuid.UUID `gorm:"column:sale_id;type:uuid;not null"           json:"sale_id"`
+	Kind        string    `gorm:"column:kind;type:sale_charge_kind;not null"  json:"kind"`
+	Amount      float64   `gorm:"column:amount;type:decimal(12,2);not null"   json:"amount"`
+	Description *string   `gorm:"column:description"                          json:"description"`
+}
+
+func (SaleCharge) TableName() string { return "sale_charges" }
+
+// SaleCost — custo da venda além das pedras, com credor (Supplier ou Partner; nenhum = "a definir").
+type SaleCost struct {
+	Base
+	SaleID          uuid.UUID  `gorm:"column:sale_id;type:uuid;not null"          json:"sale_id"`
+	Kind            string     `gorm:"column:kind;type:sale_cost_kind;not null"   json:"kind"`
+	Amount          float64    `gorm:"column:amount;type:decimal(12,2);not null"  json:"amount"`
+	Description     *string    `gorm:"column:description"                         json:"description"`
+	PayeeSupplierID *uuid.UUID `gorm:"column:payee_supplier_id;type:uuid"         json:"payee_supplier_id"`
+	PayeePartnerID  *uuid.UUID `gorm:"column:payee_partner_id;type:uuid"          json:"payee_partner_id"`
+	SaleItemID      *uuid.UUID `gorm:"column:sale_item_id;type:uuid"              json:"sale_item_id"`
+}
+
+func (SaleCost) TableName() string { return "sale_costs" }
 
 type Notificacao struct {
 	ID            uuid.UUID  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`

@@ -188,6 +188,9 @@ var getQuote = toolkit.Define(toolkit.Meta{
 	if q.Items == nil {
 		q.Items = []QuoteItem{}
 	}
+	if q.Charges == nil {
+		q.Charges = []QuoteCharge{}
+	}
 	return GetQuoteOut{Quote: q}, nil
 })
 
@@ -243,12 +246,19 @@ type QuoteItemIn struct {
 	UnitCost    toolkit.Money `json:"unit_cost" jsonschema:"custo unitário estimado em BRL"`
 }
 
+type QuoteChargeIn struct {
+	Kind        toolkit.SaleChargeKind `json:"kind" jsonschema:"FREIGHT (frete cobrado do cliente) ou OTHER (outra cobrança)"`
+	Amount      toolkit.PosMoney       `json:"amount" jsonschema:"valor cobrado do cliente em BRL (> 0); soma ao preço do orçamento"`
+	Description string                 `json:"description,omitempty" jsonschema:"descrição curta"`
+}
+
 type CreateQuoteIn struct {
-	CustomerID UUID          `json:"customer_id" jsonschema:"id do cliente (obtenha com search_customers)"`
-	ReferrerID UUID          `json:"referrer_id,omitempty" jsonschema:"id do Partner indicador (obtenha com search_partners)"`
-	QuoteDate  Date          `json:"quote_date,omitempty" jsonschema:"data do orçamento (padrão: hoje em São Paulo)"`
-	Notes      string        `json:"notes,omitempty" jsonschema:"observações"`
-	Items      []QuoteItemIn `json:"items" jsonschema:"itens do orçamento (pelo menos 1)"`
+	CustomerID UUID            `json:"customer_id" jsonschema:"id do cliente (obtenha com search_customers)"`
+	ReferrerID UUID            `json:"referrer_id,omitempty" jsonschema:"id do Partner indicador (obtenha com search_partners)"`
+	QuoteDate  Date            `json:"quote_date,omitempty" jsonschema:"data do orçamento (padrão: hoje em São Paulo)"`
+	Notes      string          `json:"notes,omitempty" jsonschema:"observações"`
+	Items      []QuoteItemIn   `json:"items" jsonschema:"itens do orçamento (pelo menos 1)"`
+	Charges    []QuoteChargeIn `json:"charges,omitempty" jsonschema:"cobranças adicionais ao cliente (ex.: frete cobrado R$ 100); somam ao preço"`
 	toolkit.Dedupable
 }
 
@@ -268,8 +278,15 @@ func (in CreateQuoteIn) body() (map[string]any, error) {
 			"unit_price": it.UnitPrice, "unit_cost": it.UnitCost,
 		})
 	}
+	charges := make([]map[string]any, 0, len(in.Charges))
+	for i, c := range in.Charges {
+		if err := checkMoney(fmt.Sprintf("charges[%d].amount", i), float64(c.Amount)); err != nil {
+			return nil, err
+		}
+		charges = append(charges, map[string]any{"kind": c.Kind, "amount": c.Amount, "description": optStr(c.Description)})
+	}
 	return map[string]any{
-		"customer_id": in.CustomerID, "referrer_id": optUUIDStr(in.ReferrerID), "quote_date": in.QuoteDate,
+		"charges": charges, "customer_id": in.CustomerID, "referrer_id": optUUIDStr(in.ReferrerID), "quote_date": in.QuoteDate,
 		"notes": optStr(in.Notes), "items": items,
 	}, nil
 }

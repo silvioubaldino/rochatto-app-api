@@ -194,8 +194,8 @@ func TestE2E_ConnectionToolsListAndCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list.Tools) != len(mcp.Catalog()) || len(list.Tools) != 37 || init.ServerInfo.Version != "1.0.0" {
-		t.Errorf("tools/list = %d ferramentas (catálogo %d, versão %s), quero 37 e 1.0.0", len(list.Tools), len(mcp.Catalog()), init.ServerInfo.Version)
+	if len(list.Tools) != len(mcp.Catalog()) || len(list.Tools) != 39 || init.ServerInfo.Version != "1.0.0" {
+		t.Errorf("tools/list = %d ferramentas (catálogo %d, versão %s), quero 39 e 1.0.0", len(list.Tools), len(mcp.Catalog()), init.ServerInfo.Version)
 	}
 
 	// Dado criado pela REST aparece pela ferramenta (mesmos handlers).
@@ -281,8 +281,8 @@ func TestE2E_ScopeWriteOnlyConnectionHasNoReadTools(t *testing.T) {
 	}
 	defer cs.Close()
 	list, err := cs.ListTools(context.Background(), nil)
-	if err != nil || len(list.Tools) != 17 { // só as 17 escritas
-		t.Fatalf("tools/list = %d (%v), quero as 17 de escrita", len(list.Tools), err)
+	if err != nil || len(list.Tools) != 19 { // só as 19 escritas
+		t.Fatalf("tools/list = %d (%v), quero as 19 de escrita", len(list.Tools), err)
 	}
 	for _, tool := range list.Tools {
 		if tool.Annotations != nil && tool.Annotations.ReadOnlyHint {

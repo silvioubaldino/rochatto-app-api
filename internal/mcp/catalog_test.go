@@ -183,6 +183,8 @@ var writeTools = map[string]struct{ D, I, DD bool }{
 	"create_quick_sale":          {false, false, true},
 	"update_sale":                {false, true, false},
 	"update_sale_item":           {false, true, false},
+	"set_sale_costs":             {false, true, false},
+	"add_sale_charge":            {false, false, true},
 	"set_sale_delivery_status":   {false, true, false},
 	"cancel_sale":                {true, true, false},
 	"create_purchase":            {false, false, true},
@@ -200,8 +202,8 @@ func TestCatalogComplete(t *testing.T) {
 		t.Errorf("catalog_version = %s, quero 1.0.0", CatalogVersion)
 	}
 	cat := Catalog()
-	if len(cat) != 37 {
-		t.Fatalf("catálogo tem %d ferramentas, quero 37", len(cat))
+	if len(cat) != 39 {
+		t.Fatalf("catálogo tem %d ferramentas, quero 39", len(cat))
 	}
 	reads, writes := 0, map[string]bool{}
 	for _, tool := range cat {
@@ -222,8 +224,8 @@ func TestCatalogComplete(t *testing.T) {
 			t.Errorf("%s: anotações %+v dedupe=%v, esperado %+v", m.Name, a, m.Dedupe, want)
 		}
 	}
-	if reads != 20 || len(writes) != 17 {
-		t.Errorf("leituras=%d escritas=%d, quero 20 e 17", reads, len(writes))
+	if reads != 20 || len(writes) != 19 {
+		t.Errorf("leituras=%d escritas=%d, quero 20 e 19", reads, len(writes))
 	}
 	for name := range writeTools {
 		if !writes[name] {

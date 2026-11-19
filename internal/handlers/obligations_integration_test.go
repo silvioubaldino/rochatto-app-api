@@ -20,7 +20,7 @@ func componentTypes(o map[string]any) map[string]float64 {
 	out := map[string]float64{}
 	for _, c := range o["components"].([]any) {
 		m := c.(map[string]any)
-		out[m["type"].(string)] = num(m, "amount")
+		out[m["type"].(string)] += num(m, "amount")
 	}
 	return out
 }
@@ -30,9 +30,11 @@ func TestIntegration_ObligationsMaintainedFromComponents(t *testing.T) {
 	e := newFinanceEnv(t)
 	partner := e.partner()
 	sale, items := e.sale(qItem("Pedra", 2, 500, 200, ""))
-	if code, res := e.api.do("PUT", "/vendas/"+sale, map[string]any{"frete_valor": 150, "comissao_valor": 80, "vendedor_externo_id": partner}); code != 200 {
+	if code, res := e.api.do("PUT", "/vendas/"+sale, map[string]any{"vendedor_externo_id": partner}); code != 200 {
 		t.Fatalf("PUT venda = %d %v", code, res)
 	}
+	_, freightCost := e.api.do("POST", "/vendas/"+sale+"/costs", map[string]any{"kind": "FREIGHT", "amount": 150})
+	_, commCost := e.api.do("POST", "/vendas/"+sale+"/costs", map[string]any{"kind": "COMMISSION", "amount": 80})
 
 	list := e.api.obligationsOf("SALE", sale)
 	if len(list) != 3 {
@@ -48,19 +50,20 @@ func TestIntegration_ObligationsMaintainedFromComponents(t *testing.T) {
 		t.Errorf("origin = %v", origin)
 	}
 	freight := e.api.obligation(e.api.payableOf("SALE", sale, ""))
-	if num(freight, "amount") != 150 || freight["counterparty"] != nil || componentTypes(freight)["LEGACY_FREIGHT"] != 150 {
+	if num(freight, "amount") != 150 || freight["counterparty"] != nil || componentTypes(freight)["SALE_COST"] != 150 {
 		t.Errorf("conta do frete = %v", freight)
 	}
 	comm := e.api.obligation(e.api.payableOf("SALE", sale, partner))
-	if num(comm, "amount") != 80 || comm["counterparty"].(map[string]any)["type"] != "PARTNER" || componentTypes(comm)["LEGACY_COMMISSION"] != 80 {
+	if num(comm, "amount") != 80 || comm["counterparty"].(map[string]any)["type"] != "PARTNER" || componentTypes(comm)["SALE_COST"] != 80 {
 		t.Errorf("conta da comissão = %v", comm)
 	}
 
 	// Editar frete/itens recalcula sem ação manual; sem Partner a comissão cai na conta "a definir"
 	// junto com o frete (única por origem + credor).
-	e.api.do("PUT", "/vendas/"+sale, map[string]any{"frete_valor": 200, "comissao_valor": 80})
+	e.api.do("PUT", "/vendas/"+sale, map[string]any{})
+	e.api.do("PUT", "/vendas/"+sale+"/costs/"+freightCost["id"].(string), map[string]any{"kind": "FREIGHT", "amount": 200})
 	merged := e.api.obligation(e.api.payableOf("SALE", sale, ""))
-	if ct := componentTypes(merged); num(merged, "amount") != 280 || ct["LEGACY_FREIGHT"] != 200 || ct["LEGACY_COMMISSION"] != 80 || len(ct) != 2 {
+	if ct := componentTypes(merged); num(merged, "amount") != 280 || ct["SALE_COST"] != 280 || len(ct) != 1 {
 		t.Errorf("conta sem credor após editar = %v", merged)
 	}
 	if n := len(e.api.obligationsOf("SALE", sale, "counterparty_type=PARTNER")); n != 0 {
@@ -78,7 +81,8 @@ func TestIntegration_ObligationsMaintainedFromComponents(t *testing.T) {
 		t.Errorf("conta a receber após novo Item = %v, want 1600", got["amount"])
 	}
 	// Frete e comissão a 0: a conta sem componentes e sem quitações some.
-	e.api.do("PUT", "/vendas/"+sale, map[string]any{"frete_valor": 0, "comissao_valor": 0})
+	e.api.do("PUT", "/vendas/"+sale+"/costs/"+freightCost["id"].(string), map[string]any{"kind": "FREIGHT", "amount": 0})
+	e.api.do("PUT", "/vendas/"+sale+"/costs/"+commCost["id"].(string), map[string]any{"kind": "COMMISSION", "amount": 0})
 	if n := len(e.api.obligationsOf("SALE", sale, "direction=PAYABLE")); n != 0 {
 		t.Errorf("contas a pagar sem componentes deveriam sumir: %d", n)
 	}
@@ -119,15 +123,18 @@ func TestIntegration_ObligationPartnerSwapAndCancel(t *testing.T) {
 	e := newFinanceEnv(t)
 	oldPartner, newPartner := e.partner(), e.partner()
 	sale := e.simpleSale(1, 1000, 400)
-	if code, res := e.api.do("PUT", "/vendas/"+sale, map[string]any{"comissao_valor": 80, "vendedor_externo_id": oldPartner}); code != 200 {
+	if code, res := e.api.do("PUT", "/vendas/"+sale, map[string]any{"vendedor_externo_id": oldPartner}); code != 200 {
 		t.Fatalf("PUT = %d %v", code, res)
+	}
+	if code, res := e.api.do("POST", "/vendas/"+sale+"/costs", map[string]any{"kind": "COMMISSION", "amount": 80}); code != 201 {
+		t.Fatalf("POST cost = %d %v", code, res)
 	}
 	oldAcc := e.api.payableOf("SALE", sale, oldPartner)
 	if code, res := e.api.do("POST", "/obligations/"+oldAcc+"/settle", map[string]any{"movement": map[string]any{"occurred_on": "2026-11-01", "payment_method": "PIX"}}); code != 201 {
 		t.Fatalf("pagar comissão = %d %v", code, res)
 	}
 
-	code, res := e.api.do("PUT", "/vendas/"+sale, map[string]any{"comissao_valor": 80, "vendedor_externo_id": newPartner})
+	code, res := e.api.do("PUT", "/vendas/"+sale, map[string]any{"vendedor_externo_id": newPartner})
 	if code != 200 || !hasWarning(res, "OVERSETTLED") {
 		t.Fatalf("trocar Partner = %d %v, want 200 com warnings OVERSETTLED", code, res)
 	}
@@ -169,7 +176,8 @@ func TestIntegration_ObligationsListFiltersTotalsAndPaging(t *testing.T) {
 	e := newFinanceEnv(t)
 	partner := e.partner()
 	sale := e.simpleSale(1, 1000, 400)
-	e.api.do("PUT", "/vendas/"+sale, map[string]any{"frete_valor": 100, "comissao_valor": 50, "vendedor_externo_id": partner})
+	e.api.do("PUT", "/vendas/"+sale, map[string]any{"vendedor_externo_id": partner})
+	setLegacyCosts(t, e.db, sale, 100, 50)
 	recv := e.api.receivable(sale)
 	e.api.receive(sale, 250, "2026-11-01", "PIX")
 	freight := e.api.payableOf("SALE", sale, "")

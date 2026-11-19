@@ -471,21 +471,36 @@ components:
           format: date
           nullable: true
           description: Prazo de entrega
-        frete_valor:
-          type: number
-          format: double
-        comissao_valor:
-          type: number
-          format: double
         observacoes:
           type: string
           nullable: true
         total_venda:
           type: number
           format: double
+          description: "Preço ao cliente: Items + cobranças (AYD-009)"
+        charges_total:
+          type: number
+          format: double
         total_custo:
           type: number
           format: double
+          description: "Custo das pedras (+ rateio dos custos adicionais da compra)"
+        costs_total:
+          type: number
+          format: double
+          description: "Σ custos da venda previstos (frete pago, instalador, comissão, outro)"
+        costs_paid:
+          type: number
+          format: double
+          description: "Σ quitado das contas a pagar da venda"
+        costs_open:
+          type: number
+          format: double
+          description: "Σ em aberto das contas a pagar da venda"
+        received:
+          type: number
+          format: double
+          description: "= total_recebido"
         total_recebido:
           type: number
           format: double
@@ -497,17 +512,10 @@ components:
           type: number
           format: double
           description: "RN-05: em aberto da conta a receber da Sale (0 em Sale CANCELED) — AYD-007"
-        freight_payable:
-          type: number
-          format: double
-          description: "RF-10: frete ainda a pagar (conta a pagar sem credor, abatida pelas quitações — AYD-007)"
-        commission_payable:
-          type: number
-          format: double
-          description: "Comissão ainda a pagar (conta do Partner; sem Partner, a conta sem credor — AYD-007)"
         lucro:
           type: number
           format: double
+          description: "(Items + cobranças) − custo das pedras − custos da venda (RN-04, AYD-009)"
         created_at:
           type: string
           format: date-time
@@ -517,9 +525,12 @@ components:
         - $ref: "#/components/schemas/VendaListResponse"
         - type: object
           properties:
-            a_pagar_frete:
-              type: number
-              format: double
+            composition:
+              $ref: "#/components/schemas/SaleComposition"
+            obligations:
+              type: array
+              items: { $ref: "#/components/schemas/Obligation" }
+              description: "Contas da venda: a receber do cliente + a pagar por credor (AYD-007)"
             itens:
               type: array
               items:
@@ -533,7 +544,7 @@ components:
 
     VendaUpdateRequest:
       type: object
-      description: "Não aceita `status`/`delivery_status` (400) — use PATCH /vendas/{id}/delivery-status. `frete_pago` e `comissao_paga` foram removidos (400): pague frete e comissão quitando a conta (POST /settlements) — AYD-007."
+      description: "Não aceita `status`/`delivery_status` (400) — use PATCH /vendas/{id}/delivery-status. `frete_valor`, `comissao_valor`, `frete_pago` e `comissao_paga` foram removidos (400): frete e comissão são custos da venda (`/vendas/{id}/costs`) e pagá-los é quitar a conta (POST /settlements) — AYD-007/009."
       properties:
         vendedor_externo_id:
           type: string
@@ -543,16 +554,6 @@ components:
           type: string
           format: date
           nullable: true
-        frete_valor:
-          type: number
-          format: double
-          minimum: 0
-          default: 0
-        comissao_valor:
-          type: number
-          format: double
-          minimum: 0
-          default: 0
         observacoes:
           type: string
           nullable: true
@@ -589,9 +590,10 @@ components:
             count: { type: integer }
             revenue: { type: number, format: double }
             cost: { type: number, format: double }
-            freight: { type: number, format: double }
-            commission: { type: number, format: double }
-            profit: { type: number, format: double, description: "revenue − cost − freight − commission (RN-04)" }
+            freight: { type: number, format: double, description: "Σ custos da venda FREIGHT (previstos)" }
+            commission: { type: number, format: double, description: "Σ custos da venda COMMISSION (previstos)" }
+            other_costs: { type: number, format: double, description: "Σ custos da venda LABOR + OTHER (previstos)" }
+            profit: { type: number, format: double, description: "revenue (Items + cobranças) − cost − freight − commission − other_costs (RN-04, AYD-009)" }
             received: { type: number, format: double, description: "Σ quitações das contas RECEIVABLE dessas Sales (de qualquer data)" }
             receivable: { type: number, format: double }
         cash:
@@ -890,7 +892,13 @@ components:
         lost_reason: { type: string, nullable: true }
         quote_date: { type: string, format: date }
         notes: { type: string, nullable: true }
-        total_quote: { type: number, format: double }
+        total_quote: { type: number, format: double, description: "Items + cobranças (preço ao cliente)" }
+        items_total: { type: number, format: double }
+        charges_total: { type: number, format: double }
+        charges:
+          type: array
+          description: "Só no detalhe. Em POST /quotes, POST /quotes/quick-sale e PUT /quotes/{id} (ausente = não mexe; lista substitui, `id` mantém a linha)"
+          items: { $ref: "#/components/schemas/SaleCharge" }
         quick_sale:
           type: boolean
           readOnly: true
@@ -932,8 +940,8 @@ components:
           properties:
             receivable: { type: number, format: double }
             payable_to_suppliers: { type: number, format: double }
-            commission_payable: { type: number, format: double }
-            freight_payable: { type: number, format: double }
+            commission_payable: { type: number, format: double, description: "Em aberto das contas a pagar de Sales cujo credor é Partner" }
+            freight_payable: { type: number, format: double, description: "Em aberto das demais contas a pagar de Sales (frete, instalador, outros, a definir)" }
         open_deliveries:
           type: integer
           description: "Sales não excluídas com delivery_status = TO_DELIVER (hoje)"
@@ -1138,6 +1146,52 @@ components:
           format: uuid
           nullable: true
           description: "Ausente = fornecedor da compra; null explícito = credor a definir"
+
+    SaleChargeKind: { type: string, enum: [FREIGHT, OTHER] }
+    SaleCostKind: { type: string, enum: [FREIGHT, LABOR, COMMISSION, OTHER] }
+
+    SaleCharge:
+      type: object
+      description: "Cobrança adicional ao cliente (frete cobrado…) — AYD-009. Entra no preço e na conta a receber."
+      properties:
+        id: { type: string, format: uuid }
+        sale_id: { type: string, format: uuid }
+        kind: { $ref: "#/components/schemas/SaleChargeKind" }
+        amount: { type: number, format: double, description: "> 0" }
+        description: { type: string, nullable: true }
+        obligation_id: { type: string, format: uuid, nullable: true, description: "Conta a receber do cliente (AYD-007)" }
+        created_at: { type: string, format: date-time }
+
+    SaleCost:
+      type: object
+      description: "Custo da venda além das pedras, previsto e editável, com credor — AYD-009."
+      properties:
+        id: { type: string, format: uuid }
+        sale_id: { type: string, format: uuid }
+        kind: { $ref: "#/components/schemas/SaleCostKind" }
+        amount: { type: number, format: double, description: ">= 0" }
+        description: { type: string, nullable: true }
+        payee:
+          type: object
+          nullable: true
+          description: "null = a definir"
+          properties:
+            type: { type: string, enum: [SUPPLIER, PARTNER] }
+            id: { type: string, format: uuid }
+            name: { type: string }
+        sale_item_id: { type: string, format: uuid, nullable: true }
+        obligation_id: { type: string, format: uuid, nullable: true, description: "Conta a pagar onde o custo caiu (AYD-007)" }
+        created_at: { type: string, format: date-time }
+
+    SaleComposition:
+      type: object
+      properties:
+        items_total: { type: number, format: double }
+        charges: { type: array, items: { $ref: "#/components/schemas/SaleCharge" } }
+        charges_total: { type: number, format: double }
+        price_total: { type: number, format: double, description: "items_total + charges_total (= total_venda)" }
+        costs: { type: array, items: { $ref: "#/components/schemas/SaleCost" } }
+        costs_total: { type: number, format: double }
 
     PurchaseCharge:
       type: object
@@ -2558,16 +2612,6 @@ paths:
           schema:
             type: boolean
           description: "Se `true`, retorna apenas vendas com saldo a receber"
-        - name: freight_pending
-          in: query
-          schema:
-            type: boolean
-          description: "Se `true`, só Sales com frete ainda a pagar (`freight_payable` > 0), exceto CANCELED (AYD-004/AYD-007)"
-        - name: commission_pending
-          in: query
-          schema:
-            type: boolean
-          description: "Se `true`, só Sales com comissão ainda a pagar (`commission_payable` > 0), exceto CANCELED (AYD-004/AYD-007)"
         - name: from
           in: query
           schema:
@@ -3765,6 +3809,104 @@ paths:
         "401":
           description: Não autenticado
 
+  /api/v1/vendas/{id}/charges:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Vendas]
+      summary: Cobranças adicionais ao cliente
+      operationId: listSaleCharges
+      responses:
+        "200":
+          description: Cobranças não excluídas
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/SaleCharge" } }
+        "404": { description: Venda não encontrada }
+    post:
+      tags: [Vendas]
+      summary: Lança cobrança adicional (frete cobrado, outras)
+      operationId: createSaleCharge
+      description: "Body `{kind: FREIGHT|OTHER, amount > 0, description?}`. 400 amount ≤ 0 / kind inválido · 404 venda · 409 venda CANCELED. 201 com `warnings` (OVERSETTLED)."
+      responses:
+        "201":
+          description: Cobrança criada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SaleCharge" }
+  /api/v1/vendas/{id}/charges/{chargeId}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: chargeId, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      tags: [Vendas]
+      summary: Substitui a cobrança
+      operationId: updateSaleCharge
+      responses:
+        "200": { description: Cobrança atualizada (com `warnings`) }
+        "404": { description: Venda ou cobrança não encontrada }
+        "409": { description: Venda CANCELED }
+    delete:
+      tags: [Vendas]
+      summary: Exclui a cobrança (soft-delete)
+      operationId: deleteSaleCharge
+      responses:
+        "204": { description: Excluída }
+        "404": { description: Venda ou cobrança não encontrada }
+        "409": { description: Venda CANCELED }
+  /api/v1/vendas/{id}/costs:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Vendas]
+      summary: Custos da venda
+      operationId: listSaleCosts
+      responses:
+        "200":
+          description: Custos não excluídos
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/SaleCost" } }
+        "404": { description: Venda não encontrada }
+    post:
+      tags: [Vendas]
+      summary: Lança custo da venda (frete pago, instalador, comissão, outro)
+      operationId: createSaleCost
+      description: |
+        Body `{kind, amount >= 0, description?, payee_supplier_id? | payee_partner_id?, sale_item_id?}`.
+        COMMISSION → credor Partner (ausente = Partner indicador da Sale); FREIGHT/LABOR/OTHER → credor
+        Supplier; null explícito = a definir. Aceita venda CANCELED. 400 amount < 0, credor de tipo
+        incompatível ou ambos os credores · 404 credor ou venda. 201 com `warnings` (OVERSETTLED).
+      responses:
+        "201":
+          description: Custo criado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SaleCost" }
+  /api/v1/vendas/{id}/costs/{costId}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: costId, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      tags: [Vendas]
+      summary: Substitui o custo (valor previsto, credor…)
+      operationId: updateSaleCost
+      responses:
+        "200": { description: Custo atualizado (com `warnings`) }
+        "404": { description: Venda, custo ou credor não encontrado }
+    delete:
+      tags: [Vendas]
+      summary: Exclui o custo (soft-delete)
+      operationId: deleteSaleCost
+      responses:
+        "204": { description: Excluído }
+        "404": { description: Venda ou custo não encontrado }
   /api/v1/purchases/{id}/charges:
     parameters:
       - name: id

@@ -58,6 +58,8 @@ type (
 	MovementDirection   string // IN (entrada) | OUT (saída)
 
 	PurchaseChargeKind string // FREIGHT | UNLOADING | TAX | OTHER
+	SaleChargeKind     string // FREIGHT | OTHER (cobrado do cliente)
+	SaleCostKind       string // FREIGHT | LABOR | COMMISSION | OTHER (pago a terceiros pela venda)
 	AllocationMethod   string // BY_QUANTITY | BY_VALUE
 	PurchaseLineType   string // STOCK_ITEM | SALE_ITEM
 )
@@ -90,6 +92,8 @@ var Enums = map[reflect.Type][]string{
 	reflect.TypeFor[MovementDirection](): {"IN", "OUT"},
 
 	reflect.TypeFor[PurchaseChargeKind](): {"FREIGHT", "UNLOADING", "TAX", "OTHER"},
+	reflect.TypeFor[SaleChargeKind]():     {"FREIGHT", "OTHER"},
+	reflect.TypeFor[SaleCostKind]():       {"FREIGHT", "LABOR", "COMMISSION", "OTHER"},
 	reflect.TypeFor[AllocationMethod]():   {"BY_QUANTITY", "BY_VALUE"},
 	reflect.TypeFor[PurchaseLineType]():   {"STOCK_ITEM", "SALE_ITEM"},
 

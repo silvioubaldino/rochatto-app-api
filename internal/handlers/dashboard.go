@@ -259,7 +259,7 @@ func (h *DashboardHandler) getResumo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Lucro do periodo (RN-04: receita − custo − frete − comissão, uma vez por Sale)
+	// 3. Lucro do periodo (RN-04: receita − custo − custos da venda, uma vez por Sale)
 	err = h.db.WithContext(ctx).Raw(`
 		SELECT COALESCE(SUM(vr.lucro), 0)
 		FROM vw_vendas_resumo vr
@@ -300,9 +300,10 @@ func (h *DashboardHandler) getResumo(w http.ResponseWriter, r *http.Request) {
 
 	// 6. Comissoes pendentes
 	err = h.db.WithContext(ctx).Raw(`
-		SELECT COALESCE(SUM(commission_payable), 0)
-		FROM vw_vendas_resumo
-		WHERE delivery_status <> 'CANCELED'
+		SELECT COALESCE(SUM(o.open), 0)
+		FROM vw_obligations o
+		JOIN vendas v ON v.id = o.sale_id AND v.delivery_status <> 'CANCELED'
+		WHERE o.direction = 'PAYABLE' AND o.counterparty_type = 'PARTNER'
 	`).Scan(&resp.TotalComissoesPendentes).Error
 	if err != nil {
 		log.Printf("ERROR Dashboard total_comissoes_pendentes: %v", err)
@@ -426,7 +427,7 @@ func (h *DashboardHandler) getVendasPorMes(w http.ResponseWriter, r *http.Reques
 
 	// EXATAMENTE N meses, do (mês corrente − N + 1) ao mês corrente (São Paulo), crescente;
 	// meses sem Sale vêm zerados (generate_series LEFT JOIN agregado por mês). Uma linha por
-	// Sale (vw_vendas_resumo): frete e comissão entram uma vez por Sale, não por Item.
+	// Sale (vw_vendas_resumo): cobranças e custos da venda entram uma vez por Sale, não por Item.
 	now := today()
 	last := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	first := last.AddDate(0, -(meses - 1), 0)

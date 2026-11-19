@@ -73,9 +73,17 @@ type QuoteSummary struct {
 	TotalQuote   float64             `json:"total_quote"`
 }
 
+type QuoteCharge struct {
+	ID          UUID                   `json:"id"`
+	Kind        toolkit.SaleChargeKind `json:"kind"`
+	Amount      float64                `json:"amount"`
+	Description *string                `json:"description,omitempty"`
+}
+
 type QuoteDetail struct {
 	QuoteSummary
-	Items []QuoteItem `json:"items"`
+	Items   []QuoteItem   `json:"items"`
+	Charges []QuoteCharge `json:"charges"`
 }
 
 type SaleSummary struct {
@@ -94,11 +102,10 @@ type SaleSummary struct {
 	TotalReceived        float64                `json:"total_received"`
 	Receivable           float64                `json:"receivable"`
 	Profit               float64                `json:"profit"`
-	FreightAmount        float64                `json:"freight_amount"`
-	FreightPaid          float64                `json:"freight_paid"`
-	FreightPayable       float64                `json:"freight_payable"`
-	CommissionAmount     float64                `json:"commission_amount"`
-	CommissionPaid       bool                   `json:"commission_paid"`
+	ChargesTotal         float64                `json:"charges_total"`
+	CostsTotal           float64                `json:"costs_total"`
+	CostsPaid            float64                `json:"costs_paid"`
+	CostsOpen            float64                `json:"costs_open"`
 	Notes                *string                `json:"notes,omitempty"`
 }
 
@@ -125,10 +132,45 @@ type Receipt struct {
 	Notes         *string                `json:"notes,omitempty"`
 }
 
+type SaleCharge struct {
+	ID           UUID                   `json:"id"`
+	Kind         toolkit.SaleChargeKind `json:"kind"`
+	Amount       float64                `json:"amount"`
+	Description  *string                `json:"description,omitempty"`
+	ObligationID *UUID                  `json:"obligation_id,omitempty"`
+}
+
+type SaleCostPayee struct {
+	Type string `json:"type"`
+	ID   UUID   `json:"id"`
+	Name string `json:"name"`
+}
+
+type SaleCost struct {
+	ID           UUID                 `json:"id"`
+	Kind         toolkit.SaleCostKind `json:"kind"`
+	Amount       float64              `json:"amount"`
+	Description  *string              `json:"description,omitempty"`
+	Payee        *SaleCostPayee       `json:"payee,omitempty"`
+	SaleItemID   *UUID                `json:"sale_item_id,omitempty"`
+	ObligationID *UUID                `json:"obligation_id,omitempty"`
+}
+
+type SaleComposition struct {
+	ItemsTotal   float64      `json:"items_total"`
+	Charges      []SaleCharge `json:"charges"`
+	ChargesTotal float64      `json:"charges_total"`
+	PriceTotal   float64      `json:"price_total"`
+	Costs        []SaleCost   `json:"costs"`
+	CostsTotal   float64      `json:"costs_total"`
+}
+
 type SaleDetail struct {
 	SaleSummary
-	Items    []SaleItem `json:"items"`
-	Receipts []Receipt  `json:"receipts"`
+	Items       []SaleItem          `json:"items"`
+	Receipts    []Receipt           `json:"receipts"`
+	Composition SaleComposition     `json:"composition"`
+	Obligations []ObligationSummary `json:"obligations"`
 }
 
 // PurchaseSummary é o PurchaseDetail do AYD-002 sem as linhas (listagens).
@@ -382,15 +424,15 @@ type legacySale struct {
 	PaymentStatus       toolkit.PaymentStatus  `json:"payment_status"`
 	DataVenda           Date                   `json:"data_venda"`
 	DataEntregaPrevista *Date                  `json:"data_entrega_prevista"`
-	FreteValor          float64                `json:"frete_valor"`
-	ComissaoValor       float64                `json:"comissao_valor"`
 	Observacoes         *string                `json:"observacoes"`
 	TotalVenda          float64                `json:"total_venda"`
+	ChargesTotal        float64                `json:"charges_total"`
 	TotalCusto          float64                `json:"total_custo"`
+	CostsTotal          float64                `json:"costs_total"`
+	CostsPaid           float64                `json:"costs_paid"`
+	CostsOpen           float64                `json:"costs_open"`
 	TotalRecebido       float64                `json:"total_recebido"`
 	Receivable          float64                `json:"receivable"`
-	FreightPayable      float64                `json:"freight_payable"`
-	CommissionPayable   float64                `json:"commission_payable"`
 	Lucro               float64                `json:"lucro"`
 }
 
@@ -402,10 +444,8 @@ func (s legacySale) toEN() SaleSummary {
 		DeliveryStatus: s.DeliveryStatus, PaymentStatus: s.PaymentStatus,
 		Total: s.TotalVenda, TotalCost: s.TotalCusto, TotalReceived: s.TotalRecebido,
 		Receivable: s.Receivable, Profit: s.Lucro,
-		// Frete e comissão pagos são derivados das contas a pagar da Sale (AYD-007): o que não está
-		// mais a pagar foi quitado.
-		FreightAmount: s.FreteValor, FreightPaid: max(s.FreteValor-s.FreightPayable, 0), FreightPayable: s.FreightPayable,
-		CommissionAmount: s.ComissaoValor, CommissionPaid: s.ComissaoValor > 0 && s.CommissionPayable <= 0, Notes: opt(s.Observacoes),
+		ChargesTotal: s.ChargesTotal, CostsTotal: s.CostsTotal, CostsPaid: s.CostsPaid, CostsOpen: s.CostsOpen,
+		Notes: opt(s.Observacoes),
 	}
 }
 
@@ -439,15 +479,31 @@ func (i legacySaleItem) toEN() SaleItem {
 
 type legacySaleDetail struct {
 	legacySale
-	Itens []legacySaleItem `json:"itens"`
+	Itens       []legacySaleItem    `json:"itens"`
+	Composition SaleComposition     `json:"composition"`
+	Obligations []ObligationSummary `json:"obligations"`
 }
 
 // toEN devolve a Sale com os Items; os Receipts (recebimentos) são derivados da conta a receber
 // (parcelas e quitações — AYD-007) e preenchidos por get_sale via withReceipts.
 func (d legacySaleDetail) toEN() SaleDetail {
-	out := SaleDetail{SaleSummary: d.legacySale.toEN(), Items: make([]SaleItem, 0, len(d.Itens)), Receipts: []Receipt{}}
+	out := SaleDetail{SaleSummary: d.legacySale.toEN(), Items: make([]SaleItem, 0, len(d.Itens)), Receipts: []Receipt{},
+		Composition: d.Composition.normalized(), Obligations: d.Obligations}
+	if out.Obligations == nil {
+		out.Obligations = []ObligationSummary{}
+	}
 	for _, i := range d.Itens {
 		out.Items = append(out.Items, i.toEN())
 	}
 	return out
+}
+
+func (c SaleComposition) normalized() SaleComposition {
+	if c.Charges == nil {
+		c.Charges = []SaleCharge{}
+	}
+	if c.Costs == nil {
+		c.Costs = []SaleCost{}
+	}
+	return c
 }

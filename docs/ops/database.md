@@ -116,6 +116,19 @@ credores se perdem; as contas voltam a ter só o valor das linhas). Um cliente c
 abertas e statements preparados antes da migração pode ver `cached plan must not change result
 type`: reinicie o serviço após migrar.
 
+### Migration 012 (AYD-009 — composição da venda)
+
+A 012 cria `quote_charges`, `sale_charges` (cobranças ao cliente) e `sale_costs` (custos da venda
+com credor Supplier/Partner), troca os componentes `LEGACY_FREIGHT`/`LEGACY_COMMISSION` de
+`vw_obligation_components` por `SALE_CHARGE` (conta a receber) e `SALE_COST` (conta a pagar), cria o
+trigger de sincronização das contas em ambas e recria `vw_vendas_resumo` (preço, custos, lucro,
+`costs_paid`/`costs_open`) e `vw_quotes_resumo` (total com cobranças). `vendas.frete_valor` e
+`comissao_valor` migram para `sale_costs` (frete sem credor; comissão do Partner indicador) e são
+removidas; `frete_pago`/`comissao_paga` já haviam virado quitações na 010. A migração se
+auto-verifica (valor de cada conta da Sale igual antes e depois) e aborta se divergir. O `down 1`
+re-cria as colunas com a soma dos custos FREIGHT/COMMISSION — **lossy** (cobranças, custos
+LABOR/OTHER e credores se perdem). Reinicie o serviço após migrar (plano em cache do pgx).
+
 ## Alertas de pagamento (sem pg_cron)
 
 Desde a 007 a função `gerar_notificacoes_pagamentos()` é **migration** (idempotente; "hoje" =
