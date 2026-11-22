@@ -4,6 +4,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func TestCheckPurchaseTransition(t *testing.T) {
@@ -139,5 +141,31 @@ func TestEnums(t *testing.T) {
 	}
 	if ItemOrigins["A_ENTREGAR"] || SaleDeliveryStatuses["ENTREGUE"] {
 		t.Error("valores legados não podem ser aceitos")
+	}
+}
+
+func TestCheckBatch(t *testing.T) {
+	a, b := uuid.New(), uuid.New()
+	ok := []BatchItem{{ID: a, Origin: OriginMadeToOrder}, {ID: b, Origin: OriginFromStock}}
+	if err := CheckBatch(ok); err != nil {
+		t.Errorf("lote válido: %v", err)
+	}
+	many := make([]BatchItem, MaxBatchItems+1)
+	for i := range many {
+		many[i] = BatchItem{ID: uuid.New(), Origin: OriginMadeToOrder}
+	}
+	if CheckBatch(many[:MaxBatchItems]) != nil {
+		t.Error("50 Items deveria passar")
+	}
+	for name, items := range map[string][]BatchItem{
+		"vazio":       nil,
+		"51 itens":    many,
+		"sem id":      {{Origin: OriginMadeToOrder}},
+		"repetido":    {{ID: a, Origin: OriginMadeToOrder}, {ID: a, Origin: OriginFromStock}},
+		"origem ruim": {{ID: a, Origin: "X"}},
+	} {
+		if CheckBatch(items) == nil {
+			t.Errorf("%s deveria falhar", name)
+		}
 	}
 }

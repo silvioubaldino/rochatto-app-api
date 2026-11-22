@@ -41,6 +41,7 @@ func (h *VendasHandler) Register(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /vendas/{id}/itens", h.listItens)
 	mux.HandleFunc("POST /vendas/{id}/itens", h.createItem)
+	mux.HandleFunc("PATCH /vendas/{id}/itens/fulfillment", h.batchFulfillment) // AYD-011 C6
 	mux.HandleFunc("PUT /vendas/{id}/itens/{itemId}", h.updateItem)
 	mux.HandleFunc("DELETE /vendas/{id}/itens/{itemId}", h.deleteItem)
 
