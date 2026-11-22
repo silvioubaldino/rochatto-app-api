@@ -2,7 +2,7 @@
 id: SPEC-012
 type: spec
 title: Jornada do dono — números, fechamento da venda, lote, busca e pendências (api)
-status: draft
+status: done
 updated: 2026-11-22
 parents: [AYD-011@context]
 children: []
@@ -108,7 +108,16 @@ As pendências **reusam** `obligations.List` (novos filtros internos `NoPlan`/`N
    comprar = custo); `null` em ITEMS_WITHOUT_SUPPLIER e NEGATIVE_STOCK.
 8. **C10 RECEIVABLE/PAYABLE_DUE**: `amount` do Item = aberto da próxima parcela (ou da conta, sem
    parcelas); itens e `count` cobrem todas as contas, o corte de 20 vale só para `items`.
-9. **C6** Item de outra Sale ou inexistente → 400 com `item_id`.
+9. **C6** Item de outra Sale ou inexistente → 400 com `item_id`; `fornecedor_id` com FROM_STOCK segue o
+   PUT por Item (gravado como veio), ao contrário do `closing` (item 1).
+10. **C10 COST_WITHOUT_PAYEE** só conta contas a pagar ainda **em aberto/parciais** sem credor (conta
+    "a definir" já quitada não gera pendência); RECEIVABLE_WITHOUT_PLAN = sem parcela a vencer nem
+    `due_date` (inclui plano totalmente coberto com saldo em aberto).
+11. **`/convert` com corpo JSON malformado** responde 400 (antes o corpo era ignorado); corpo vazio ou
+    sem `closing` segue idêntico.
+12. **C9 `q` numérico** só busca número com ≥ 2 caracteres ("#7" ou "07"), como manda o AYD (q ≥ 2).
+13. Os `Create` de Quote/Sale/Purchase não conhecem `number` (default da sequência); as views de
+    resumo não foram recriadas.
 
 ## Passos de implementação
 
@@ -143,7 +152,7 @@ As pendências **reusam** `obligations.List` (novos filtros internos `NoPlan`/`N
 
 ## Checklist de entrega
 
-- [ ] Migração 014 (up/down) aplicada e testada
-- [ ] C1–C10 implementados e testados
-- [ ] Nenhum campo removido/renomeado; catálogo do connector idêntico
-- [ ] swagger, CLAUDE.md (fase 15) e changelog atualizados
+- [x] Migração 014 (up/down) aplicada e testada (up → down 1 → up)
+- [x] C1–C10 implementados e testados
+- [x] Nenhum campo removido/renomeado; catálogo do connector idêntico (`TestCatalogGolden` sem `-update`)
+- [x] swagger, CLAUDE.md (fase 15) e changelog atualizados
