@@ -15,6 +15,7 @@ import (
 	"github.com/silvioubaldino/sales-backend/internal/models"
 	"github.com/silvioubaldino/sales-backend/internal/obligations"
 	"github.com/silvioubaldino/sales-backend/internal/saleitem"
+	"github.com/silvioubaldino/sales-backend/internal/search"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -101,6 +102,7 @@ type itemRequest struct {
 
 type vendaListResponse struct {
 	ID                  uuid.UUID  `json:"id"`
+	Number              int        `json:"number"` // número humano (AYD-011 C1)
 	ClienteID           uuid.UUID  `json:"cliente_id"`
 	ClienteNome         string     `json:"cliente_nome"`
 	VendedorExternoID   *uuid.UUID `json:"vendedor_externo_id"`
@@ -123,6 +125,9 @@ type vendaListResponse struct {
 	Receivable          float64    `json:"receivable"` // RN-05: aberto da conta RECEIVABLE
 	Lucro               float64    `json:"lucro"`
 	CreatedAt           time.Time  `json:"created_at"`
+	// AYD-011 C3: resumo dos Items para a lista.
+	ItemsCount    int     `json:"items_count"`
+	FirstItemName *string `json:"first_item_name"`
 }
 
 type vendaDetailResponse struct {
@@ -146,6 +151,7 @@ type itemResponse struct {
 	Origin         *string    `json:"origin"` // null em Item de serviço
 	PurchaseID     *uuid.UUID `json:"purchase_id"`
 	PurchaseStatus *string    `json:"purchase_status"` // só leitura: status da Purchase do Item (null se não está em Purchase)
+	StockBalance   *float64   `json:"stock_balance"`   // AYD-011 C7: Balance atual do Product (só FROM_STOCK; null nos demais)
 	Quantidade     float64    `json:"quantidade"`
 	PrecoVendaUnit float64    `json:"preco_venda_unit"`
 	CustoUnit      float64    `json:"custo_unit"`
@@ -164,6 +170,9 @@ type itemMutationResponse struct {
 
 type vendaResumoRow struct {
 	ID                  uuid.UUID  `gorm:"column:id"`
+	Number              int        `gorm:"column:number"`
+	ItemsCount          int        `gorm:"column:items_count"`
+	FirstItemName       *string    `gorm:"column:first_item_name"`
 	ClienteID           uuid.UUID  `gorm:"column:cliente_id"`
 	VendedorExternoID   *uuid.UUID `gorm:"column:vendedor_externo_id"`
 	DeliveryStatus      string     `gorm:"column:delivery_status"`
@@ -190,6 +199,9 @@ type vendaResumoRow struct {
 func (row vendaResumoRow) toListResponse() vendaListResponse {
 	return vendaListResponse{
 		ID:                  row.ID,
+		Number:              row.Number,
+		ItemsCount:          row.ItemsCount,
+		FirstItemName:       row.FirstItemName,
 		ClienteID:           row.ClienteID,
 		ClienteNome:         row.ClienteNome,
 		VendedorExternoID:   row.VendedorExternoID,
@@ -218,7 +230,14 @@ func (row vendaResumoRow) toListResponse() vendaListResponse {
 // itemRow: Item de Sale + status da Purchase (LEFT JOIN).
 type itemRow struct {
 	models.ItemVenda
-	PurchaseStatus *string `gorm:"column:purchase_status"`
+	PurchaseStatus *string  `gorm:"column:purchase_status"`
+	StockBalance   *float64 `gorm:"column:stock_balance"`
+}
+
+func (r itemRow) toResponse() itemResponse {
+	resp := itemToResponse(r.ItemVenda, r.PurchaseStatus)
+	resp.StockBalance = r.StockBalance
+	return resp
 }
 
 func itemToResponse(item models.ItemVenda, purchaseStatus *string) itemResponse {
@@ -247,7 +266,11 @@ func itemToResponse(item models.ItemVenda, purchaseStatus *string) itemResponse 
 func (h *VendasHandler) resumoQuery(ctx context.Context) *gorm.DB {
 	return h.db.WithContext(ctx).
 		Table("vw_vendas_resumo vr").
-		Select("vr.*, c.nome AS cliente_nome, ve.nome AS vendedor_externo_nome"). // vr.* inclui quote_id, delivery_status, payment_status
+		Select(`vr.*, vn.number AS number, c.nome AS cliente_nome, ve.nome AS vendedor_externo_nome,
+			(SELECT COUNT(*) FROM itens_venda iv WHERE iv.venda_id = vr.id) AS items_count,
+			(SELECT iv.produto_nome FROM itens_venda iv WHERE iv.venda_id = vr.id
+			  ORDER BY iv.created_at, iv.id LIMIT 1) AS first_item_name`). // vr.* inclui quote_id, delivery_status, payment_status
+		Joins("JOIN vendas vn ON vn.id = vr.id").
 		Joins("JOIN clientes c ON c.id = vr.cliente_id").
 		Joins("LEFT JOIN vendedores_externos ve ON ve.id = vr.vendedor_externo_id")
 }
@@ -267,8 +290,11 @@ func (h *VendasHandler) fetchVendaResumo(ctx context.Context, id uuid.UUID) (*ve
 func fetchItemRows(db *gorm.DB, where string, args ...any) ([]itemRow, error) {
 	var rows []itemRow
 	err := db.Table("itens_venda").
-		Select("itens_venda.*, p.status AS purchase_status").
+		Select(`itens_venda.*, p.status AS purchase_status,
+			CASE WHEN itens_venda.origin = 'FROM_STOCK' AND itens_venda.produto_id IS NOT NULL
+			     THEN COALESCE(sb.balance, 0) END AS stock_balance`).
 		Joins("LEFT JOIN purchases p ON p.id = itens_venda.purchase_id").
+		Joins("LEFT JOIN vw_stock_balance sb ON sb.product_id = itens_venda.produto_id").
 		Where(where, args...).
 		Order("itens_venda.created_at ASC").
 		Scan(&rows).Error
@@ -282,7 +308,7 @@ func (h *VendasHandler) fetchItens(ctx context.Context, vendaID uuid.UUID) ([]it
 	}
 	out := make([]itemResponse, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, itemToResponse(r.ItemVenda, r.PurchaseStatus))
+		out = append(out, r.toResponse())
 	}
 	return out, nil
 }
@@ -419,6 +445,16 @@ func (h *VendasHandler) list(w http.ResponseWriter, r *http.Request) {
 		}
 		query = query.Where("vr.data_venda "+f.op+" ?", d)
 	}
+	if ref := q.Get("referrer_id"); ref != "" { // AYD-011 C4: Sales indicadas pelo Partner
+		if _, err := uuid.Parse(ref); err != nil {
+			models.WriteError(w, http.StatusBadRequest, "referrer_id inválido")
+			return
+		}
+		query = query.Where("vr.vendedor_externo_id = ?", ref)
+	}
+	if term := strings.TrimSpace(q.Get("q")); term != "" {
+		query = applySaleSearch(query, term)
+	}
 	if q.Get("pendente") == "true" {
 		// "a receber" exclui Sales canceladas (AYD-002).
 		query = query.Where("vr.receivable > 0 AND vr.delivery_status <> 'CANCELED'")
@@ -438,6 +474,25 @@ func (h *VendasHandler) list(w http.ResponseWriter, r *http.Request) {
 		vendas = append(vendas, row.toListResponse())
 	}
 	writeJSON(w, http.StatusOK, vendas)
+}
+
+// applySaleSearch aplica o filtro q da lista (AYD-011 C4): nome do cliente, nome de Item
+// (contém, sem acento nem caixa) ou número da Sale (exato, quando q é numérico).
+func applySaleSearch(query *gorm.DB, term string) *gorm.DB {
+	like := "%" + search.EscapeLike(search.Normalize(term)) + "%"
+	cond := foldLike("c.nome") + ` OR EXISTS (SELECT 1 FROM itens_venda iq WHERE iq.venda_id = vr.id AND ` +
+		foldLike("iq.produto_nome") + `)`
+	args := []any{like, like}
+	if n, ok := search.AsNumber(term); ok {
+		cond += " OR vn.number = ?"
+		args = append(args, n)
+	}
+	return query.Where("("+cond+")", args...)
+}
+
+// foldLike: coluna sem acento/caixa LIKE ? (o parâmetro já vem normalizado e escapado).
+func foldLike(col string) string {
+	return strings.Replace(foldSQL, "%s", col, 1) + ` LIKE ? ESCAPE '\'`
 }
 
 func (h *VendasHandler) get(w http.ResponseWriter, r *http.Request) {
@@ -695,6 +750,16 @@ func stockWarnings(tx *gorm.DB, item models.ItemVenda) ([]string, error) {
 	return warnings, nil
 }
 
+// itemStockBalance devolve o Balance atual do Product de um Item FROM_STOCK (AYD-011 C7); nil nos demais.
+func itemStockBalance(tx *gorm.DB, item models.ItemVenda) (*float64, error) {
+	if item.Origin == nil || *item.Origin != fulfillment.OriginFromStock || item.ProdutoID == nil {
+		return nil, nil
+	}
+	var balance float64
+	err := tx.Raw(`SELECT COALESCE((SELECT balance FROM vw_stock_balance WHERE product_id = ?), 0)`, *item.ProdutoID).Scan(&balance).Error
+	return &balance, err
+}
+
 // resolveItemCost aplica RN-16: FROM_STOCK sem custo_unit no payload → custo da última
 // entrada. Sem entrada registrada, usa fallback (custo atual do Item no PUT; custo de
 // referência do Product no POST; senão 0).
@@ -834,7 +899,8 @@ func (h *VendasHandler) createItem(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		resp = itemMutationResponse{itemResponse: itemToResponse(item, nil), Warnings: warnings}
-		return nil
+		resp.StockBalance, err = itemStockBalance(tx, item)
+		return err
 	})
 	if err != nil {
 		writeTxError(w, "CreateItem", err)
@@ -982,7 +1048,8 @@ func (h *VendasHandler) updateItem(w http.ResponseWriter, r *http.Request) {
 			ps = &purchaseStatus
 		}
 		resp = itemMutationResponse{itemResponse: itemToResponse(item, ps), Warnings: warnings}
-		return nil
+		resp.StockBalance, err = itemStockBalance(tx, item)
+		return err
 	})
 	if err != nil {
 		writeTxError(w, "UpdateItem", err)

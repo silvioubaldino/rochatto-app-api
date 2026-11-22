@@ -40,6 +40,9 @@ type Produto struct {
 	// AYD-003: categoria (campos novos em inglês num recurso legado — ADR-001).
 	CategoryID   *uuid.UUID `gorm:"column:category_id;type:uuid"       json:"category_id"`
 	CategoryName *string    `gorm:"column:category_name;->;-:migration" json:"category_name"` // só leitura (JOIN)
+	// AYD-011 C8: fornecedor habitual — só sugestão para o atendimento sob encomenda.
+	DefaultSupplierID   *uuid.UUID `gorm:"column:default_supplier_id;type:uuid"            json:"default_supplier_id"`
+	DefaultSupplierName *string    `gorm:"column:default_supplier_name;->;-:migration"     json:"default_supplier_name"` // só leitura (JOIN)
 }
 
 func (Produto) TableName() string { return "produtos" }

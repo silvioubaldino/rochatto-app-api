@@ -38,6 +38,8 @@ type produtoRequest struct {
 	Unidade         *string  `json:"unidade"`
 	// AYD-003 (campo novo em inglês)
 	CategoryID *uuid.UUID `json:"category_id"`
+	// AYD-011 C8: ausente mantém o valor atual (PUT); null explícito limpa.
+	DefaultSupplierID optionalUUID `json:"default_supplier_id"`
 }
 
 // baseQuery lê produtos com o nome da categoria (category_name). O JOIN não filtra
@@ -45,8 +47,9 @@ type produtoRequest struct {
 func (h *ProdutosHandler) baseQuery(ctx context.Context) *gorm.DB {
 	return h.db.WithContext(ctx).
 		Model(&models.Produto{}).
-		Select("produtos.*, pc.name AS category_name").
-		Joins("LEFT JOIN product_categories pc ON pc.id = produtos.category_id")
+		Select("produtos.*, pc.name AS category_name, fs.nome AS default_supplier_name").
+		Joins("LEFT JOIN product_categories pc ON pc.id = produtos.category_id").
+		Joins("LEFT JOIN fornecedores fs ON fs.id = produtos.default_supplier_id")
 }
 
 func (h *ProdutosHandler) fetch(ctx context.Context, id uuid.UUID) (models.Produto, error) {
@@ -82,6 +85,26 @@ func (h *ProdutosHandler) checkCategory(w http.ResponseWriter, ctx context.Conte
 		}
 		log.Printf("ERROR checkCategory: %v", err)
 		models.WriteError(w, http.StatusInternalServerError, "erro interno")
+		return false
+	}
+	return true
+}
+
+// checkDefaultSupplier valida default_supplier_id (400 se inexistente ou excluído); manter o
+// fornecedor já gravado é permitido mesmo excluído (como a categoria — AYD-003). Escreve a
+// resposta e devolve false quando inválido.
+func (h *ProdutosHandler) checkDefaultSupplier(w http.ResponseWriter, ctx context.Context, id, current *uuid.UUID) bool {
+	if id == nil || (current != nil && *current == *id) {
+		return true
+	}
+	var n int64
+	if err := h.db.WithContext(ctx).Model(&models.Fornecedor{}).Where("id = ?", *id).Count(&n).Error; err != nil {
+		log.Printf("ERROR checkDefaultSupplier: %v", err)
+		models.WriteError(w, http.StatusInternalServerError, "erro interno")
+		return false
+	}
+	if n == 0 {
+		models.WriteError(w, http.StatusBadRequest, "fornecedor habitual não encontrado")
 		return false
 	}
 	return true
@@ -153,6 +176,9 @@ func (h *ProdutosHandler) create(w http.ResponseWriter, r *http.Request) {
 	if !h.checkCategory(w, r.Context(), req.CategoryID, nil) {
 		return
 	}
+	if !h.checkDefaultSupplier(w, r.Context(), req.DefaultSupplierID.Value, nil) {
+		return
+	}
 
 	p := models.Produto{
 		Nome:            nome,
@@ -161,6 +187,8 @@ func (h *ProdutosHandler) create(w http.ResponseWriter, r *http.Request) {
 		CustoReferencia: req.CustoReferencia,
 		Unidade:         req.Unidade,
 		CategoryID:      req.CategoryID,
+
+		DefaultSupplierID: req.DefaultSupplierID.Value,
 	}
 
 	if err := h.db.WithContext(r.Context()).Create(&p).Error; err != nil {
@@ -210,6 +238,12 @@ func (h *ProdutosHandler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	if !h.checkCategory(w, r.Context(), req.CategoryID, p.CategoryID) {
 		return
+	}
+	if req.DefaultSupplierID.Set {
+		if !h.checkDefaultSupplier(w, r.Context(), req.DefaultSupplierID.Value, p.DefaultSupplierID) {
+			return
+		}
+		p.DefaultSupplierID = req.DefaultSupplierID.Value
 	}
 
 	p.Nome = nome

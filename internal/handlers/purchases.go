@@ -92,6 +92,7 @@ type purchaseStatusRequest struct {
 
 type purchaseSummaryResponse struct {
 	ID               uuid.UUID `json:"id"`
+	Number           int       `json:"number"` // número humano (AYD-011 C1)
 	Kind             string    `json:"kind"`
 	Status           string    `json:"status"`
 	SupplierID       uuid.UUID `json:"supplier_id"`
@@ -187,6 +188,7 @@ type pendingSupplierGroup struct {
 
 type purchaseResumoRow struct {
 	ID            uuid.UUID  `gorm:"column:id"`
+	Number        int        `gorm:"column:number"`
 	Kind          string     `gorm:"column:kind"`
 	Status        string     `gorm:"column:status"`
 	SupplierID    uuid.UUID  `gorm:"column:supplier_id"`
@@ -209,6 +211,7 @@ type purchaseResumoRow struct {
 func (row purchaseResumoRow) toSummary() purchaseSummaryResponse {
 	return purchaseSummaryResponse{
 		ID:            row.ID,
+		Number:        row.Number,
 		Kind:          row.Kind,
 		Status:        row.Status,
 		SupplierID:    row.SupplierID,
@@ -233,7 +236,8 @@ func (row purchaseResumoRow) toSummary() purchaseSummaryResponse {
 
 func purchaseResumoQuery(db *gorm.DB) *gorm.DB {
 	return db.Table("vw_purchases_resumo pr").
-		Select("pr.*, f.nome AS supplier_name").
+		Select("pr.*, pn.number AS number, f.nome AS supplier_name").
+		Joins("JOIN purchases pn ON pn.id = pr.id").
 		Joins("JOIN fornecedores f ON f.id = pr.supplier_id")
 }
 

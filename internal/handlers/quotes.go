@@ -14,6 +14,7 @@ import (
 	"github.com/silvioubaldino/sales-backend/internal/fulfillment"
 	"github.com/silvioubaldino/sales-backend/internal/models"
 	"github.com/silvioubaldino/sales-backend/internal/saleitem"
+	"github.com/silvioubaldino/sales-backend/internal/search"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -94,6 +95,9 @@ type quoteCreateRequest struct {
 type quoteUpdateRequest struct {
 	ReferrerID *uuid.UUID `json:"referrer_id"`
 	Notes      *string    `json:"notes"`
+	// AYD-011 C2: cabeçalho editável enquanto OPEN; ausente = não muda.
+	CustomerID *uuid.UUID `json:"customer_id"`
+	QuoteDate  *string    `json:"quote_date"`
 	// Charges: ausente/null = não mexe; lista (mesmo vazia) = substitui o conjunto (id mantém a linha).
 	Charges *[]quoteChargeRequest `json:"charges"`
 }
@@ -107,6 +111,7 @@ type quoteStatusRequest struct {
 
 type quoteListResponse struct {
 	ID           uuid.UUID  `json:"id"`
+	Number       int        `json:"number"` // número humano (AYD-011 C1)
 	CustomerID   uuid.UUID  `json:"customer_id"`
 	CustomerName string     `json:"customer_name"`
 	ReferrerID   *uuid.UUID `json:"referrer_id"`
@@ -120,6 +125,11 @@ type quoteListResponse struct {
 	ItemsTotal   float64    `json:"items_total"`
 	ChargesTotal float64    `json:"charges_total"`
 	CreatedAt    time.Time  `json:"created_at"`
+	// AYD-011 C2/C3: Sale criada por este Quote (WON) e resumo dos Items para a lista.
+	SaleID        *uuid.UUID `json:"sale_id"`
+	SaleNumber    *int       `json:"sale_number"`
+	ItemsCount    int        `json:"items_count"`
+	FirstItemName *string    `json:"first_item_name"`
 }
 
 type quoteDetailResponse struct {
@@ -142,14 +152,24 @@ type quoteItemResponse struct {
 }
 
 type convertResponse struct {
-	SaleID  uuid.UUID `json:"sale_id"`
-	QuoteID uuid.UUID `json:"quote_id"`
+	SaleID     uuid.UUID `json:"sale_id"`
+	QuoteID    uuid.UUID `json:"quote_id"`
+	SaleNumber int       `json:"sale_number"`
+	Warnings   []any     `json:"warnings"`
+}
+
+// saleNumber lê o número humano da Sale (AYD-011 C1).
+func saleNumber(db *gorm.DB, saleID uuid.UUID) (int, error) {
+	var n int
+	err := db.Raw(`SELECT number FROM vendas WHERE id = ?`, saleID).Scan(&n).Error
+	return n, err
 }
 
 // --- Internal row type for scanning vw_quotes_resumo ---
 
 type quoteResumoRow struct {
 	ID           uuid.UUID  `gorm:"column:id"`
+	Number       int        `gorm:"column:number"`
 	CustomerID   uuid.UUID  `gorm:"column:customer_id"`
 	ReferrerID   *uuid.UUID `gorm:"column:referrer_id"`
 	Status       string     `gorm:"column:status"`
@@ -163,24 +183,34 @@ type quoteResumoRow struct {
 	ChargesTotal float64    `gorm:"column:charges_total"`
 	CustomerName string     `gorm:"column:customer_name"`
 	ReferrerName *string    `gorm:"column:referrer_name"`
+
+	SaleID        *uuid.UUID `gorm:"column:sale_id"`
+	SaleNumber    *int       `gorm:"column:sale_number"`
+	ItemsCount    int        `gorm:"column:items_count"`
+	FirstItemName *string    `gorm:"column:first_item_name"`
 }
 
 func (row quoteResumoRow) toListResponse() quoteListResponse {
 	return quoteListResponse{
-		ID:           row.ID,
-		CustomerID:   row.CustomerID,
-		CustomerName: row.CustomerName,
-		ReferrerID:   row.ReferrerID,
-		ReferrerName: row.ReferrerName,
-		Status:       row.Status,
-		LostReason:   row.LostReason,
-		QuoteDate:    row.QuoteDate.Format("2006-01-02"),
-		Notes:        row.Notes,
-		QuickSale:    row.QuickSale,
-		TotalQuote:   row.TotalQuote,
-		ItemsTotal:   row.ItemsTotal,
-		ChargesTotal: row.ChargesTotal,
-		CreatedAt:    row.CreatedAt,
+		ID:            row.ID,
+		Number:        row.Number,
+		SaleID:        row.SaleID,
+		SaleNumber:    row.SaleNumber,
+		ItemsCount:    row.ItemsCount,
+		FirstItemName: row.FirstItemName,
+		CustomerID:    row.CustomerID,
+		CustomerName:  row.CustomerName,
+		ReferrerID:    row.ReferrerID,
+		ReferrerName:  row.ReferrerName,
+		Status:        row.Status,
+		LostReason:    row.LostReason,
+		QuoteDate:     row.QuoteDate.Format("2006-01-02"),
+		Notes:         row.Notes,
+		QuickSale:     row.QuickSale,
+		TotalQuote:    row.TotalQuote,
+		ItemsTotal:    row.ItemsTotal,
+		ChargesTotal:  row.ChargesTotal,
+		CreatedAt:     row.CreatedAt,
 	}
 }
 
@@ -201,13 +231,24 @@ func quoteItemToResponse(item models.QuoteItem) quoteItemResponse {
 
 // --- Helper methods ---
 
-func (h *QuotesHandler) fetchQuoteResumo(ctx context.Context, id uuid.UUID) (*quoteResumoRow, error) {
-	var row quoteResumoRow
-	result := h.db.WithContext(ctx).
-		Table("vw_quotes_resumo qr").
-		Select("qr.*, c.nome AS customer_name, ve.nome AS referrer_name").
+// quoteResumoQuery lê vw_quotes_resumo com cliente, indicador, número humano (C1), a Sale criada (C2)
+// e o resumo dos Items (C3 — subconsultas escalares, sem fan-out).
+func quoteResumoQuery(db *gorm.DB) *gorm.DB {
+	return db.Table("vw_quotes_resumo qr").
+		Select(`qr.*, qn.number AS number, c.nome AS customer_name, ve.nome AS referrer_name,
+			sv.id AS sale_id, sv.number AS sale_number,
+			(SELECT COUNT(*) FROM quote_items qi WHERE qi.quote_id = qr.id) AS items_count,
+			(SELECT qi.product_name FROM quote_items qi WHERE qi.quote_id = qr.id
+			  ORDER BY qi.created_at, qi.id LIMIT 1) AS first_item_name`).
+		Joins("JOIN quotes qn ON qn.id = qr.id").
 		Joins("JOIN clientes c ON c.id = qr.customer_id").
 		Joins("LEFT JOIN vendedores_externos ve ON ve.id = qr.referrer_id").
+		Joins("LEFT JOIN vendas sv ON sv.quote_id = qr.id AND sv.deleted_at IS NULL")
+}
+
+func (h *QuotesHandler) fetchQuoteResumo(ctx context.Context, id uuid.UUID) (*quoteResumoRow, error) {
+	var row quoteResumoRow
+	result := quoteResumoQuery(h.db.WithContext(ctx)).
 		Where("qr.id = ?", id).
 		Scan(&row)
 	if result.Error != nil {
@@ -385,11 +426,7 @@ func (h *QuotesHandler) fetchQuoteForWrite(w http.ResponseWriter, ctx context.Co
 // ============================================================
 
 func (h *QuotesHandler) list(w http.ResponseWriter, r *http.Request) {
-	query := h.db.WithContext(r.Context()).
-		Table("vw_quotes_resumo qr").
-		Select("qr.*, c.nome AS customer_name, ve.nome AS referrer_name").
-		Joins("JOIN clientes c ON c.id = qr.customer_id").
-		Joins("LEFT JOIN vendedores_externos ve ON ve.id = qr.referrer_id")
+	query := quoteResumoQuery(h.db.WithContext(r.Context()))
 
 	if status := r.URL.Query().Get("status"); status != "" {
 		if !validQuoteStatuses[status] {
@@ -419,9 +456,21 @@ func (h *QuotesHandler) list(w http.ResponseWriter, r *http.Request) {
 		}
 		query = query.Where("qr.customer_id = ?", customerID)
 	}
+	// AYD-011 C4: referrer_id filtra por Partner; q casa também o número do Quote.
+	if ref := r.URL.Query().Get("referrer_id"); ref != "" {
+		if _, err := uuid.Parse(ref); err != nil {
+			models.WriteError(w, http.StatusBadRequest, "referrer_id inválido")
+			return
+		}
+		query = query.Where("qr.referrer_id = ?", ref)
+	}
 	if q := strings.TrimSpace(r.URL.Query().Get("q")); q != "" {
 		like := "%" + q + "%"
-		query = query.Where("c.nome ILIKE ? OR qr.notes ILIKE ?", like, like)
+		if n, ok := search.AsNumber(q); ok {
+			query = query.Where("c.nome ILIKE ? OR qr.notes ILIKE ? OR qn.number = ?", like, like, n)
+		} else {
+			query = query.Where("c.nome ILIKE ? OR qr.notes ILIKE ?", like, like)
+		}
 	}
 
 	query = query.Order("qr.quote_date DESC, qr.created_at DESC")
@@ -614,6 +663,10 @@ func (h *QuotesHandler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.applyQuoteHeader(r.Context(), quote, req); err != nil {
+		writeTxError(w, "UpdateQuote header", err)
+		return
+	}
 	quote.ReferrerID = req.ReferrerID
 	quote.Notes = req.Notes
 
@@ -644,6 +697,29 @@ func (h *QuotesHandler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// applyQuoteHeader aplica customer_id e quote_date do PUT (AYD-011 C2): ausente = não muda;
+// cliente inexistente ou excluído e data inválida → 400.
+func (h *QuotesHandler) applyQuoteHeader(ctx context.Context, quote *models.Quote, req quoteUpdateRequest) error {
+	if req.CustomerID != nil && *req.CustomerID != quote.CustomerID {
+		var n int64
+		if err := h.db.WithContext(ctx).Model(&models.Cliente{}).Where("id = ?", *req.CustomerID).Count(&n).Error; err != nil {
+			return err
+		}
+		if n == 0 {
+			return errStatus(http.StatusBadRequest, "customer não encontrado")
+		}
+		quote.CustomerID = *req.CustomerID
+	}
+	if req.QuoteDate != nil {
+		d, err := parseDate(*req.QuoteDate)
+		if err != nil {
+			return errStatus(http.StatusBadRequest, "quote_date inválida (formato: YYYY-MM-DD)")
+		}
+		quote.QuoteDate = d
+	}
+	return nil
 }
 
 func (h *QuotesHandler) delete(w http.ResponseWriter, r *http.Request) {
@@ -1047,12 +1123,17 @@ func (h *QuotesHandler) convert(w http.ResponseWriter, r *http.Request) {
 		writeConvertError(w, "ConvertQuote", err)
 		return
 	}
+	number, err := saleNumber(tx, venda.ID)
+	if err != nil {
+		writeTxError(w, "ConvertQuote number", err)
+		return
+	}
 	if err := tx.Commit().Error; err != nil {
 		log.Printf("ERROR ConvertQuote commit: %v", err)
 		models.WriteError(w, http.StatusInternalServerError, "erro interno")
 		return
 	}
-	writeJSON(w, http.StatusCreated, convertResponse{SaleID: venda.ID, QuoteID: quote.ID})
+	writeJSON(w, http.StatusCreated, convertResponse{SaleID: venda.ID, QuoteID: quote.ID, SaleNumber: number, Warnings: []any{}})
 }
 
 // quickSale cria o Quote e o converte em Sale na mesma transação (venda rápida — AYD-001).
@@ -1085,10 +1166,15 @@ func (h *QuotesHandler) quickSale(w http.ResponseWriter, r *http.Request) {
 		writeConvertError(w, "QuickSale convert", err)
 		return
 	}
+	number, err := saleNumber(tx, venda.ID)
+	if err != nil {
+		writeTxError(w, "QuickSale number", err)
+		return
+	}
 	if err := tx.Commit().Error; err != nil {
 		log.Printf("ERROR QuickSale commit: %v", err)
 		models.WriteError(w, http.StatusInternalServerError, "erro interno")
 		return
 	}
-	writeJSON(w, http.StatusCreated, convertResponse{SaleID: venda.ID, QuoteID: quote.ID})
+	writeJSON(w, http.StatusCreated, convertResponse{SaleID: venda.ID, QuoteID: quote.ID, SaleNumber: number, Warnings: []any{}})
 }

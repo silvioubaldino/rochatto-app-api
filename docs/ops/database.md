@@ -139,6 +139,14 @@ de serviço grava NULL explícito). Nenhuma view muda: somam os Items inteiros, 
 os Items de serviço viram Items sob encomenda (sem Product nem Supplier) e passam a aparecer na
 fila "a comprar"; revise-os antes de reverter.
 
+### Migration 014 (AYD-011 — número humano e fornecedor habitual)
+
+A 014 adiciona `number` (sequência própria, `NOT NULL UNIQUE`) a `quotes`, `vendas` e `purchases`, com
+backfill por `created_at, id` (inclui soft-deletados), e `produtos.default_supplier_id`. Troca só o
+`origin_label` de `vw_obligations` ("Venda nº 98 · Cliente"; mesmas colunas). O `down 1` remove as
+colunas e restaura o label — **lossy** (números e fornecedor habitual se perdem). Reinicie o serviço
+após migrar.
+
 ## Alertas de pagamento (sem pg_cron)
 
 Desde a 007 a função `gerar_notificacoes_pagamentos()` é **migration** (idempotente; "hoje" =

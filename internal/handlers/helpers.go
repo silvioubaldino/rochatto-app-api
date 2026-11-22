@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/silvioubaldino/sales-backend/internal/models"
 )
@@ -110,4 +111,25 @@ func formatDate(t *time.Time) *string {
 func todayDate() time.Time {
 	t := today()
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+// optionalUUID distingue campo ausente (Set=false: mantém o valor) de null explícito (Set=true,
+// Value=nil: limpa) num corpo JSON — usado em PUTs aditivos (AYD-011 C8).
+type optionalUUID struct {
+	Set   bool
+	Value *uuid.UUID
+}
+
+func (o *optionalUUID) UnmarshalJSON(b []byte) error {
+	o.Set = true
+	if string(b) == "null" {
+		o.Value = nil
+		return nil
+	}
+	var id uuid.UUID
+	if err := json.Unmarshal(b, &id); err != nil {
+		return err
+	}
+	o.Value = &id
+	return nil
 }
