@@ -13,8 +13,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// --- Handler ---
-
 type DashboardHandler struct {
 	db *gorm.DB
 }
@@ -24,21 +22,17 @@ func NewDashboardHandler(db *gorm.DB) *DashboardHandler {
 }
 
 func (h *DashboardHandler) Register(mux *http.ServeMux) {
-	// Dashboard
 	mux.HandleFunc("GET /dashboard/kpis", h.getKPIs)
-	mux.HandleFunc("GET /dashboard/resumo", h.getResumo) // deprecated (AYD-005): use /dashboard/kpis
+	mux.HandleFunc("GET /dashboard/resumo", h.getResumo)
 	mux.HandleFunc("GET /dashboard/notificacoes", h.getNotificacoes)
 	mux.HandleFunc("POST /dashboard/notificacoes/{id}/lida", h.marcarNotificacaoLida)
 	mux.HandleFunc("POST /dashboard/notificacoes/marcar-todas-lidas", h.marcarTodasLidas)
 	mux.HandleFunc("POST /dashboard/gerar-notificacoes", h.gerarNotificacoes)
 
-	// Relatorios
 	mux.HandleFunc("GET /relatorios/vendas", h.getVendasPorMes)
 	mux.HandleFunc("GET /relatorios/produtos", h.getProdutosMaisVendidos)
 	mux.HandleFunc("GET /relatorios/servicos", h.getServicosMaisVendidos)
 }
-
-// --- Response types ---
 
 type periodoResponse struct {
 	Inicio string `json:"inicio"`
@@ -59,8 +53,8 @@ type notificacaoResponse struct {
 	ID            uuid.UUID  `json:"id"`
 	Tipo          string     `json:"tipo"`
 	VendaID       *uuid.UUID `json:"venda_id"`
-	ObligationID  uuid.UUID  `json:"obligation_id"`  // conta do alerta (AYD-007): o app abre a conta
-	InstallmentID *uuid.UUID `json:"installment_id"` // parcela, quando o alerta vem de parcela
+	ObligationID  uuid.UUID  `json:"obligation_id"`
+	InstallmentID *uuid.UUID `json:"installment_id"`
 	ClienteNome   string     `json:"cliente_nome"`
 	Valor         float64    `json:"valor"`
 	DataRef       string     `json:"data_ref"`
@@ -85,10 +79,10 @@ type vendasPorMesResponse struct {
 }
 
 type produtoRankingItem struct {
-	ProdutoID          *uuid.UUID `json:"produto_id"` // null para Items legados sem Product
+	ProdutoID          *uuid.UUID `json:"produto_id"`
 	ProdutoNome        string     `json:"produto_nome"`
 	TotalVendas        int64      `json:"total_vendas"`
-	Unit               *string    `json:"unit"` // produtos.unidade; null em Item legado sem Product
+	Unit               *string    `json:"unit"`
 	TotalQuantidade    float64    `json:"total_quantidade"`
 	TotalReceita       float64    `json:"total_receita"`
 	PrecoMedio         float64    `json:"preco_medio"`
@@ -99,8 +93,6 @@ type produtoRankingItem struct {
 type produtosRankingResponse struct {
 	Dados []produtoRankingItem `json:"dados"`
 }
-
-// KPIs do dashboard (AYD-005).
 
 type kpiSales struct {
 	Count         int64   `json:"count"`
@@ -132,8 +124,6 @@ type kpisResponse struct {
 	OpenDeliveries int64         `json:"open_deliveries"`
 }
 
-// getKPIs: GET /dashboard/kpis?from&to. Os blocos sales e balances vêm das MESMAS funções
-// de /finance/summary (querySalesBlock / queryBalances) — dashboard e Financeiro não divergem.
 func (h *DashboardHandler) getKPIs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	from, to, err := finance.ResolvePeriod(q.Get("from"), q.Get("to"), today())
@@ -158,7 +148,6 @@ func (h *DashboardHandler) getKPIs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Coorte de Quotes emitidos no período (quick sale fica de fora: não houve negociação).
 	var quotes kpiQuotes
 	if err := db.Raw(`
 		SELECT
@@ -198,13 +187,9 @@ func (h *DashboardHandler) getKPIs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// --- Endpoints ---
-
-// getResumo é DEPRECATED (AYD-005): mantido (saldos re-derivados das contas — AYD-007); use GET /dashboard/kpis.
 func (h *DashboardHandler) getResumo(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Parse period filter — default: current month.
 	now := time.Now()
 	dataInicio := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	dataFim := now
@@ -232,12 +217,8 @@ func (h *DashboardHandler) getResumo(w http.ResponseWriter, r *http.Request) {
 		Fim:    dataFim.Format("2006-01-02"),
 	}
 
-	// Totais por Sale vêm de vw_vendas_resumo (itens e recebimentos pré-agregados por Sale —
-	// sem fan-out; a view já exclui Sales com deleted_at). Sales CANCELED saem de todos os
-	// totais (AYD-002 / RN-15).
+	// Totais por Sale vêm de vw_vendas_resumo (itens e recebimentos pré-agregados por Sale — sem fan-out; a view já exclui Sales com deleted_at).
 
-	// 1. Total a receber (RN-05: total_venda − total_recebido de toda Sale, entregue ou não;
-	// pagamento a maior numa Sale não abate o saldo de outra)
 	err := h.db.WithContext(ctx).Raw(`
 		SELECT COALESCE(SUM(vr.receivable), 0)
 		FROM vw_vendas_resumo vr
@@ -249,7 +230,6 @@ func (h *DashboardHandler) getResumo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Total a pagar a Suppliers (RN-06): Σ payable (aberto das contas) das Purchases não excluídas
 	err = h.db.WithContext(ctx).Raw(`
 		SELECT COALESCE(SUM(pr.payable), 0)
 		FROM vw_purchases_resumo pr
@@ -260,7 +240,6 @@ func (h *DashboardHandler) getResumo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Lucro do periodo (RN-04: receita − custo − custos da venda, uma vez por Sale)
 	err = h.db.WithContext(ctx).Raw(`
 		SELECT COALESCE(SUM(vr.lucro), 0)
 		FROM vw_vendas_resumo vr
@@ -274,7 +253,6 @@ func (h *DashboardHandler) getResumo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 4. Total vendido no periodo
 	err = h.db.WithContext(ctx).Raw(`
 		SELECT COALESCE(SUM(vr.total_venda), 0)
 		FROM vw_vendas_resumo vr
@@ -288,7 +266,6 @@ func (h *DashboardHandler) getResumo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 5. Vendas abertas (a entregar)
 	err = h.db.WithContext(ctx).
 		Model(&models.Venda{}).
 		Where("delivery_status = 'TO_DELIVER'").
@@ -299,7 +276,6 @@ func (h *DashboardHandler) getResumo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 6. Comissoes pendentes
 	err = h.db.WithContext(ctx).Raw(`
 		SELECT COALESCE(SUM(o.open), 0)
 		FROM vw_obligations o
@@ -315,9 +291,6 @@ func (h *DashboardHandler) getResumo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// getNotificacoes gera os alertas antes de ler (AYD-004: sem pg_cron). A função SQL é
-// idempotente e preserva `lida`. Se a geração falhar, responde 500: alertas desatualizados
-// (ex.: Receipt já recebido ainda aparecendo) seriam piores que um erro visível.
 func (h *DashboardHandler) getNotificacoes(w http.ResponseWriter, r *http.Request) {
 	if err := h.db.WithContext(r.Context()).Exec("SELECT gerar_notificacoes_pagamentos()").Error; err != nil {
 		log.Printf("ERROR GetNotificacoes gerar: %v", err)
@@ -325,7 +298,6 @@ func (h *DashboardHandler) getNotificacoes(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// only_unread=false (SPEC-006, aditivo) inclui os alertas já lidos; o padrão segue só os não lidos.
 	query := h.db.WithContext(r.Context())
 	if r.URL.Query().Get("only_unread") != "false" {
 		query = query.Where("lida = FALSE")
@@ -426,9 +398,6 @@ func (h *DashboardHandler) getVendasPorMes(w http.ResponseWriter, r *http.Reques
 		SalesCount int64     `gorm:"column:sales_count"`
 	}
 
-	// EXATAMENTE N meses, do (mês corrente − N + 1) ao mês corrente (São Paulo), crescente;
-	// meses sem Sale vêm zerados (generate_series LEFT JOIN agregado por mês). Uma linha por
-	// Sale (vw_vendas_resumo): cobranças e custos da venda entram uma vez por Sale, não por Item.
 	now := today()
 	last := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	first := last.AddDate(0, -(meses - 1), 0)
@@ -472,8 +441,7 @@ func (h *DashboardHandler) getVendasPorMes(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, vendasPorMesResponse{Dados: dados})
 }
 
-// reportPeriod lê from/to (AYD-005) — vencem os legados data_inicio/data_fim, limite a limite —
-// e valida a ordem. Escreve o 400 e devolve ok=false quando inválido.
+// reportPeriod lê from/to — vencem os legados data_inicio/data_fim, limite a limite — e valida a ordem.
 func reportPeriod(w http.ResponseWriter, r *http.Request) (from, to *time.Time, ok bool) {
 	q := r.URL.Query()
 	parseBound := func(names ...string) (*time.Time, bool) {
@@ -522,10 +490,6 @@ func (h *DashboardHandler) getProdutosMaisVendidos(w http.ResponseWriter, r *htt
 		MargemMediaPercent float64    `gorm:"column:margem_media_percent"`
 	}
 
-	// Agrupa por Product (produto_id); Items legados sem produto_id caem no agrupamento por
-	// nome. Médias ponderadas pela quantidade (Σ qtd·preço / Σ qtd) e margem sobre os totais
-	// ((receita − custo) / receita), não média simples por linha de Item.
-	// Build query dynamically to avoid passing untyped NULL parameters to PostgreSQL.
 	baseQuery := `
 		SELECT
 			i.produto_id,
@@ -587,7 +551,7 @@ func (h *DashboardHandler) getProdutosMaisVendidos(w http.ResponseWriter, r *htt
 }
 
 type servicoRankingItem struct {
-	ServiceID          *uuid.UUID `json:"service_id"` // null para Items de serviço em texto livre
+	ServiceID          *uuid.UUID `json:"service_id"`
 	ServiceName        string     `json:"service_name"`
 	Unit               *string    `json:"unit"`
 	TotalVendas        int64      `json:"total_vendas"`
@@ -602,10 +566,6 @@ type servicosRankingResponse struct {
 	Dados []servicoRankingItem `json:"dados"`
 }
 
-// getServicosMaisVendidos: GET /relatorios/servicos?from&to (AYD-010) — só Items SERVICE, mesmas
-// regras do ranking de Products (médias ponderadas pela quantidade; margem sobre os totais). O
-// custo do serviço é o dos custos da venda ligados ao Item (sale_costs.sale_item_id), já que
-// custo_unit do Item de serviço é sempre 0.
 func (h *DashboardHandler) getServicosMaisVendidos(w http.ResponseWriter, r *http.Request) {
 	from, to, ok := reportPeriod(w, r)
 	if !ok {

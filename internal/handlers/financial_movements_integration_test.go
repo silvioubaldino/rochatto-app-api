@@ -1,7 +1,5 @@
 package handlers
 
-// Testes de integração do AYD-007 §4 / SPEC-008 — movimentações financeiras (dinheiro executado):
-// validações, correção, anulação, filtros e totais. Só rodam com TEST_DATABASE_URL.
 import (
 	"fmt"
 	"math/rand"
@@ -50,8 +48,6 @@ func TestIntegration_FinancialMovementCreateValidation(t *testing.T) {
 	}
 }
 
-// PUT é correção (carimba corrected_at) com o mesmo corpo do POST; 409 se deixaria Σ quitações
-// maior que |amount| ou inverteria o sinal de uma movimentação que já quita contas.
 func TestIntegration_FinancialMovementCorrection(t *testing.T) {
 	e := newFinanceEnv(t)
 	m := e.api.movement(map[string]any{"occurred_on": "2027-03-01", "amount": -100, "category": "VEHICLE", "payment_method": "PIX"})
@@ -63,7 +59,6 @@ func TestIntegration_FinancialMovementCorrection(t *testing.T) {
 		got["payment_method"] != "CASH" || got["description"] != "corrigido" || got["corrected_at"] == nil {
 		t.Fatalf("PUT = %d %v", code, got)
 	}
-	// Corpo = o do POST: campo omitido é limpo (substituição completa).
 	_, got = e.api.do("PUT", "/financial-movements/"+id, map[string]any{"occurred_on": "2027-03-05", "amount": -120.5, "category": "FIXED_COSTS"})
 	if got["payment_method"] != nil || got["description"] != nil {
 		t.Errorf("PUT deveria substituir: %v", got)
@@ -109,7 +104,6 @@ func TestIntegration_FinancialMovementCorrection(t *testing.T) {
 	}
 }
 
-// DELETE anula a movimentação e desfaz as suas quitações (soft-delete de ambos).
 func TestIntegration_FinancialMovementDeleteUndoesSettlements(t *testing.T) {
 	e := newFinanceEnv(t)
 	sale := e.simpleSale(1, 1000, 400)
@@ -143,7 +137,6 @@ func TestIntegration_FinancialMovementDeleteUndoesSettlements(t *testing.T) {
 	if code, _ := e.api.do("PUT", "/financial-movements/"+mid, map[string]any{"occurred_on": "2027-03-01", "amount": 1, "category": "SALE_RECEIPT"}); code != 404 {
 		t.Errorf("PUT em anulada = %d, want 404", code)
 	}
-	// Dá para receber de novo: a conta reabriu.
 	if code, _ := e.api.receive(sale, 1000, "2027-03-02", "PIX"); code != 201 {
 		t.Errorf("receber de novo = %d", code)
 	}
@@ -162,7 +155,7 @@ func TestIntegration_FinancialMovementListFiltersAndTotals(t *testing.T) {
 	e.api.do("POST", "/obligations/"+pacc+"/settle", map[string]any{"amount": 200, "movement": map[string]any{"occurred_on": d(8, 10), "payment_method": "PIX"}})
 	e.api.movement(map[string]any{"occurred_on": d(8, 12), "amount": -50, "category": "VEHICLE"})
 	e.api.movement(map[string]any{"occurred_on": d(8, 20), "amount": 700, "category": "OTHER_INCOME"})
-	e.api.movement(map[string]any{"occurred_on": d(9, 1), "amount": -999, "category": "TAXES"}) // fora do período
+	e.api.movement(map[string]any{"occurred_on": d(9, 1), "amount": -999, "category": "TAXES"})
 
 	get := func(q string) map[string]any {
 		t.Helper()
@@ -180,7 +173,6 @@ func TestIntegration_FinancialMovementListFiltersAndTotals(t *testing.T) {
 	e.wantNum("totals", tot, "inflow", 700)
 	e.wantNum("totals", tot, "outflow", 250)
 	e.wantNum("totals", tot, "net", 450)
-	// Mais recentes primeiro.
 	if first := all["items"].([]any)[0].(map[string]any); first["occurred_on"] != d(8, 20) {
 		t.Errorf("ordem = %v", first["occurred_on"])
 	}
@@ -194,7 +186,6 @@ func TestIntegration_FinancialMovementListFiltersAndTotals(t *testing.T) {
 	if r := get("from=" + from + "&to=" + to + "&category=VEHICLE"); num(r, "total") != 1 {
 		t.Errorf("category = %v", r)
 	}
-	// counterparty: movimentações que quitam contas daquele credor; o nome vem da conta.
 	r := get("from=" + from + "&to=" + to + "&counterparty_type=SUPPLIER&counterparty_id=" + sup)
 	if num(r, "total") != 1 {
 		t.Fatalf("counterparty = %v", r)
@@ -202,11 +193,9 @@ func TestIntegration_FinancialMovementListFiltersAndTotals(t *testing.T) {
 	if m := r["items"].([]any)[0].(map[string]any); m["counterparty_name"] == nil || num(m, "unallocated") != 0 || len(m["settlements"].([]any)) != 1 {
 		t.Errorf("movimentação do credor = %v", m)
 	}
-	// unallocated_only: as duas avulsas (sem quitação).
 	if r := get("from=" + from + "&to=" + to + "&unallocated_only=true"); num(r, "total") != 2 {
 		t.Errorf("unallocated_only = %v", r)
 	}
-	// paginação.
 	pg := get("from=" + from + "&to=" + to + "&limit=2")
 	if len(pg["items"].([]any)) != 2 || pg["has_more"] != true {
 		t.Errorf("limit=2 = %v", pg)

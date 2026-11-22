@@ -4,6 +4,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func TestCheckPurchaseTransition(t *testing.T) {
@@ -22,12 +24,10 @@ func TestCheckPurchaseTransition(t *testing.T) {
 		{PurchaseReceived, PurchaseOpen, 1, ErrIllegalTransition},
 		{PurchaseReceived, PurchaseOrdered, 1, ErrIllegalTransition},
 		{PurchaseReceived, PurchaseReceived, 1, ErrIllegalTransition},
-		{PurchaseOpen, PurchaseReceived, 0, ErrIllegalTransition}, // 409 vence o 422
+		{PurchaseOpen, PurchaseReceived, 0, ErrIllegalTransition},
 	}
 	for _, c := range cases {
-		// Act
 		got := CheckPurchaseTransition(c.from, c.to, c.lines)
-		// Assert
 		if !errors.Is(got, c.want) {
 			t.Errorf("%s→%s (lines=%d) = %v, want %v", c.from, c.to, c.lines, got, c.want)
 		}
@@ -65,7 +65,7 @@ func TestCheckDeliveryChange(t *testing.T) {
 		{DeliveryToDeliver, DeliveryCanceled, true, ErrItemsInOrderedPurchase},
 		{DeliveryCanceled, DeliveryToDeliver, false, ErrSaleCanceled},
 		{DeliveryCanceled, DeliveryCanceled, false, ErrSaleCanceled},
-		{DeliveryToDeliver, DeliveryDelivered, true, nil}, // entregar não depende das Purchases
+		{DeliveryToDeliver, DeliveryDelivered, true, nil},
 	}
 	for _, c := range cases {
 		if got := CheckDeliveryChange(c.current, c.next, c.ordered); !errors.Is(got, c.want) {
@@ -139,5 +139,31 @@ func TestEnums(t *testing.T) {
 	}
 	if ItemOrigins["A_ENTREGAR"] || SaleDeliveryStatuses["ENTREGUE"] {
 		t.Error("valores legados não podem ser aceitos")
+	}
+}
+
+func TestCheckBatch(t *testing.T) {
+	a, b := uuid.New(), uuid.New()
+	ok := []BatchItem{{ID: a, Origin: OriginMadeToOrder}, {ID: b, Origin: OriginFromStock}}
+	if err := CheckBatch(ok); err != nil {
+		t.Errorf("lote válido: %v", err)
+	}
+	many := make([]BatchItem, MaxBatchItems+1)
+	for i := range many {
+		many[i] = BatchItem{ID: uuid.New(), Origin: OriginMadeToOrder}
+	}
+	if CheckBatch(many[:MaxBatchItems]) != nil {
+		t.Error("50 Items deveria passar")
+	}
+	for name, items := range map[string][]BatchItem{
+		"vazio":       nil,
+		"51 itens":    many,
+		"sem id":      {{Origin: OriginMadeToOrder}},
+		"repetido":    {{ID: a, Origin: OriginMadeToOrder}, {ID: a, Origin: OriginFromStock}},
+		"origem ruim": {{ID: a, Origin: "X"}},
+	} {
+		if CheckBatch(items) == nil {
+			t.Errorf("%s deveria falhar", name)
+		}
 	}
 }

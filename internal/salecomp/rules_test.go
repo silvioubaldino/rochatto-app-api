@@ -34,7 +34,6 @@ func TestLabels(t *testing.T) {
 }
 
 func TestProfitAYDExample(t *testing.T) {
-	// AYD-009: 4.780 − 2.970 − 150 = 1.660 (itens 4.680 + frete cobrado 100)
 	if got := Profit(4680, 100, 2970, 150); math.Abs(got-1660) > 1e-9 {
 		t.Errorf("Profit = %v, want 1660", got)
 	}

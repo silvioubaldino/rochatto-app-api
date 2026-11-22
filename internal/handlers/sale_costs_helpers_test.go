@@ -6,8 +6,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// setLegacyCosts reproduz o que frete_valor/comissao_valor faziam antes da AYD-009: substitui os
-// custos da venda por um FREIGHT sem credor e uma COMMISSION do Partner indicador (0 = sem custo).
 func setLegacyCosts(t *testing.T, db *gorm.DB, sale string, freight, commission float64) {
 	t.Helper()
 	mustExec(t, db, `UPDATE sale_costs SET deleted_at = NOW() WHERE sale_id = ? AND deleted_at IS NULL`, sale)

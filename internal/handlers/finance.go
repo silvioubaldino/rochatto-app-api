@@ -11,8 +11,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// FinanceHandler serve o painel Financeiro (AYD-004/AYD-007): visão por competência (Sales do
-// período), dinheiro executado (movimentações), despesas, resultado e saldos em aberto hoje.
 type FinanceHandler struct {
 	db *gorm.DB
 }
@@ -24,8 +22,6 @@ func NewFinanceHandler(db *gorm.DB) *FinanceHandler {
 func (h *FinanceHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /finance/summary", h.summary)
 }
-
-// --- Response types (contrato do AYD-004) ---
 
 type financePeriod struct {
 	From string `json:"from"`
@@ -44,13 +40,11 @@ type financeSales struct {
 	Receivable float64 `json:"receivable" gorm:"column:receivable"`
 }
 
-// financeBalances: saldos em aberto no formato do dashboard (/dashboard/kpis — AYD-005),
-// re-derivados das contas (AYD-007). /finance/summary usa obligations.Balances.
 type financeBalances struct {
 	Receivable         float64 `json:"receivable"`
 	PayableToSuppliers float64 `json:"payable_to_suppliers"`
-	FreightPayable     float64 `json:"freight_payable"`    // custos da venda a pagar que não são de Partner (frete, instalador, outros)
-	CommissionPayable  float64 `json:"commission_payable"` // custos da venda a pagar a Partner (comissão)
+	FreightPayable     float64 `json:"freight_payable"`
+	CommissionPayable  float64 `json:"commission_payable"`
 }
 
 type financeResult struct {
@@ -68,9 +62,7 @@ type financeSummaryResponse struct {
 	Balances obligations.Balances `json:"balances"`
 }
 
-// summary: GET /finance/summary?from&to (AYD-007 §6). Cada agregado é uma consulta própria
-// sobre as views (itens e quitações já pré-agregados) — nunca um SUM sobre join (fan-out).
-// Valores com ROUND(…, 2).
+// Cada agregado é uma consulta própria sobre as views (itens e quitações já pré-agregados) — nunca um SUM sobre join (fan-out).
 func (h *FinanceHandler) summary(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	from, to, err := finance.ResolvePeriod(q.Get("from"), q.Get("to"), today())
@@ -89,13 +81,10 @@ func (h *FinanceHandler) summary(w http.ResponseWriter, r *http.Request) {
 		models.WriteError(w, http.StatusInternalServerError, "erro interno")
 	}
 
-	// sales: Sales com data_venda no período, não CANCELED (compartilhado com /dashboard/kpis);
-	// received = Σ quitações das contas RECEIVABLE dessas Sales.
 	if err := querySalesBlock(db, from, to, &resp.Sales); err != nil {
 		fail("sales", err)
 		return
 	}
-	// cash e expenses: movimentações do período (dinheiro executado).
 	if resp.Cash, err = obligations.CashSummary(db, from, to); err != nil {
 		fail("cash", err)
 		return
@@ -104,13 +93,11 @@ func (h *FinanceHandler) summary(w http.ResponseWriter, r *http.Request) {
 		fail("expenses", err)
 		return
 	}
-	// result (RN-17): Profit das Sales do período − despesas.
 	resp.Result = financeResult{
 		SalesProfit: resp.Sales.Profit,
 		Expenses:    resp.Expenses.Total,
 		NetResult:   obligations.Round2(resp.Sales.Profit - resp.Expenses.Total),
 	}
-	// balances: Σ open das contas HOJE.
 	if resp.Balances, err = obligations.BalancesSummary(db); err != nil {
 		fail("balances", err)
 		return
@@ -119,9 +106,7 @@ func (h *FinanceHandler) summary(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// querySalesBlock preenche o bloco `sales` do painel: Sales com data_venda em [from, to],
-// não CANCELED (a view já exclui as excluídas). Fonte única de /finance/summary e
-// /dashboard/kpis (AYD-005: os dois nunca divergem).
+// Fonte única de /finance/summary e /dashboard/kpis.
 func querySalesBlock(db *gorm.DB, from, to time.Time, out *financeSales) error {
 	return db.Raw(`
 		SELECT
@@ -140,9 +125,6 @@ func querySalesBlock(db *gorm.DB, from, to time.Time, out *financeSales) error {
 	`, from, to).Scan(out).Error
 }
 
-// queryBalances preenche os saldos em aberto HOJE no formato do dashboard (ignoram o período;
-// Sales CANCELED saem — a conta delas tem amount 0). Em caso de erro devolve o nome do saldo que
-// falhou (para o log). Fonte do bloco `balances` de /dashboard/kpis.
 func queryBalances(db *gorm.DB, out *financeBalances) (string, error) {
 	if err := db.Raw(`
 		SELECT ROUND(COALESCE(SUM(vr.receivable), 0), 2)

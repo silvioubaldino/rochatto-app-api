@@ -9,15 +9,12 @@ import (
 	"github.com/silvioubaldino/sales-backend/internal/mcp/toolkit"
 )
 
-// ProcurementTools: Purchases, leitura e escrita (AYD-006 §4.1 — módulo Procurement).
 func ProcurementTools() []toolkit.Tool {
 	return []toolkit.Tool{
 		listPendingPurchaseItems, listPurchases, getPurchase,
 		createPurchase, addSaleItemsToPurchase, setPurchaseStatus, addPurchaseCharge,
 	}
 }
-
-// --- list_pending_purchase_items ---
 
 type ListPendingPurchaseItemsIn struct {
 	SupplierID UUID `json:"supplier_id,omitempty" jsonschema:"só os itens deste fornecedor"`
@@ -90,8 +87,6 @@ var listPendingPurchaseItems = toolkit.Define(toolkit.Meta{
 	return out, nil
 })
 
-// --- list_purchases ---
-
 type ListPurchasesIn struct {
 	Status        []toolkit.PurchaseStatus      `json:"status,omitempty" jsonschema:"status da compra (um ou mais)"`
 	PaymentStatus toolkit.SupplierPaymentStatus `json:"payment_status,omitempty" jsonschema:"status do pagamento ao fornecedor"`
@@ -113,7 +108,7 @@ var listPurchases = toolkit.Define(toolkit.Meta{
 	ReadOnly: true, Idempotent: true,
 }, func(ctx context.Context, gw toolkit.Gateway, in ListPurchasesIn) (toolkit.PageOut[PurchaseSummary], error) {
 	q := url.Values{}
-	if len(in.Status) == 1 { // a rota aceita um status; vários são filtrados aqui
+	if len(in.Status) == 1 {
 		q.Set("status", string(in.Status[0]))
 	}
 	setIf(q, "payment_status", string(in.PaymentStatus))
@@ -134,8 +129,6 @@ var listPurchases = toolkit.Define(toolkit.Meta{
 	}
 	return toolkit.Paginate(all, in.Page), nil
 })
-
-// --- get_purchase ---
 
 type GetPurchaseIn struct {
 	PurchaseID UUID `json:"purchase_id" jsonschema:"id da compra (obtenha com list_purchases)"`
@@ -165,7 +158,6 @@ var getPurchase = toolkit.Define(toolkit.Meta{
 	return GetPurchaseOut{Purchase: p}, nil
 })
 
-// toEN traduz o PurchaseDetail do REST (sale_items com campos PT) para o contrato EN (§4.2/§5).
 func (r restPurchaseDetail) toEN() PurchaseDetail {
 	s := r.restPurchaseSummary
 	p := PurchaseDetail{
@@ -196,8 +188,6 @@ func (r restPurchaseDetail) toEN() PurchaseDetail {
 	}
 	return p
 }
-
-// --- create_purchase (W · dd) ---
 
 type PurchaseLineIn struct {
 	ProductID UUID          `json:"product_id" jsonschema:"id do produto (obtenha com search_products)"`
@@ -262,8 +252,6 @@ var createPurchase = toolkit.Define(toolkit.Meta{
 	return CreatePurchaseOut{Purchase: r.toEN(), Warnings: noWarnings()}, nil
 })
 
-// --- add_sale_items_to_purchase (W) ---
-
 type AddSaleItemsToPurchaseIn struct {
 	PurchaseID  UUID   `json:"purchase_id" jsonschema:"id da compra MADE_TO_ORDER aberta (obtenha com list_purchases)"`
 	SaleItemIDs []UUID `json:"sale_item_ids" jsonschema:"ids dos itens de venda a incluir (obtenha com list_pending_purchase_items); pelo menos 1"`
@@ -285,8 +273,6 @@ var addSaleItemsToPurchase = toolkit.Define(toolkit.Meta{
 	}
 	return PurchaseOut{Purchase: r.toEN(), Warnings: noWarnings()}, nil
 }, toolkit.MinItems("sale_item_ids", 1))
-
-// --- set_purchase_status (W · I) ---
 
 type SetPurchaseStatusIn struct {
 	PurchaseID UUID                   `json:"purchase_id" jsonschema:"id da compra (obtenha com list_purchases)"`

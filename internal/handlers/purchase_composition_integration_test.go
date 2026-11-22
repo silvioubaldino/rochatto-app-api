@@ -148,7 +148,7 @@ func TestIntegration_PurchaseComposition(t *testing.T) {
 			t.Errorf("custo de entrada = %v", l)
 		}
 	}
-	landedA := 27 + 780.0/300 // 29.60
+	landedA := 27 + 780.0/300
 
 	if b := e.balance(prodA); num(b, "balance") != 0 {
 		t.Errorf("antes de receber = %v", b)

@@ -7,7 +7,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// SettlementsHandler: quitações (pagar/receber) — AYD-007 §5.
 type SettlementsHandler struct {
 	db *gorm.DB
 }
@@ -24,8 +23,6 @@ type allocationRequest struct {
 	Amount       *float64 `json:"amount"`
 }
 
-// create: POST /settlements — uma movimentação, N contas. 201 sempre que grava; warnings
-// (ex.: MIXED_COUNTERPARTIES) vão no corpo.
 func (h *SettlementsHandler) create(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		MovementID  *string               `json:"movement_id"`
@@ -62,7 +59,6 @@ func (h *SettlementsHandler) create(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, res)
 }
 
-// delete: DELETE /settlements/{id} — desfaz a quitação (a movimentação permanece).
 func (h *SettlementsHandler) delete(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseUUIDParam(w, "id", r.PathValue("id"))
 	if !ok {

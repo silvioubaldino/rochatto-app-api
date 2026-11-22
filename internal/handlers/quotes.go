@@ -5,28 +5,27 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/silvioubaldino/sales-backend/internal/closing"
 	"github.com/silvioubaldino/sales-backend/internal/fulfillment"
 	"github.com/silvioubaldino/sales-backend/internal/models"
 	"github.com/silvioubaldino/sales-backend/internal/saleitem"
+	"github.com/silvioubaldino/sales-backend/internal/search"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
-
-// --- Valid quote_status values (AYD-001) ---
 
 var validQuoteStatuses = map[string]bool{
 	"OPEN": true,
 	"WON":  true,
 	"LOST": true,
 }
-
-// --- Handler ---
 
 type QuotesHandler struct {
 	db *gorm.DB
@@ -53,20 +52,16 @@ func (h *QuotesHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /quotes/quick-sale", h.quickSale)
 }
 
-// --- Request types ---
-
 type quoteItemRequest struct {
 	ProductID   *uuid.UUID `json:"product_id"`
 	ProductName string     `json:"product_name"`
 	Quantity    float64    `json:"quantity"`
 	UnitPrice   float64    `json:"unit_price"`
 	UnitCost    float64    `json:"unit_cost"`
-	// AYD-010: tipo do Item (default PRODUCT) e serviço do catálogo (só SERVICE; opcional).
-	Kind      *string    `json:"kind"`
-	ServiceID *uuid.UUID `json:"service_id"`
+	Kind        *string    `json:"kind"`
+	ServiceID   *uuid.UUID `json:"service_id"`
 }
 
-// quoteChargeRequest: cobrança adicional ao cliente (AYD-009). id só vale no PUT (mantém a linha).
 type quoteChargeRequest struct {
 	ID          *uuid.UUID `json:"id"`
 	Kind        string     `json:"kind"`
@@ -89,13 +84,16 @@ type quoteCreateRequest struct {
 	Notes      *string              `json:"notes"`
 	Items      []quoteItemRequest   `json:"items"`
 	Charges    []quoteChargeRequest `json:"charges"`
+	// Só vale em POST /quotes/quick-sale (fechamento da venda).
+	Closing *closing.Request `json:"closing"`
 }
 
 type quoteUpdateRequest struct {
-	ReferrerID *uuid.UUID `json:"referrer_id"`
-	Notes      *string    `json:"notes"`
-	// Charges: ausente/null = não mexe; lista (mesmo vazia) = substitui o conjunto (id mantém a linha).
-	Charges *[]quoteChargeRequest `json:"charges"`
+	ReferrerID *uuid.UUID            `json:"referrer_id"`
+	Notes      *string               `json:"notes"`
+	CustomerID *uuid.UUID            `json:"customer_id"`
+	QuoteDate  *string               `json:"quote_date"`
+	Charges    *[]quoteChargeRequest `json:"charges"`
 }
 
 type quoteStatusRequest struct {
@@ -103,23 +101,26 @@ type quoteStatusRequest struct {
 	LostReason *string `json:"lost_reason"`
 }
 
-// --- Response types ---
-
 type quoteListResponse struct {
-	ID           uuid.UUID  `json:"id"`
-	CustomerID   uuid.UUID  `json:"customer_id"`
-	CustomerName string     `json:"customer_name"`
-	ReferrerID   *uuid.UUID `json:"referrer_id"`
-	ReferrerName *string    `json:"referrer_name"`
-	Status       string     `json:"status"`
-	LostReason   *string    `json:"lost_reason"`
-	QuoteDate    string     `json:"quote_date"`
-	Notes        *string    `json:"notes"`
-	QuickSale    bool       `json:"quick_sale"`
-	TotalQuote   float64    `json:"total_quote"` // Items + cobranças (preço ao cliente)
-	ItemsTotal   float64    `json:"items_total"`
-	ChargesTotal float64    `json:"charges_total"`
-	CreatedAt    time.Time  `json:"created_at"`
+	ID            uuid.UUID  `json:"id"`
+	Number        int        `json:"number"`
+	CustomerID    uuid.UUID  `json:"customer_id"`
+	CustomerName  string     `json:"customer_name"`
+	ReferrerID    *uuid.UUID `json:"referrer_id"`
+	ReferrerName  *string    `json:"referrer_name"`
+	Status        string     `json:"status"`
+	LostReason    *string    `json:"lost_reason"`
+	QuoteDate     string     `json:"quote_date"`
+	Notes         *string    `json:"notes"`
+	QuickSale     bool       `json:"quick_sale"`
+	TotalQuote    float64    `json:"total_quote"`
+	ItemsTotal    float64    `json:"items_total"`
+	ChargesTotal  float64    `json:"charges_total"`
+	CreatedAt     time.Time  `json:"created_at"`
+	SaleID        *uuid.UUID `json:"sale_id"`
+	SaleNumber    *int       `json:"sale_number"`
+	ItemsCount    int        `json:"items_count"`
+	FirstItemName *string    `json:"first_item_name"`
 }
 
 type quoteDetailResponse struct {
@@ -142,14 +143,21 @@ type quoteItemResponse struct {
 }
 
 type convertResponse struct {
-	SaleID  uuid.UUID `json:"sale_id"`
-	QuoteID uuid.UUID `json:"quote_id"`
+	SaleID     uuid.UUID        `json:"sale_id"`
+	QuoteID    uuid.UUID        `json:"quote_id"`
+	SaleNumber int              `json:"sale_number"`
+	Warnings   []closingWarning `json:"warnings"`
 }
 
-// --- Internal row type for scanning vw_quotes_resumo ---
+func saleNumber(db *gorm.DB, saleID uuid.UUID) (int, error) {
+	var n int
+	err := db.Raw(`SELECT number FROM vendas WHERE id = ?`, saleID).Scan(&n).Error
+	return n, err
+}
 
 type quoteResumoRow struct {
 	ID           uuid.UUID  `gorm:"column:id"`
+	Number       int        `gorm:"column:number"`
 	CustomerID   uuid.UUID  `gorm:"column:customer_id"`
 	ReferrerID   *uuid.UUID `gorm:"column:referrer_id"`
 	Status       string     `gorm:"column:status"`
@@ -163,24 +171,34 @@ type quoteResumoRow struct {
 	ChargesTotal float64    `gorm:"column:charges_total"`
 	CustomerName string     `gorm:"column:customer_name"`
 	ReferrerName *string    `gorm:"column:referrer_name"`
+
+	SaleID        *uuid.UUID `gorm:"column:sale_id"`
+	SaleNumber    *int       `gorm:"column:sale_number"`
+	ItemsCount    int        `gorm:"column:items_count"`
+	FirstItemName *string    `gorm:"column:first_item_name"`
 }
 
 func (row quoteResumoRow) toListResponse() quoteListResponse {
 	return quoteListResponse{
-		ID:           row.ID,
-		CustomerID:   row.CustomerID,
-		CustomerName: row.CustomerName,
-		ReferrerID:   row.ReferrerID,
-		ReferrerName: row.ReferrerName,
-		Status:       row.Status,
-		LostReason:   row.LostReason,
-		QuoteDate:    row.QuoteDate.Format("2006-01-02"),
-		Notes:        row.Notes,
-		QuickSale:    row.QuickSale,
-		TotalQuote:   row.TotalQuote,
-		ItemsTotal:   row.ItemsTotal,
-		ChargesTotal: row.ChargesTotal,
-		CreatedAt:    row.CreatedAt,
+		ID:            row.ID,
+		Number:        row.Number,
+		SaleID:        row.SaleID,
+		SaleNumber:    row.SaleNumber,
+		ItemsCount:    row.ItemsCount,
+		FirstItemName: row.FirstItemName,
+		CustomerID:    row.CustomerID,
+		CustomerName:  row.CustomerName,
+		ReferrerID:    row.ReferrerID,
+		ReferrerName:  row.ReferrerName,
+		Status:        row.Status,
+		LostReason:    row.LostReason,
+		QuoteDate:     row.QuoteDate.Format("2006-01-02"),
+		Notes:         row.Notes,
+		QuickSale:     row.QuickSale,
+		TotalQuote:    row.TotalQuote,
+		ItemsTotal:    row.ItemsTotal,
+		ChargesTotal:  row.ChargesTotal,
+		CreatedAt:     row.CreatedAt,
 	}
 }
 
@@ -199,15 +217,23 @@ func quoteItemToResponse(item models.QuoteItem) quoteItemResponse {
 	}
 }
 
-// --- Helper methods ---
+// quoteResumoQuery lê vw_quotes_resumo com cliente, indicador, número humano (C1), a Sale criada (C2) e o resumo dos Items (C3 — subconsultas escalares, sem fan-out).
+func quoteResumoQuery(db *gorm.DB) *gorm.DB {
+	return db.Table("vw_quotes_resumo qr").
+		Select(`qr.*, qn.number AS number, c.nome AS customer_name, ve.nome AS referrer_name,
+			sv.id AS sale_id, sv.number AS sale_number,
+			(SELECT COUNT(*) FROM quote_items qi WHERE qi.quote_id = qr.id) AS items_count,
+			(SELECT qi.product_name FROM quote_items qi WHERE qi.quote_id = qr.id
+			  ORDER BY qi.created_at, qi.id LIMIT 1) AS first_item_name`).
+		Joins("JOIN quotes qn ON qn.id = qr.id").
+		Joins("JOIN clientes c ON c.id = qr.customer_id").
+		Joins("LEFT JOIN vendedores_externos ve ON ve.id = qr.referrer_id").
+		Joins("LEFT JOIN vendas sv ON sv.quote_id = qr.id AND sv.deleted_at IS NULL")
+}
 
 func (h *QuotesHandler) fetchQuoteResumo(ctx context.Context, id uuid.UUID) (*quoteResumoRow, error) {
 	var row quoteResumoRow
-	result := h.db.WithContext(ctx).
-		Table("vw_quotes_resumo qr").
-		Select("qr.*, c.nome AS customer_name, ve.nome AS referrer_name").
-		Joins("JOIN clientes c ON c.id = qr.customer_id").
-		Joins("LEFT JOIN vendedores_externos ve ON ve.id = qr.referrer_id").
+	result := quoteResumoQuery(h.db.WithContext(ctx)).
 		Where("qr.id = ?", id).
 		Scan(&row)
 	if result.Error != nil {
@@ -276,8 +302,6 @@ func validateQuoteCharges(charges []quoteChargeRequest) error {
 	return nil
 }
 
-// replaceQuoteCharges grava o conjunto de cobranças do Quote: id existente é atualizado, sem id é
-// criado e o que ficou de fora é excluído (soft-delete).
 func replaceQuoteCharges(tx *gorm.DB, quoteID uuid.UUID, charges []quoteChargeRequest) error {
 	var existing []models.QuoteCharge
 	if err := tx.Where("quote_id = ?", quoteID).Find(&existing).Error; err != nil {
@@ -320,7 +344,6 @@ func replaceQuoteCharges(tx *gorm.DB, quoteID uuid.UUID, charges []quoteChargeRe
 }
 
 func validateQuoteItemFields(req quoteItemRequest) string {
-	// Item de serviço do catálogo pode vir sem nome: assume o nome do serviço (AYD-010).
 	if strings.TrimSpace(req.ProductName) == "" && req.ServiceID == nil {
 		return "campo 'product_name' é obrigatório"
 	}
@@ -343,9 +366,6 @@ func validateQuoteItemFields(req quoteItemRequest) string {
 	return ""
 }
 
-// resolveQuoteItem devolve o tipo e o nome do Item (o do catálogo, se o serviço veio sem nome) e
-// confere o service_id (404). current é o service_id já gravado (mantê-lo é permitido se o
-// serviço foi excluído depois).
 func resolveQuoteItem(db *gorm.DB, req quoteItemRequest, current *uuid.UUID) (string, string, error) {
 	kind, _ := saleitem.Resolve(req.Kind)
 	name := strings.TrimSpace(req.ProductName)
@@ -359,9 +379,6 @@ func resolveQuoteItem(db *gorm.DB, req quoteItemRequest, current *uuid.UUID) (st
 	return kind, name, nil
 }
 
-// fetchQuoteForWrite loads the quote and ensures it is OPEN, writing the
-// appropriate error response otherwise. Returns ok=false if a response was
-// already written.
 func (h *QuotesHandler) fetchQuoteForWrite(w http.ResponseWriter, ctx context.Context, id uuid.UUID) (*models.Quote, bool) {
 	var quote models.Quote
 	if err := h.db.WithContext(ctx).First(&quote, "id = ?", id).Error; err != nil {
@@ -380,16 +397,8 @@ func (h *QuotesHandler) fetchQuoteForWrite(w http.ResponseWriter, ctx context.Co
 	return &quote, true
 }
 
-// ============================================================
-// Quotes CRUD
-// ============================================================
-
 func (h *QuotesHandler) list(w http.ResponseWriter, r *http.Request) {
-	query := h.db.WithContext(r.Context()).
-		Table("vw_quotes_resumo qr").
-		Select("qr.*, c.nome AS customer_name, ve.nome AS referrer_name").
-		Joins("JOIN clientes c ON c.id = qr.customer_id").
-		Joins("LEFT JOIN vendedores_externos ve ON ve.id = qr.referrer_id")
+	query := quoteResumoQuery(h.db.WithContext(r.Context()))
 
 	if status := r.URL.Query().Get("status"); status != "" {
 		if !validQuoteStatuses[status] {
@@ -419,9 +428,20 @@ func (h *QuotesHandler) list(w http.ResponseWriter, r *http.Request) {
 		}
 		query = query.Where("qr.customer_id = ?", customerID)
 	}
+	if ref := r.URL.Query().Get("referrer_id"); ref != "" {
+		if _, err := uuid.Parse(ref); err != nil {
+			models.WriteError(w, http.StatusBadRequest, "referrer_id inválido")
+			return
+		}
+		query = query.Where("qr.referrer_id = ?", ref)
+	}
 	if q := strings.TrimSpace(r.URL.Query().Get("q")); q != "" {
 		like := "%" + q + "%"
-		query = query.Where("c.nome ILIKE ? OR qr.notes ILIKE ?", like, like)
+		if n, ok := search.AsNumber(q); ok {
+			query = query.Where("c.nome ILIKE ? OR qr.notes ILIKE ? OR qn.number = ?", like, like, n)
+		} else {
+			query = query.Where("c.nome ILIKE ? OR qr.notes ILIKE ?", like, like)
+		}
 	}
 
 	query = query.Order("qr.quote_date DESC, qr.created_at DESC")
@@ -440,8 +460,6 @@ func (h *QuotesHandler) list(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, quotes)
 }
 
-// validateQuoteRequest valida o payload de criação (compartilhado por create e quick-sale).
-// Escreve a resposta de erro e devolve ok=false quando inválido.
 func (h *QuotesHandler) validateQuoteRequest(w http.ResponseWriter, ctx context.Context, req quoteCreateRequest) (time.Time, bool) {
 	if req.CustomerID == uuid.Nil {
 		models.WriteError(w, http.StatusBadRequest, "campo 'customer_id' é obrigatório")
@@ -500,8 +518,7 @@ func (h *QuotesHandler) validateQuoteRequest(w http.ResponseWriter, ctx context.
 	return quoteDate, true
 }
 
-// insertQuote grava o Quote e seus Items dentro da transação recebida.
-func insertQuote(tx *gorm.DB, req quoteCreateRequest, quoteDate time.Time, quickSale bool) (*models.Quote, error) {
+func insertQuote(tx *gorm.DB, req quoteCreateRequest, quoteDate time.Time, quickSale bool) (*models.Quote, []models.QuoteItem, error) {
 	quote := models.Quote{
 		CustomerID: req.CustomerID,
 		ReferrerID: req.ReferrerID,
@@ -511,12 +528,13 @@ func insertQuote(tx *gorm.DB, req quoteCreateRequest, quoteDate time.Time, quick
 		QuickSale:  quickSale,
 	}
 	if err := tx.Create(&quote).Error; err != nil {
-		return nil, fmt.Errorf("insert quote: %w", err)
+		return nil, nil, fmt.Errorf("insert quote: %w", err)
 	}
+	created := make([]models.QuoteItem, 0, len(req.Items))
 	for _, itemReq := range req.Items {
 		kind, name, err := resolveQuoteItem(tx, itemReq, nil)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		item := models.QuoteItem{
 			QuoteID:     quote.ID,
@@ -529,16 +547,17 @@ func insertQuote(tx *gorm.DB, req quoteCreateRequest, quoteDate time.Time, quick
 			ServiceID:   itemReq.ServiceID,
 		}
 		if err := tx.Create(&item).Error; err != nil {
-			return nil, fmt.Errorf("insert quote item: %w", err)
+			return nil, nil, fmt.Errorf("insert quote item: %w", err)
 		}
+		created = append(created, item)
 	}
 	for _, c := range req.Charges {
 		row := models.QuoteCharge{QuoteID: quote.ID, Kind: c.Kind, Amount: c.Amount, Description: nullIfBlank(c.Description)}
 		if err := tx.Create(&row).Error; err != nil {
-			return nil, fmt.Errorf("insert quote charge: %w", err)
+			return nil, nil, fmt.Errorf("insert quote charge: %w", err)
 		}
 	}
-	return &quote, nil
+	return &quote, created, nil
 }
 
 func (h *QuotesHandler) create(w http.ResponseWriter, r *http.Request) {
@@ -555,7 +574,7 @@ func (h *QuotesHandler) create(w http.ResponseWriter, r *http.Request) {
 	tx := h.db.WithContext(r.Context()).Begin()
 	defer tx.Rollback()
 
-	quote, err := insertQuote(tx, req, quoteDate, false)
+	quote, _, err := insertQuote(tx, req, quoteDate, false)
 	if err != nil {
 		log.Printf("ERROR CreateQuote: %v", err)
 		models.WriteError(w, http.StatusInternalServerError, "erro interno")
@@ -614,6 +633,10 @@ func (h *QuotesHandler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.applyQuoteHeader(r.Context(), quote, req); err != nil {
+		writeTxError(w, "UpdateQuote header", err)
+		return
+	}
 	quote.ReferrerID = req.ReferrerID
 	quote.Notes = req.Notes
 
@@ -646,6 +669,27 @@ func (h *QuotesHandler) update(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func (h *QuotesHandler) applyQuoteHeader(ctx context.Context, quote *models.Quote, req quoteUpdateRequest) error {
+	if req.CustomerID != nil && *req.CustomerID != quote.CustomerID {
+		var n int64
+		if err := h.db.WithContext(ctx).Model(&models.Cliente{}).Where("id = ?", *req.CustomerID).Count(&n).Error; err != nil {
+			return err
+		}
+		if n == 0 {
+			return errStatus(http.StatusBadRequest, "customer não encontrado")
+		}
+		quote.CustomerID = *req.CustomerID
+	}
+	if req.QuoteDate != nil {
+		d, err := parseDate(*req.QuoteDate)
+		if err != nil {
+			return errStatus(http.StatusBadRequest, "quote_date inválida (formato: YYYY-MM-DD)")
+		}
+		quote.QuoteDate = d
+	}
+	return nil
+}
+
 func (h *QuotesHandler) delete(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
@@ -663,7 +707,6 @@ func (h *QuotesHandler) delete(w http.ResponseWriter, r *http.Request) {
 		models.WriteError(w, http.StatusInternalServerError, "erro interno")
 		return
 	}
-	// RN-01: a Sale mantém referência ao Quote de origem — Quote convertido não se apaga.
 	if quote.Status == "WON" {
 		models.WriteError(w, http.StatusConflict, "quote convertido em Sale não pode ser excluído")
 		return
@@ -676,10 +719,6 @@ func (h *QuotesHandler) delete(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-
-// ============================================================
-// Quote Items CRUD (só enquanto OPEN)
-// ============================================================
 
 func (h *QuotesHandler) listItems(w http.ResponseWriter, r *http.Request) {
 	quoteID, err := uuid.Parse(r.PathValue("id"))
@@ -793,14 +832,12 @@ func (h *QuotesHandler) updateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Mudar o tipo de um Item existente é 409: remova e adicione outro (AYD-010).
 	if req.Kind != nil {
 		if k, _ := saleitem.Resolve(req.Kind); k != item.Kind {
 			models.WriteError(w, http.StatusConflict, "o tipo (kind) do item não muda: remova o item e adicione outro")
 			return
 		}
 	}
-	// A coerência do tipo vale para o tipo atual do Item.
 	req.Kind = &item.Kind
 	if errMsg := validateQuoteItemFields(req); errMsg != "" {
 		models.WriteError(w, http.StatusBadRequest, errMsg)
@@ -862,10 +899,6 @@ func (h *QuotesHandler) deleteItem(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ============================================================
-// Status transition (OPEN <-> LOST; WON só via /convert)
-// ============================================================
-
 func (h *QuotesHandler) updateStatus(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
@@ -923,11 +956,6 @@ func (h *QuotesHandler) updateStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ============================================================
-// Convert: Quote OPEN -> Sale (transacional, RF-07 / RN-01)
-// ============================================================
-
-// convertError carrega o status HTTP de uma falha de regra de negócio na conversão.
 type convertError struct {
 	status int
 	msg    string
@@ -935,91 +963,126 @@ type convertError struct {
 
 func (e *convertError) Error() string { return e.msg }
 
-// convertQuote converte o Quote em Sale dentro da transação recebida. O Quote é lido com
-// lock de linha (FOR UPDATE): conversões concorrentes do mesmo Quote são serializadas e as
-// seguintes recebem 409 em vez de falhar na constraint UNIQUE de vendas.quote_id.
-func convertQuote(tx *gorm.DB, id uuid.UUID) (*models.Quote, *models.Venda, error) {
+type convertedItem struct {
+	quote models.QuoteItem
+	sale  models.ItemVenda
+}
+
+type convertResult struct {
+	quote *models.Quote
+	sale  *models.Venda
+	items []convertedItem
+}
+
+// O Quote é lido com lock de linha (FOR UPDATE): conversões concorrentes do mesmo Quote são serializadas e as seguintes recebem 409 em vez de falhar na constraint UNIQUE de vendas.quote_id.
+func convertQuote(tx *gorm.DB, id uuid.UUID, run *closingRun) (*convertResult, error) {
 	var quote models.Quote
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&quote, "id = ?", id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil, &convertError{http.StatusNotFound, "quote não encontrado"}
+			return nil, &convertError{http.StatusNotFound, "quote não encontrado"}
 		}
-		return nil, nil, err
+		return nil, err
 	}
 	if quote.Status != "OPEN" {
-		return nil, nil, &convertError{http.StatusConflict, "apenas quotes 'OPEN' podem ser convertidos"}
+		return nil, &convertError{http.StatusConflict, "apenas quotes 'OPEN' podem ser convertidos"}
 	}
 
 	var items []models.QuoteItem
-	if err := tx.Where("quote_id = ?", id).Find(&items).Error; err != nil {
-		return nil, nil, err
+	if err := tx.Where("quote_id = ?", id).Order("created_at, id").Find(&items).Error; err != nil {
+		return nil, err
 	}
 	if len(items) == 0 {
-		return nil, nil, &convertError{http.StatusUnprocessableEntity, "quote sem items não pode ser convertido"}
+		return nil, &convertError{http.StatusUnprocessableEntity, "quote sem items não pode ser convertido"}
+	}
+	decisions, err := run.resolveItems(tx, items)
+	if err != nil {
+		return nil, err
 	}
 
 	quoteID := quote.ID
 	venda := models.Venda{
-		ClienteID:         quote.CustomerID,
-		VendedorExternoID: quote.ReferrerID,
-		QuoteID:           &quoteID,
-		DeliveryStatus:    fulfillment.DeliveryToDeliver,
-		DataVenda:         today(),
-		Observacoes:       quote.Notes,
+		ClienteID:           quote.CustomerID,
+		VendedorExternoID:   quote.ReferrerID,
+		QuoteID:             &quoteID,
+		DeliveryStatus:      fulfillment.DeliveryToDeliver,
+		DataVenda:           today(),
+		DataEntregaPrevista: run.deliveryDue(),
+		Observacoes:         quote.Notes,
 	}
 	if err := tx.Create(&venda).Error; err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	// Supplier e origem do Item são definidos na Sale (PDR-001 / AYD-002), não no Quote.
-	// Item de serviço (AYD-010): sem origem; nasce com custo_unit 0 e o custo estimado do Quote vira
-	// um custo da venda LABOR (credor "a definir") ligado ao Item — o Profit conta o custo uma vez.
+	res := &convertResult{quote: &quote, sale: &venda}
 	for _, quoteItem := range items {
-		origin := fulfillment.OriginMadeToOrder
-		item := models.ItemVenda{
-			VendaID:        venda.ID,
-			ProdutoID:      quoteItem.ProductID,
-			ProdutoNome:    quoteItem.ProductName,
-			Quantidade:     quoteItem.Quantity,
-			PrecoVendaUnit: quoteItem.UnitPrice,
-			CustoUnit:      quoteItem.UnitCost,
-			Origin:         &origin,
-			Kind:           quoteItem.Kind,
-			ServiceID:      quoteItem.ServiceID,
+		item, err := newSaleItem(tx, venda.ID, quoteItem, decisions[quoteItem.ID])
+		if err != nil {
+			return nil, err
 		}
-		if quoteItem.Kind == saleitem.KindService {
-			item.Origin, item.CustoUnit = nil, 0
-		}
-		if err := tx.Create(&item).Error; err != nil {
-			return nil, nil, err
+		if err := tx.Create(item).Error; err != nil {
+			return nil, err
 		}
 		if quoteItem.Kind == saleitem.KindService {
 			if amount := saleitem.LaborCostAmount(quoteItem.Quantity, quoteItem.UnitCost); amount > 0 {
 				desc := quoteItem.ProductName
-				cost := models.SaleCost{SaleID: venda.ID, Kind: "LABOR", Amount: amount, Description: &desc, SaleItemID: &item.ID}
+				cost := models.SaleCost{SaleID: venda.ID, Kind: "LABOR", Amount: amount, Description: &desc, SaleItemID: &item.ID,
+					PayeeSupplierID: decisions[quoteItem.ID].LaborPayeeID}
 				if err := tx.Create(&cost).Error; err != nil {
-					return nil, nil, err
+					return nil, err
 				}
 			}
 		}
+		res.items = append(res.items, convertedItem{quote: quoteItem, sale: *item})
 	}
 
-	// AYD-009: a conversão copia as cobranças ao cliente (frete cobrado…) para a Sale.
 	var qcharges []models.QuoteCharge
 	if err := tx.Where("quote_id = ?", id).Order("created_at, id").Find(&qcharges).Error; err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	for _, qc := range qcharges {
 		sc := models.SaleCharge{SaleID: venda.ID, Kind: qc.Kind, Amount: qc.Amount, Description: qc.Description}
 		if err := tx.Create(&sc).Error; err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
 
 	quote.Status = "WON"
 	if err := tx.Save(&quote).Error; err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return &quote, &venda, nil
+	return res, nil
+}
+
+// FROM_STOCK usa o custo da última entrada (RN-16), mantendo o custo estimado do Quote se o Product nunca teve entrada.
+func newSaleItem(tx *gorm.DB, saleID uuid.UUID, qi models.QuoteItem, d closing.Decision) (*models.ItemVenda, error) {
+	origin := d.Origin
+	if origin == "" {
+		origin = fulfillment.OriginMadeToOrder
+	}
+	item := models.ItemVenda{
+		VendaID:        saleID,
+		ProdutoID:      qi.ProductID,
+		ProdutoNome:    qi.ProductName,
+		FornecedorID:   d.SupplierID,
+		Quantidade:     qi.Quantity,
+		PrecoVendaUnit: qi.UnitPrice,
+		CustoUnit:      qi.UnitCost,
+		Origin:         &origin,
+		Kind:           qi.Kind,
+		ServiceID:      qi.ServiceID,
+	}
+	switch {
+	case qi.Kind == saleitem.KindService:
+		item.Origin, item.CustoUnit = nil, 0
+	case origin == fulfillment.OriginFromStock && qi.ProductID != nil:
+		cost, err := lastInflowCost(tx, *qi.ProductID)
+		if err != nil {
+			return nil, err
+		}
+		if cost != nil {
+			item.CustoUnit = *cost
+		}
+	}
+	return &item, nil
 }
 
 func writeConvertError(w http.ResponseWriter, op string, err error) {
@@ -1028,8 +1091,26 @@ func writeConvertError(w http.ResponseWriter, op string, err error) {
 		models.WriteError(w, ce.status, ce.msg)
 		return
 	}
+	var fe *closing.FieldError
+	if errors.As(err, &fe) {
+		writeFieldError(w, fe.Status, fe.Msg, fe.Field)
+		return
+	}
+	var he *httpError
+	if errors.As(err, &he) {
+		models.WriteError(w, he.status, he.msg)
+		return
+	}
 	log.Printf("ERROR %s: %v", op, err)
 	models.WriteError(w, http.StatusInternalServerError, "erro interno")
+}
+
+func decodeOptionalBody(r *http.Request, v any) error {
+	err := json.NewDecoder(r.Body).Decode(v)
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	return err
 }
 
 func (h *QuotesHandler) convert(w http.ResponseWriter, r *http.Request) {
@@ -1038,24 +1119,31 @@ func (h *QuotesHandler) convert(w http.ResponseWriter, r *http.Request) {
 		models.WriteError(w, http.StatusBadRequest, "id inválido")
 		return
 	}
+	var body struct {
+		Closing *closing.Request `json:"closing"`
+	}
+	if err := decodeOptionalBody(r, &body); err != nil {
+		models.WriteError(w, http.StatusBadRequest, "JSON inválido")
+		return
+	}
+	run, err := newClosingRun(body.Closing, closing.ByQuoteItemID, nil)
+	if err != nil {
+		writeConvertError(w, "ConvertQuote closing", err)
+		return
+	}
 
-	tx := h.db.WithContext(r.Context()).Begin()
-	defer tx.Rollback()
-
-	quote, venda, err := convertQuote(tx, id)
+	var resp convertResponse
+	err = h.db.WithContext(r.Context()).Transaction(func(tx *gorm.DB) (err error) {
+		resp, err = closeSale(tx, func() (*convertResult, error) { return convertQuote(tx, id, run) }, run)
+		return err
+	})
 	if err != nil {
 		writeConvertError(w, "ConvertQuote", err)
 		return
 	}
-	if err := tx.Commit().Error; err != nil {
-		log.Printf("ERROR ConvertQuote commit: %v", err)
-		models.WriteError(w, http.StatusInternalServerError, "erro interno")
-		return
-	}
-	writeJSON(w, http.StatusCreated, convertResponse{SaleID: venda.ID, QuoteID: quote.ID})
+	writeJSON(w, http.StatusCreated, resp)
 }
 
-// quickSale cria o Quote e o converte em Sale na mesma transação (venda rápida — AYD-001).
 func (h *QuotesHandler) quickSale(w http.ResponseWriter, r *http.Request) {
 	var req quoteCreateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1070,25 +1158,25 @@ func (h *QuotesHandler) quickSale(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-
-	tx := h.db.WithContext(r.Context()).Begin()
-	defer tx.Rollback()
-
-	created, err := insertQuote(tx, req, quoteDate, true)
+	run, err := newClosingRun(req.Closing, closing.ByItemIndex, nil)
 	if err != nil {
-		log.Printf("ERROR QuickSale: %v", err)
-		models.WriteError(w, http.StatusInternalServerError, "erro interno")
+		writeConvertError(w, "QuickSale closing", err)
 		return
 	}
-	quote, venda, err := convertQuote(tx, created.ID)
+
+	var resp convertResponse
+	err = h.db.WithContext(r.Context()).Transaction(func(tx *gorm.DB) error {
+		created, createdItems, err := insertQuote(tx, req, quoteDate, true)
+		if err != nil {
+			return err
+		}
+		run.setCreatedOrder(createdItems)
+		resp, err = closeSale(tx, func() (*convertResult, error) { return convertQuote(tx, created.ID, run) }, run)
+		return err
+	})
 	if err != nil {
-		writeConvertError(w, "QuickSale convert", err)
+		writeConvertError(w, "QuickSale", err)
 		return
 	}
-	if err := tx.Commit().Error; err != nil {
-		log.Printf("ERROR QuickSale commit: %v", err)
-		models.WriteError(w, http.StatusInternalServerError, "erro interno")
-		return
-	}
-	writeJSON(w, http.StatusCreated, convertResponse{SaleID: venda.ID, QuoteID: quote.ID})
+	writeJSON(w, http.StatusCreated, resp)
 }

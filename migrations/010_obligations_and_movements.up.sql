@@ -1,17 +1,7 @@
--- AYD-007@context / SPEC-008: contas e movimentações.
---   componente → conta (Obligation: a pagar/receber por credor, dentro de UMA compra/venda)
---   → movimentação (Financial movement: dinheiro executado) ligada à conta por quitação (Settlement).
--- Substitui Receipt (pagamentos_cliente), o pagamento único da Purchase (purchases.paid_*) e os
--- flags vendas.frete_pago / comissao_paga. Valor da conta, quitado, em aberto, status e cobertura
--- das parcelas são VIEWS (RNF-05) — nunca gravados.
---
 -- ATENÇÃO (produção): parte desta migration é irreversível sem perda — pagamentos_cliente,
 -- purchases.payment_status/paid_amount/paid_at e vendas.frete_pago/comissao_paga são removidos
 -- depois de migrados. O down recria as estruturas e repopula best-effort (ver docs/ops/database.md).
 
--- ============================================================
--- ENUMS e Supplier.kind (§1)
--- ============================================================
 CREATE TYPE supplier_kind AS ENUM ('STONE', 'TRANSPORT', 'LABOR', 'TAX_AUTHORITY', 'OTHER');
 CREATE TYPE obligation_direction AS ENUM ('PAYABLE', 'RECEIVABLE');
 CREATE TYPE movement_category AS ENUM (
@@ -23,10 +13,6 @@ CREATE TYPE movement_category AS ENUM (
 
 ALTER TABLE fornecedores ADD COLUMN kind supplier_kind NOT NULL DEFAULT 'STONE';
 CREATE INDEX idx_fornecedores_kind ON fornecedores(kind);
-
--- ============================================================
--- TABELAS (só o que o dono informa)
--- ============================================================
 
 -- Conta: "casca" por (origem, credor). Origem = Sale OU Purchase; credor = Supplier | Partner |
 -- Customer (nenhum = "a definir"). As colunas generated só normalizam a leitura.
@@ -65,7 +51,6 @@ CREATE INDEX idx_obligations_sale_id     ON obligations(sale_id)     WHERE delet
 CREATE INDEX idx_obligations_purchase_id ON obligations(purchase_id) WHERE deleted_at IS NULL;
 CREATE INDEX idx_obligations_due_date    ON obligations(due_date)    WHERE deleted_at IS NULL;
 
--- Parcela: plano (data + valor), não dinheiro.
 CREATE TABLE installments (
   id             UUID           PRIMARY KEY DEFAULT gen_random_uuid(),
   obligation_id  UUID           NOT NULL REFERENCES obligations(id),
@@ -79,7 +64,6 @@ CREATE TABLE installments (
 CREATE INDEX idx_installments_obligation_id ON installments(obligation_id) WHERE deleted_at IS NULL;
 CREATE INDEX idx_installments_due_date      ON installments(due_date)      WHERE deleted_at IS NULL;
 
--- Movimentação: dinheiro executado (+ entrada / − saída). Sem status; só corrigível.
 CREATE TABLE financial_movements (
   id                UUID              PRIMARY KEY DEFAULT gen_random_uuid(),
   occurred_on       DATE              NOT NULL,
@@ -98,7 +82,6 @@ CREATE TABLE financial_movements (
 );
 CREATE INDEX idx_financial_movements_occurred_on ON financial_movements(occurred_on) WHERE deleted_at IS NULL;
 
--- Quitação: movimentação ↔ conta, com o valor.
 CREATE TABLE settlements (
   id            UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
   obligation_id UUID          NOT NULL REFERENCES obligations(id),
@@ -110,13 +93,9 @@ CREATE TABLE settlements (
 CREATE INDEX idx_settlements_obligation_id ON settlements(obligation_id) WHERE deleted_at IS NULL;
 CREATE INDEX idx_settlements_movement_id   ON settlements(movement_id)   WHERE deleted_at IS NULL;
 
--- ============================================================
--- VIEWS (a view antiga de Sale/Purchase sai agora: depende das colunas legadas)
--- ============================================================
 DROP VIEW IF EXISTS vw_vendas_resumo;
 DROP VIEW IF EXISTS vw_purchases_resumo;
 
--- Custo e nº de linhas por Purchase (Items de Sale para MADE_TO_ORDER; linhas de reposição).
 CREATE VIEW vw_purchase_costs AS
 SELECT
   p.id                                          AS purchase_id,
@@ -137,8 +116,8 @@ LEFT JOIN (
 ) pi ON pi.purchase_id = p.id
 WHERE p.deleted_at IS NULL;
 
--- Componentes das contas (AYD-007 §7a — fontes enquanto AYD-008/009 não existem; só esta view
--- muda quando chegarem). `amount` zera numa Sale CANCELED (a conta sai dos totais); `base_amount`
+-- Componentes das contas
+-- `amount` zera numa Sale CANCELED (a conta sai dos totais); `base_amount`
 -- é o valor "de verdade" e decide se a conta existe (usado pela sincronização).
 CREATE VIEW vw_obligation_components AS
 SELECT
@@ -175,7 +154,6 @@ SELECT
 FROM vw_purchase_costs pc
 WHERE ROUND(pc.total_cost, 2) > 0;
 
--- Cobertura das parcelas: o quitado da conta cobre as parcelas na ordem dos vencimentos.
 CREATE VIEW vw_installment_coverage AS
 SELECT
   x.*,
@@ -248,7 +226,6 @@ LEFT JOIN LATERAL (
 ) ic ON TRUE
 WHERE o.deleted_at IS NULL;
 
--- Alocação das movimentações: quanto já quita contas e quanto sobra.
 CREATE VIEW vw_movement_allocation AS
 SELECT
   m.id AS movement_id,
@@ -260,12 +237,10 @@ LEFT JOIN (
 ) s ON s.movement_id = m.id
 WHERE m.deleted_at IS NULL;
 
--- ============================================================
 -- MANUTENÇÃO AUTOMÁTICA DAS CONTAS (§2): sincronização idempotente por origem.
 -- Garante a conta de cada (origem, direção, credor) presente nos componentes e remove (soft)
 -- a conta sem componentes e sem quitações. Chamada por triggers em toda escrita que altera
 -- componentes — nenhum caminho de escrita (API, conector, SQL) precisa lembrar de sincronizar.
--- ============================================================
 CREATE FUNCTION sp_sync_obligations(p_origin_type TEXT, p_origin_id UUID) RETURNS void AS $$
 BEGIN
   IF p_origin_id IS NULL THEN
@@ -346,11 +321,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- ============================================================
--- MIGRAÇÃO DOS DADOS (§7) — antes de remover o legado
--- ============================================================
-
--- 1) contas de todas as Sales e Purchases existentes (a partir dos componentes §7a)
 SELECT sp_sync_obligations('SALE', id) FROM vendas;
 SELECT sp_sync_obligations('PURCHASE', id) FROM purchases;
 
@@ -384,7 +354,6 @@ FROM pagamentos_cliente p
 JOIN obligations o ON o.sale_id = p.venda_id AND o.direction = 'RECEIVABLE' AND o.deleted_at IS NULL
 WHERE p.deleted_at IS NULL AND p.valor > 0 AND p.status = 'recebido';
 
--- 4) purchases.paid_amount > 0 → PURCHASE_PAYMENT + quitação da conta do Supplier da compra
 INSERT INTO obligations (direction, purchase_id, supplier_id)
 SELECT 'PAYABLE'::obligation_direction, p.id, p.supplier_id
 FROM purchases p
@@ -409,8 +378,6 @@ FROM mig_purchase_payments m
 JOIN obligations o ON o.purchase_id = m.purchase_id AND o.direction = 'PAYABLE'
                   AND o.supplier_id = m.supplier_id AND o.deleted_at IS NULL;
 
--- 5) vendas.frete_pago / comissao_paga → saídas FREIGHT / COMMISSION (data = data da Sale, a
---    data real do pagamento não era guardada) + quitação das contas legadas.
 CREATE TEMP TABLE mig_sale_payments AS
 SELECT gen_random_uuid() AS movement_id, v.id AS sale_id, 'FREIGHT'::movement_category AS category,
        v.frete_pago AS amount, NULL::uuid AS partner_id, v.data_venda, v.created_at
@@ -480,7 +447,6 @@ BEGIN
     RAISE EXCEPTION 'migração 010: frete/comissão pagos divergentes';
   END IF;
 
-  -- Aviso: Purchase marcada PAID com paid_amount < custo ("pago com desconto") passa a ter o resto em aberto.
   SELECT COUNT(*) INTO v_notice
   FROM purchases p JOIN vw_purchase_costs pc ON pc.purchase_id = p.id
   WHERE p.payment_status = 'PAID' AND COALESCE(p.paid_amount, 0) < ROUND(pc.total_cost, 2);
@@ -492,9 +458,6 @@ END $$;
 DROP TABLE mig_purchase_payments;
 DROP TABLE mig_sale_payments;
 
--- ============================================================
--- ALERTAS (§6): obligation_id / installment_id no lugar de pagamento_id
--- ============================================================
 ALTER TABLE notificacoes
   ADD COLUMN obligation_id UUID REFERENCES obligations(id),
   ADD COLUMN installment_id UUID REFERENCES installments(id);
@@ -504,16 +467,13 @@ SET obligation_id = i.obligation_id, installment_id = i.id
 FROM installments i
 WHERE i.id = n.pagamento_id;
 
-DELETE FROM notificacoes WHERE obligation_id IS NULL;   -- sem correspondente: a função regenera
+DELETE FROM notificacoes WHERE obligation_id IS NULL;
 
 ALTER TABLE notificacoes DROP COLUMN pagamento_id;
 ALTER TABLE notificacoes ALTER COLUMN obligation_id SET NOT NULL;
 CREATE UNIQUE INDEX uq_notificacoes_obligation_installment
   ON notificacoes (obligation_id, COALESCE(installment_id, '00000000-0000-0000-0000-000000000000'::uuid));
 
--- ============================================================
--- APOSENTA O LEGADO
--- ============================================================
 DROP TABLE pagamentos_cliente;
 DROP TYPE status_pagamento;
 
@@ -526,10 +486,6 @@ DROP TYPE supplier_payment_status;
 ALTER TABLE vendas
   DROP COLUMN frete_pago,
   DROP COLUMN comissao_paga;
-
--- ============================================================
--- VIEWS de Sale e Purchase re-derivadas das contas
--- ============================================================
 
 -- Resumo por Sale: uma linha por Sale (inclusive CANCELED — o painel/dashboard filtram).
 -- total_recebido / receivable vêm da conta RECEIVABLE; freight_payable / commission_payable das
@@ -596,7 +552,6 @@ LEFT JOIN (
 ) py ON py.sale_id = v.id
 WHERE v.deleted_at IS NULL;
 
--- Resumo por Purchase: custo, pago e a pagar = Σ das contas da compra; payment_status derivado.
 CREATE VIEW vw_purchases_resumo AS
 SELECT
   p.*,
@@ -615,9 +570,6 @@ LEFT JOIN (
 ) ob ON ob.purchase_id = p.id
 WHERE p.deleted_at IS NULL;
 
--- ============================================================
--- ALERTAS: parcelas não cobertas e prazos de conta (janela de 5 dias), RECEIVABLE e PAYABLE
--- ============================================================
 CREATE VIEW vw_payment_alerts AS
 SELECT
   o.id AS obligation_id, ic.id AS installment_id, o.sale_id, o.direction::text AS direction,
@@ -641,8 +593,6 @@ DECLARE
   -- "Hoje" no calendário do negócio (America/Sao_Paulo), não em UTC.
   v_today CONSTANT DATE := (NOW() AT TIME ZONE 'America/Sao_Paulo')::date;
 BEGIN
-  -- Remove o alerta que deixou de se qualificar (parcela coberta, conta quitada, reagendada
-  -- para além da janela, Sale cancelada ou excluída).
   DELETE FROM notificacoes n
   WHERE NOT EXISTS (
     SELECT 1 FROM vw_payment_alerts a
@@ -675,9 +625,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- ============================================================
 -- TRIGGERS de sincronização das contas (criados por último: a carga acima já sincronizou)
--- ============================================================
 CREATE TRIGGER trg_obligations_sync AFTER INSERT OR UPDATE ON vendas
   FOR EACH ROW EXECUTE FUNCTION trg_sync_obligations_sale();
 CREATE TRIGGER trg_obligations_sync AFTER INSERT OR UPDATE OR DELETE ON itens_venda

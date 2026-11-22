@@ -1,9 +1,5 @@
 package handlers
 
-// Stock (AYD-002@context): Balance por Product sempre calculado (vw_stock_balance) =
-// Inflows (reposição recebida) − Outflows (Items FROM_STOCK de Sales não canceladas) ±
-// ajustes. Ajustes são imutáveis (sem PUT/DELETE). Substitui as rotas legadas /estoque.
-
 import (
 	"log"
 	"net/http"
@@ -33,8 +29,6 @@ func (h *StockHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /stock/adjustments", h.listAdjustments)
 }
 
-// --- Types ---
-
 type stockBalanceRow struct {
 	ProductID      uuid.UUID  `gorm:"column:product_id"`
 	ProductName    string     `gorm:"column:product_name"`
@@ -58,7 +52,7 @@ type stockBalanceResponse struct {
 	Balance        float64   `json:"balance"`
 	LastInflowCost *float64  `json:"last_inflow_cost"`
 	LastInflowDate *string   `json:"last_inflow_date"`
-	StockValue     float64   `json:"stock_value"` // GREATEST(balance, 0) × last_inflow_cost (custo de entrada — AYD-008)
+	StockValue     float64   `json:"stock_value"`
 }
 
 func round2Ptr(v *float64) *float64 {
@@ -84,9 +78,6 @@ func (r stockBalanceRow) toResponse() stockBalanceResponse {
 	}
 }
 
-// stockMovement: entrada do extrato, quantity com sinal (efeito no Balance): INFLOW
-// positivo (reference_id = Purchase), OUTFLOW negativo (reference_id = Sale), ADJUSTMENT
-// com o próprio sinal (reference_id = ajuste).
 type stockMovement struct {
 	Kind        string   `json:"kind"`
 	Date        string   `json:"date"`
@@ -141,7 +132,6 @@ func (r adjustmentRow) toResponse() adjustmentResponse {
 	}
 }
 
-// validateAdjustment valida o payload do ajuste (regras sem banco).
 func validateAdjustment(req adjustmentRequest) string {
 	if req.ProductID == nil || *req.ProductID == uuid.Nil {
 		return "campo 'product_id' é obrigatório"
@@ -158,18 +148,22 @@ func validateAdjustment(req adjustmentRequest) string {
 	return ""
 }
 
-// --- Endpoints ---
-
-func (h *StockHandler) listBalance(w http.ResponseWriter, r *http.Request) {
-	query := h.db.WithContext(r.Context()).Table("vw_stock_balance")
-	if q := strings.TrimSpace(r.URL.Query().Get("q")); q != "" {
+func fetchStockBalances(db *gorm.DB, q string, onlyNegative bool) ([]stockBalanceRow, error) {
+	query := db.Table("vw_stock_balance")
+	if q = strings.TrimSpace(q); q != "" {
 		query = query.Where("product_name ILIKE ?", "%"+q+"%")
 	}
-	if r.URL.Query().Get("only_negative") == "true" {
+	if onlyNegative {
 		query = query.Where("balance < 0")
 	}
 	var rows []stockBalanceRow
-	if err := query.Order("product_name ASC").Scan(&rows).Error; err != nil {
+	err := query.Order("product_name ASC").Scan(&rows).Error
+	return rows, err
+}
+
+func (h *StockHandler) listBalance(w http.ResponseWriter, r *http.Request) {
+	rows, err := fetchStockBalances(h.db.WithContext(r.Context()), r.URL.Query().Get("q"), r.URL.Query().Get("only_negative") == "true")
+	if err != nil {
 		log.Printf("ERROR ListStockBalance: %v", err)
 		models.WriteError(w, http.StatusInternalServerError, "erro interno")
 		return

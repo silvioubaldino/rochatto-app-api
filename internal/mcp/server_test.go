@@ -84,18 +84,15 @@ func initialize(t *testing.T, h http.Handler, tok string) map[string]any {
 func TestMCP_HTTPErrors(t *testing.T) {
 	h := testHandler(t, fakeVerifier{"ok": principal("read", "write")})
 
-	// Sem token → 401 + WWW-Authenticate com resource_metadata (dispara o login no Claude).
 	rec, out := rpc(t, h, "", nil, "tools/list", nil)
 	wantMeta := `Bearer resource_metadata="` + testBase + `/.well-known/oauth-protected-resource/mcp", scope="read write"`
 	if rec.Code != 401 || rec.Header().Get("WWW-Authenticate") != wantMeta || out["error"] != "unauthorized" {
 		t.Errorf("sem token: %d %q %v", rec.Code, rec.Header().Get("WWW-Authenticate"), out)
 	}
-	// Token inválido → 401 com error="invalid_token".
 	rec, _ = rpc(t, h, "lixo", nil, "tools/list", nil)
 	if rec.Code != 401 || rec.Header().Get("WWW-Authenticate") != wantMeta+`, error="invalid_token"` {
 		t.Errorf("token inválido: %d %q", rec.Code, rec.Header().Get("WWW-Authenticate"))
 	}
-	// GET e DELETE → 405.
 	for _, m := range []string{"GET", "DELETE"} {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(m, "/mcp", nil))
@@ -103,7 +100,6 @@ func TestMCP_HTTPErrors(t *testing.T) {
 			t.Errorf("%s /mcp = %d, quero 405", m, rec.Code)
 		}
 	}
-	// Origin: claude.ai, claude.com e WEB_APP_URL passam; outra → 403; sem Origin passa.
 	for _, o := range []string{"https://claude.ai", "https://claude.com", testWeb} {
 		if rec, _ := rpc(t, h, "ok", map[string]string{"Origin": o}, "tools/list", nil); rec.Code != 200 {
 			t.Errorf("Origin %s = %d", o, rec.Code)
@@ -164,7 +160,6 @@ func TestMCP_ToolsListFilteredByScope(t *testing.T) {
 	if got := strings.Join(toolNames(out), ","); got != "get_echo" {
 		t.Errorf("só read vê %q, quero só get_echo", got)
 	}
-	// Anotações publicadas pelo SDK.
 	_, out = rpc(t, h, "rw", nil, "tools/list", nil)
 	for _, x := range out["result"].(map[string]any)["tools"].([]any) {
 		tl := x.(map[string]any)
@@ -190,7 +185,6 @@ func TestMCP_ToolsCall(t *testing.T) {
 		t.Errorf("tools/call = %v", res)
 	}
 
-	// Escrita numa Connection só-leitura: mesmo chamada direta (fora do tools/list) → FORBIDDEN.
 	_, out = rpc(t, h, "ro", nil, "tools/call", map[string]any{"name": "create_echo", "arguments": map[string]any{"name": "x"}})
 	res = out["result"].(map[string]any)
 	e := res["structuredContent"].(map[string]any)["error"].(map[string]any)
@@ -198,7 +192,6 @@ func TestMCP_ToolsCall(t *testing.T) {
 		t.Errorf("escrita sem scope write = %v", res)
 	}
 
-	// Entrada inválida → INVALID_INPUT (não erro de protocolo).
 	_, out = rpc(t, h, "rw", nil, "tools/call", map[string]any{"name": "get_echo", "arguments": map[string]any{}})
 	res = out["result"].(map[string]any)
 	if e := res["structuredContent"].(map[string]any)["error"].(map[string]any); res["isError"] != true || e["code"] != "INVALID_INPUT" {

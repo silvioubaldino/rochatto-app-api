@@ -30,7 +30,7 @@ type purchaseChargeResponse struct {
 	Description     *string    `json:"description"`
 	PayeeSupplierID *uuid.UUID `json:"payee_supplier_id"`
 	PayeeName       *string    `json:"payee_name"`
-	ObligationID    *uuid.UUID `json:"obligation_id"` // conta onde o custo caiu (AYD-007)
+	ObligationID    *uuid.UUID `json:"obligation_id"`
 	CreatedAt       time.Time  `json:"created_at"`
 }
 
@@ -96,10 +96,10 @@ func (req purchaseChargeRequest) validated(tx *gorm.DB, p *models.Purchase) (pay
 	}
 	raw := bytes.TrimSpace(req.PayeeSupplierID)
 	switch {
-	case len(raw) == 0: // ausente → credor padrão: o Supplier da compra
+	case len(raw) == 0:
 		id := p.SupplierID
 		payee = &id
-	case string(raw) == "null": // explícito → "a definir"
+	case string(raw) == "null":
 		payee = nil
 	default:
 		var s string

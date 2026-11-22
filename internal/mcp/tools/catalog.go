@@ -7,7 +7,6 @@ import (
 	"github.com/silvioubaldino/sales-backend/internal/mcp/toolkit"
 )
 
-// CatalogTools: Products e Suppliers (AYD-006 §4.1 — módulo Catalog).
 func CatalogTools() []toolkit.Tool {
 	return []toolkit.Tool{searchProducts, searchSuppliers, searchServices}
 }

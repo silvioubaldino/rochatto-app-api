@@ -72,8 +72,8 @@ func TestIntegration_Migration012SaleComposition(t *testing.T) {
 		cust    = "00000000-0000-0000-0000-0000000000c1"
 		partner = "00000000-0000-0000-0000-0000000000a1"
 		supA    = "00000000-0000-0000-0000-0000000000f1"
-		saleA   = "00000000-0000-0000-0000-000000000001" // frete 150 (50 pagos), comissão 80 do Partner
-		saleB   = "00000000-0000-0000-0000-000000000002" // comissão 20 sem Partner, cancelada
+		saleA   = "00000000-0000-0000-0000-000000000001"
+		saleB   = "00000000-0000-0000-0000-000000000002"
 	)
 	exec(`INSERT INTO clientes (id, nome) VALUES ($1, 'Cliente')`, cust)
 	exec(`INSERT INTO vendedores_externos (id, nome) VALUES ($1, 'Arq')`, partner)
@@ -81,7 +81,6 @@ func TestIntegration_Migration012SaleComposition(t *testing.T) {
 	exec(`INSERT INTO vendas (id, cliente_id, vendedor_externo_id, data_venda, frete_valor, comissao_valor) VALUES ($1, $2, $3, '2026-10-01', 150, 80)`, saleA, cust, partner)
 	exec(`INSERT INTO vendas (id, cliente_id, data_venda, comissao_valor, delivery_status) VALUES ($1, $2, '2026-10-05', 20, 'CANCELED')`, saleB, cust)
 	exec(`INSERT INTO itens_venda (venda_id, produto_nome, quantidade, preco_venda_unit, custo_unit) VALUES ($1, 'g', 2, 1000, 300), ($2, 'g', 1, 500, 100)`, saleA, saleB)
-	// 50 do frete já pagos (conta sem credor da Sale A).
 	exec(`INSERT INTO financial_movements (id, occurred_on, amount, category) VALUES ('00000000-0000-0000-0000-0000000000b1', '2026-10-02', -50, 'FREIGHT')`)
 	exec(`INSERT INTO settlements (obligation_id, movement_id, amount)
 	      SELECT o.id, '00000000-0000-0000-0000-0000000000b1', 50 FROM obligations o
@@ -123,7 +122,6 @@ func TestIntegration_Migration012SaleComposition(t *testing.T) {
 		t.Errorf("colunas legadas = %v, want 0", got)
 	}
 
-	// Cobrança: preço e conta a receber; Sale cancelada zera a conta.
 	exec(`INSERT INTO sale_charges (sale_id, kind, amount) VALUES ($1, 'FREIGHT', 100)`, saleA)
 	if got := scanF(`SELECT total_venda FROM vw_vendas_resumo WHERE id = $1`, saleA); !near(got, 2100) {
 		t.Errorf("total_venda com cobrança = %v, want 2100", got)
@@ -134,7 +132,6 @@ func TestIntegration_Migration012SaleComposition(t *testing.T) {
 	if got := scanF(`SELECT lucro FROM vw_vendas_resumo WHERE id = $1`, saleA); !near(got, profitBefore+100) {
 		t.Errorf("lucro com cobrança = %v, want %v", got, profitBefore+100)
 	}
-	// Trocar o Partner indicador leva a comissão junto.
 	exec(`UPDATE vendas SET vendedor_externo_id = NULL WHERE id = $1`, saleA)
 	if got := scanF(`SELECT COUNT(*) FROM sale_costs WHERE sale_id = $1 AND kind = 'COMMISSION' AND payee_partner_id IS NULL AND deleted_at IS NULL`, saleA); got != 1 {
 		t.Errorf("comissão após remover o Partner = %v, want a definir", got)

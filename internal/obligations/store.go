@@ -62,7 +62,6 @@ func (r obligationRow) toObligation() Obligation {
 	return o
 }
 
-// ListFilter são os filtros de GET /obligations (já validados pelo handler).
 type ListFilter struct {
 	Direction        string
 	Statuses         []string
@@ -72,6 +71,8 @@ type ListFilter struct {
 	OriginID         *uuid.UUID
 	Overdue          *bool
 	DueTo            *time.Time
+	NoPlan           bool
+	NoCounterparty   bool
 	Limit            int
 	Offset           int
 }
@@ -111,11 +112,15 @@ func (f ListFilter) where() (string, []any) {
 	if f.DueTo != nil {
 		add("o.effective_due <= ?", *f.DueTo)
 	}
+	if f.NoPlan {
+		add("o.effective_due IS NULL")
+	}
+	if f.NoCounterparty {
+		add("o.counterparty_id IS NULL")
+	}
 	return strings.Join(conds, " AND "), args
 }
 
-// List devolve as contas filtradas (mais próximas do vencimento primeiro) e os totais do
-// conjunto filtrado.
 func List(db *gorm.DB, f ListFilter) (*ObligationList, error) {
 	where, args := f.where()
 	if f.Limit <= 0 {
@@ -164,7 +169,6 @@ func fetchRows(db *gorm.DB, ids []uuid.UUID) (map[uuid.UUID]obligationRow, error
 	return m, nil
 }
 
-// Summaries devolve as contas (resumo) na ordem dos ids pedidos; ausentes são omitidas.
 func Summaries(db *gorm.DB, ids []uuid.UUID) ([]Obligation, error) {
 	rows, err := fetchRows(db, ids)
 	if err != nil {
@@ -179,7 +183,6 @@ func Summaries(db *gorm.DB, ids []uuid.UUID) ([]Obligation, error) {
 	return out, nil
 }
 
-// Get devolve a conta com componentes, parcelas e quitações.
 func Get(db *gorm.DB, id uuid.UUID) (*ObligationDetail, error) {
 	rows, err := fetchRows(db, []uuid.UUID{id})
 	if err != nil {
@@ -256,20 +259,17 @@ func Get(db *gorm.DB, id uuid.UUID) (*ObligationDetail, error) {
 	return d, nil
 }
 
-// Optional distingue campo omitido, null explícito e valor (PATCH parcial).
 type Optional[T any] struct {
 	Set   bool
 	Null  bool
 	Value T
 }
 
-// PatchInput é o corpo de PATCH /obligations/{id}.
 type PatchInput struct {
 	DueDate Optional[time.Time]
 	Notes   Optional[string]
 }
 
-// Patch altera só o prazo final e as notas da conta.
 func Patch(db *gorm.DB, id uuid.UUID, in PatchInput) (*ObligationDetail, error) {
 	upd := map[string]any{}
 	if in.DueDate.Set {
@@ -316,10 +316,6 @@ func lockObligation(tx *gorm.DB, id uuid.UUID) (*obligationRow, error) {
 	return &r, nil
 }
 
-// --- parcelas ---
-
-// ReplaceInstallments substitui o plano inteiro (Σ ≤ amount da conta). As parcelas antigas
-// ficam com deleted_at (soft-delete).
 func ReplaceInstallments(db *gorm.DB, id uuid.UUID, plan []InstallmentInput) (*ObligationDetail, error) {
 	err := db.Transaction(func(tx *gorm.DB) error {
 		r, err := lockObligation(tx, id)
@@ -350,15 +346,13 @@ func replacePlan(tx *gorm.DB, r *obligationRow, plan []InstallmentInput) error {
 	return nil
 }
 
-// GenerateInput é o corpo de POST /obligations/{id}/installments/generate.
 type GenerateInput struct {
 	Count          int
 	FirstDueDate   time.Time
-	IntervalMonths int      // 0 = 1
-	Amount         *float64 // nil = o aberto da conta
+	IntervalMonths int
+	Amount         *float64
 }
 
-// Generate gera parcelas iguais (centavos na última) e substitui o plano.
 func Generate(db *gorm.DB, id uuid.UUID, in GenerateInput) (*ObligationDetail, error) {
 	err := db.Transaction(func(tx *gorm.DB) error {
 		r, err := lockObligation(tx, id)
@@ -388,9 +382,6 @@ func Generate(db *gorm.DB, id uuid.UUID, in GenerateInput) (*ObligationDetail, e
 	return Get(db, id)
 }
 
-// --- quitação ---
-
-// MovementInput é a movimentação criada junto com a quitação (POST /settlements).
 type MovementInput struct {
 	OccurredOn    *time.Time
 	PaymentMethod *string
@@ -398,16 +389,13 @@ type MovementInput struct {
 	Description   *string
 }
 
-// SettleInput é o corpo de POST /settlements.
 type SettleInput struct {
 	MovementID  *uuid.UUID
 	Movement    *MovementInput
 	Allocations []AllocationInput
 }
 
-// Settle paga/recebe: uma movimentação (nova ou já lançada) quita N contas. Transação única,
-// com as contas e a movimentação travadas (FOR UPDATE) — duas quitações simultâneas não passam
-// do aberto.
+// Transação única, com as contas e a movimentação travadas (FOR UPDATE) — duas quitações simultâneas não passam do aberto.
 func Settle(db *gorm.DB, in SettleInput) (*SettleResult, error) {
 	if in.MovementID == nil && in.Movement == nil {
 		return nil, newErr(400, "informe movement_id ou movement")
@@ -471,7 +459,6 @@ func Settle(db *gorm.DB, in SettleInput) (*SettleResult, error) {
 				ID: id.String(), Direction: r.Direction, Open: r.Open, SaleCanceled: r.SaleCanceled != nil && *r.SaleCanceled, Counterparty: cp,
 			}
 		}
-		// Normaliza os ids (maiúsculas/minúsculas) para casar com o mapa.
 		req := make([]AllocationInput, len(in.Allocations))
 		for i, a := range in.Allocations {
 			req[i] = AllocationInput{ObligationID: ids[i].String(), Amount: a.Amount}
@@ -553,7 +540,7 @@ func Settle(db *gorm.DB, in SettleInput) (*SettleResult, error) {
 	if warnings == nil {
 		warnings = []string{}
 	}
-	for _, o := range obs { // OVERSETTLED etc. também sobem para a resposta
+	for _, o := range obs {
 		for _, w := range o.Warnings {
 			if !contains(warnings, w) {
 				warnings = append(warnings, w)
@@ -563,12 +550,10 @@ func Settle(db *gorm.DB, in SettleInput) (*SettleResult, error) {
 	return &SettleResult{Movement: *mv, Obligations: obs, Warnings: warnings}, nil
 }
 
-// SettleOne é o atalho de 1 conta: POST /obligations/{id}/settle { amount?, movement }.
 func SettleOne(db *gorm.DB, id uuid.UUID, amount *float64, mv MovementInput) (*SettleResult, error) {
 	return Settle(db, SettleInput{Movement: &mv, Allocations: []AllocationInput{{ObligationID: id.String(), Amount: amount}}})
 }
 
-// DeleteSettlement desfaz a quitação (soft-delete); a movimentação permanece.
 func DeleteSettlement(db *gorm.DB, id uuid.UUID) error {
 	res := db.Exec(`UPDATE settlements SET deleted_at = NOW() WHERE id = ? AND deleted_at IS NULL`, id)
 	if res.Error != nil {
@@ -580,7 +565,6 @@ func DeleteSettlement(db *gorm.DB, id uuid.UUID) error {
 	return nil
 }
 
-// accountKinds descreve as contas (direção, origem, tipos de componente) para a categoria padrão.
 func accountKinds(tx *gorm.DB, ids []uuid.UUID, rows map[uuid.UUID]obligationRow) ([]AccountKind, error) {
 	var comps []struct {
 		ObligationID uuid.UUID `gorm:"column:obligation_id"`

@@ -1,11 +1,3 @@
-// Comando migrate: aplica/inspeciona as migrations embutidas no binário.
-//
-//	go run ./cmd/migrate up         # aplica todas as pendentes
-//	go run ./cmd/migrate down 1     # desfaz N migrations (N obrigatório, ≥ 1)
-//	go run ./cmd/migrate version    # versão atual (+ dirty)
-//	go run ./cmd/migrate force N    # marca a versão N sem rodar SQL (baseline / sair de dirty)
-//
-// Lê DATABASE_URL do ambiente (ou do .env).
 package main
 
 import (
@@ -70,7 +62,6 @@ func run(m *dbmigrate.Migrator, args []string) error {
 			return err
 		}
 	case "version":
-		// só imprime abaixo
 	default:
 		return fmt.Errorf("comando desconhecido %q — %s", args[0], usage)
 	}

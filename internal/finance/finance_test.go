@@ -8,7 +8,6 @@ import (
 func sp(s string) *string { return &s }
 
 func TestNormalizeMethod(t *testing.T) {
-	// Arrange / Act / Assert
 	if m, err := NormalizeMethod(nil); m != nil || err != nil {
 		t.Errorf("nil = %v %v", m, err)
 	}

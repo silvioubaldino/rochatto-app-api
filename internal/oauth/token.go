@@ -23,8 +23,7 @@ type tokenResponse struct {
 	Scope        string `json:"scope"`
 }
 
-// grantError é o resultado de uma falha de grant dentro da transação (para poder fazer
-// commit de efeitos como a revogação por reuso antes de responder).
+// grantError é o resultado de uma falha de grant dentro da transação (para poder fazer commit de efeitos como a revogação por reuso antes de responder).
 type grantError struct {
 	status int
 	code   string
@@ -94,14 +93,12 @@ func serverFail() *grantError {
 	return &grantError{http.StatusInternalServerError, "server_error", "erro interno"}
 }
 
-// pkceOK confere BASE64URL(SHA256(verifier)) == challenge em tempo constante.
 func pkceOK(verifier, challenge string) bool {
 	sum := sha256.Sum256([]byte(verifier))
 	got := base64.RawURLEncoding.EncodeToString(sum[:])
 	return subtle.ConstantTimeCompare([]byte(got), []byte(challenge)) == 1
 }
 
-// issueTokens grava o par access/refresh da Connection e monta a resposta.
 func (s *Server) issueTokens(tx *gorm.DB, connID uuid.UUID, scopes, tokenScopes []string) (*tokenResponse, error) {
 	now := s.now()
 	access, refresh := randomToken(), randomToken()
@@ -127,7 +124,6 @@ func (s *Server) issueTokens(tx *gorm.DB, connID uuid.UUID, scopes, tokenScopes 
 	}, nil
 }
 
-// exchangeCode: authorization_code + PKCE (AYD-006 §2.5). Reuso de code revoga a Connection.
 func (s *Server) exchangeCode(tx *gorm.DB, clientID, code, redirectURI, verifier string) (*tokenResponse, *grantError) {
 	if code == "" || redirectURI == "" || verifier == "" {
 		return nil, &grantError{http.StatusBadRequest, "invalid_request", "code, redirect_uri e code_verifier são obrigatórios"}
@@ -152,7 +148,6 @@ func (s *Server) exchangeCode(tx *gorm.DB, clientID, code, redirectURI, verifier
 		return nil, invalidGrant("code inválido")
 	}
 	if row.CodeUsedAt != nil {
-		// Reuso: invalida a Connection emitida por este code.
 		_, _ = s.revokeConnection(tx.Statement.Context, tx, *row.ConnectionID, "CODE_REUSE")
 		return nil, invalidGrant("code já utilizado")
 	}
@@ -184,8 +179,6 @@ func (s *Server) exchangeCode(tx *gorm.DB, clientID, code, redirectURI, verifier
 	return resp, nil
 }
 
-// refresh: refresh token rotativo (AYD-006 §2.5). O refresh anterior apresentado até 30 s
-// após a rotação recebe invalid_grant sem revogar; depois disso, reuso revoga a Connection.
 func (s *Server) refresh(tx *gorm.DB, clientID, refreshToken, scope string) (*tokenResponse, *grantError) {
 	if refreshToken == "" {
 		return nil, &grantError{http.StatusBadRequest, "invalid_request", "refresh_token é obrigatório"}
@@ -234,7 +227,7 @@ func (s *Server) refresh(tx *gorm.DB, clientID, refreshToken, scope string) (*to
 			return nil, &grantError{http.StatusBadRequest, "invalid_scope", "scope só pode reduzir os scopes da conexão"}
 		}
 		scopes = req
-		if !subset(row.ConnScopes, req) { // reduziu de fato → o par seguinte herda a redução
+		if !subset(row.ConnScopes, req) {
 			tokenScopes = req
 		}
 	}

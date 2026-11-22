@@ -16,8 +16,6 @@ type registerRequest struct {
 	ResponseTypes           []string `json:"response_types"`
 }
 
-// register: DCR (RFC 7591) de cliente público (AYD-006 §2.2). Só aceita redirect_uri da
-// lista MCP_ALLOWED_REDIRECT_URIS — tokens só podem ser entregues ao Claude.
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxFormBytes)).Decode(&req); err != nil {
@@ -62,7 +60,6 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	s.MaybeCleanup(ctx)
-	// Higiene: cliente sem Connection some 24 h após o registro; teto de 50 clientes.
 	s.db.WithContext(ctx).Exec(`DELETE FROM oauth_clients c WHERE c.created_at < ?
 		AND NOT EXISTS (SELECT 1 FROM oauth_connections o WHERE o.client_id = c.client_id)`,
 		s.now().Add(-orphanClientTTL))

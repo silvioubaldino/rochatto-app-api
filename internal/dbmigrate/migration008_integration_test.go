@@ -1,9 +1,5 @@
 package dbmigrate
 
-// Teste de integração da migração 008 (AYD-005@context): quotes.quick_sale com backfill
-// heurístico (Quote WON cuja Sale nasceu em até 10 s, mesma data), vw_quotes_resumo expondo
-// a coluna e o ciclo down → up. Roda só com TEST_DATABASE_URL e precisa de CREATE DATABASE
-// (banco descartável próprio; senão é pulado).
 import (
 	"database/sql"
 	"fmt"
@@ -68,7 +64,6 @@ func TestIntegration_Migration008QuoteQuickSale(t *testing.T) {
 		return n > 0
 	}
 
-	// Arrange (schema 007): 4 Quotes WON com Sales em casos distintos + 1 OPEN.
 	const cust = "00000000-0000-0000-0000-0000000000c1"
 	exec(`INSERT INTO clientes (id, nome) VALUES ($1, 'C')`, cust)
 	quote := func(id, status string) {
@@ -80,11 +75,11 @@ func TestIntegration_Migration008QuoteQuickSale(t *testing.T) {
 			quoteID, cust, dataVenda, createdAt)
 	}
 	const (
-		qQuick   = "00000000-0000-0000-0000-000000000001" // positivo: mesma data, +2 s
-		qSlow    = "00000000-0000-0000-0000-000000000002" // negativo: Sale 1 minuto depois
-		qOtherDt = "00000000-0000-0000-0000-000000000003" // negativo: data_venda diferente
-		qOpen    = "00000000-0000-0000-0000-000000000004" // negativo: não WON
-		qNoSale  = "00000000-0000-0000-0000-000000000005" // negativo: WON sem Sale
+		qQuick   = "00000000-0000-0000-0000-000000000001"
+		qSlow    = "00000000-0000-0000-0000-000000000002"
+		qOtherDt = "00000000-0000-0000-0000-000000000003"
+		qOpen    = "00000000-0000-0000-0000-000000000004"
+		qNoSale  = "00000000-0000-0000-0000-000000000005"
 	)
 	quote(qQuick, "WON")
 	sale(qQuick, "2026-03-10", "2026-03-10 12:00:02+00")
@@ -95,12 +90,10 @@ func TestIntegration_Migration008QuoteQuickSale(t *testing.T) {
 	quote(qOpen, "OPEN")
 	quote(qNoSale, "WON")
 
-	// Act: up.
 	if err := m.M.Migrate(8); err != nil {
 		t.Fatalf("migrate 8: %v", err)
 	}
 
-	// Assert: só a venda rápida é marcada; a view expõe a coluna e total_quote segue.
 	flag := func(id string) bool {
 		t.Helper()
 		var v bool
@@ -117,13 +110,11 @@ func TestIntegration_Migration008QuoteQuickSale(t *testing.T) {
 			t.Errorf("%s não deveria ser marcado quick_sale", name)
 		}
 	}
-	// Novos Quotes nascem com quick_sale = false (DEFAULT).
 	exec(`INSERT INTO quotes (id, customer_id) VALUES ('00000000-0000-0000-0000-000000000009', $1)`, cust)
 	if flag("00000000-0000-0000-0000-000000000009") {
 		t.Error("DEFAULT deveria ser false")
 	}
 
-	// Down: coluna some e a view continua funcional.
 	if err := m.M.Migrate(7); err != nil {
 		t.Fatalf("down para 7: %v", err)
 	}
@@ -135,7 +126,6 @@ func TestIntegration_Migration008QuoteQuickSale(t *testing.T) {
 		t.Errorf("view 007 após down: %v", err)
 	}
 
-	// Up de novo funciona e refaz o backfill.
 	if err := m.M.Migrate(8); err != nil {
 		t.Fatalf("up de novo: %v", err)
 	}

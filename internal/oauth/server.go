@@ -16,7 +16,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// Constantes do contrato (AYD-006 §2).
 const (
 	ScopeRead    = "read"
 	ScopeWrite   = "write"
@@ -33,7 +32,6 @@ const (
 	maxFormBytes       = 64 << 10
 )
 
-// Server é o servidor de autorização. Use RegisterPublic (raiz) e RegisterAPI (/api/v1).
 type Server struct {
 	cfg   Config
 	db    *gorm.DB
@@ -43,15 +41,12 @@ type Server struct {
 	lastCleanup atomic.Int64
 }
 
-// New cria o servidor. A allowlist é a mesma do middleware Firebase (rechecada no /mcp).
 func New(db *gorm.DB, cfg Config, allow auth.Allowlist) *Server {
 	return &Server{cfg: cfg, db: db, allow: allow, now: time.Now}
 }
 
-// Config devolve a configuração em uso.
 func (s *Server) Config() Config { return s.cfg }
 
-// RegisterPublic monta discovery e /oauth/* no mux raiz (sem auth Firebase).
 func (s *Server) RegisterPublic(mux *http.ServeMux) {
 	mux.HandleFunc("GET /.well-known/oauth-protected-resource/mcp", s.protectedResource)
 	mux.HandleFunc("GET /.well-known/oauth-protected-resource", s.protectedResource)
@@ -62,8 +57,6 @@ func (s *Server) RegisterPublic(mux *http.ServeMux) {
 	mux.HandleFunc("POST /oauth/revoke", s.revoke)
 }
 
-// RegisterAPI monta a API de consentimento e de Connections (consumida pelo web). O mux
-// recebido fica atrás do middleware Firebase + allowlist, como todo /api/v1.
 func (s *Server) RegisterAPI(mux *http.ServeMux) {
 	mux.HandleFunc("GET /oauth/authorization-requests/{id}", s.getAuthorizationRequest)
 	mux.HandleFunc("POST /oauth/authorization-requests/{id}/approve", s.approveAuthorizationRequest)
@@ -71,8 +64,6 @@ func (s *Server) RegisterAPI(mux *http.ServeMux) {
 	mux.HandleFunc("GET /oauth/connections", s.listConnections)
 	mux.HandleFunc("DELETE /oauth/connections/{id}", s.deleteConnection)
 }
-
-// --- helpers ---
 
 func randomToken() string {
 	b := make([]byte, 32)
@@ -82,7 +73,6 @@ func randomToken() string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-// hashToken devolve o SHA-256 (hex) — tokens e codes só são guardados assim.
 func hashToken(t string) string {
 	sum := sha256.Sum256([]byte(t))
 	return hex.EncodeToString(sum[:])
@@ -107,12 +97,8 @@ func writeAPIError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
-// parseScopes separa a lista "a b c".
 func parseScopes(raw string) []string { return strings.Fields(raw) }
 
-// normalizeScopes valida e normaliza os scopes pedidos no authorize: só read/write/
-// offline_access; offline_access é aceito e descartado; ausente (ou só offline_access)
-// = read write. Devolve ok=false para scope desconhecido.
 func normalizeScopes(requested []string) ([]string, bool) {
 	var hasRead, hasWrite bool
 	for _, sc := range requested {

@@ -41,7 +41,7 @@ func ChargeLabel(kind string, description *string) string {
 }
 
 type Line struct {
-	Unit     string // unidade bruta do Product ("" = sem Product/unidade)
+	Unit     string
 	Quantity float64
 	UnitCost float64
 }

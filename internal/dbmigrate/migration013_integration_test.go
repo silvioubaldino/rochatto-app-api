@@ -85,7 +85,6 @@ func TestIntegration_Migration013ServicesOnSale(t *testing.T) {
 		t.Fatalf("up 013: %v", err)
 	}
 
-	// Items existentes viram PRODUCT; origem e views intactas.
 	if got := scanF(`SELECT COUNT(*) FROM itens_venda WHERE kind = 'PRODUCT' AND service_id IS NULL AND origin = 'MADE_TO_ORDER'`); got != 1 {
 		t.Errorf("itens_venda PRODUCT = %v, want 1", got)
 	}
@@ -96,7 +95,6 @@ func TestIntegration_Migration013ServicesOnSale(t *testing.T) {
 		t.Errorf("total_venda = %v, want %v", got, totalBefore)
 	}
 
-	// Catálogo: nome único entre ativos, sem diferenciar caixa; excluído libera o nome.
 	exec(`INSERT INTO services (name, unit) VALUES ('Instalação', 'm²')`)
 	if _, err := db.Exec(`INSERT INTO services (name) VALUES ('INSTALAÇÃO')`); err == nil {
 		t.Error("nome duplicado entre ativos deveria falhar")
@@ -107,7 +105,6 @@ func TestIntegration_Migration013ServicesOnSale(t *testing.T) {
 	exec(`UPDATE services SET deleted_at = NOW() WHERE name = 'Instalação'`)
 	exec(`INSERT INTO services (name) VALUES ('Instalação')`)
 
-	// CHECKs de coerência por tipo.
 	exec(`INSERT INTO produtos (nome) VALUES ('P')`)
 	var svc string
 	if err := db.QueryRow(`SELECT id FROM services WHERE name = 'Instalação' AND deleted_at IS NULL`).Scan(&svc); err != nil {
@@ -128,7 +125,6 @@ func TestIntegration_Migration013ServicesOnSale(t *testing.T) {
 		t.Error("quote_item SERVICE com product_id deveria violar o CHECK")
 	}
 
-	// Item de serviço: entra no preço e no Profit; origin NULL fica fora do Stock e da fila.
 	exec(`INSERT INTO itens_venda (venda_id, kind, service_id, produto_nome, quantidade, preco_venda_unit, custo_unit, origin) VALUES ($1, 'SERVICE', $2, 'Instalação', 12, 300, 0, NULL)`, sale, svc)
 	if got := scanF(`SELECT total_venda FROM vw_vendas_resumo WHERE id = $1`, sale); !near(got, totalBefore+3600) {
 		t.Errorf("total_venda com serviço = %v, want %v", got, totalBefore+3600)
@@ -140,7 +136,6 @@ func TestIntegration_Migration013ServicesOnSale(t *testing.T) {
 		t.Errorf("conta a receber com serviço = %v, want %v", got, totalBefore+3600)
 	}
 
-	// Down (lossy): o Item de serviço vira Item sob encomenda — a receita continua.
 	if err := m.M.Migrate(12); err != nil {
 		t.Fatalf("down 013: %v", err)
 	}

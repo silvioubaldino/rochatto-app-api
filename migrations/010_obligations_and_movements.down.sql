@@ -3,7 +3,6 @@
 -- LOSSY: movimentações avulsas (despesas, OTHER_INCOME), parcelas de contas de Purchase, prazos e
 -- notas das contas, e o `kind` dos Suppliers não voltam. Ver docs/ops/database.md.
 
--- Triggers e funções de sincronização
 DROP TRIGGER IF EXISTS trg_obligations_sync ON vendas;
 DROP TRIGGER IF EXISTS trg_obligations_sync ON itens_venda;
 DROP TRIGGER IF EXISTS trg_obligations_sync ON purchases;
@@ -13,13 +12,9 @@ DROP FUNCTION IF EXISTS trg_sync_obligations_sale_item();
 DROP FUNCTION IF EXISTS trg_sync_obligations_purchase();
 DROP FUNCTION IF EXISTS trg_sync_obligations_purchase_item();
 
--- Views que dependem das colunas/tabelas novas (a função de alertas lê vw_payment_alerts)
 DROP VIEW IF EXISTS vw_vendas_resumo;
 DROP VIEW IF EXISTS vw_purchases_resumo;
 
--- ============================================================
--- Estruturas legadas
--- ============================================================
 CREATE TYPE status_pagamento AS ENUM ('pendente', 'recebido');
 CREATE TYPE supplier_payment_status AS ENUM ('PENDING', 'PAID');
 
@@ -50,11 +45,7 @@ ALTER TABLE vendas
   ADD COLUMN frete_pago    DECIMAL(12,2) NOT NULL DEFAULT 0,
   ADD COLUMN comissao_paga BOOLEAN       NOT NULL DEFAULT FALSE;
 
--- ============================================================
--- Repovoar (best-effort)
--- ============================================================
 
--- Recebidos: uma quitação RECEIVABLE vira um Receipt "recebido".
 INSERT INTO pagamentos_cliente (id, venda_id, valor, data_pagamento, status, payment_method, observacoes, created_at)
 SELECT s.id, o.sale_id, s.amount, m.occurred_on, 'recebido', m.payment_method, m.description, s.created_at
 FROM settlements s
@@ -62,14 +53,12 @@ JOIN obligations o ON o.id = s.obligation_id AND o.direction = 'RECEIVABLE'
 JOIN financial_movements m ON m.id = s.movement_id
 WHERE s.deleted_at IS NULL AND m.deleted_at IS NULL;
 
--- Agendados: a parte não coberta de cada parcela vira um Receipt "pendente".
 INSERT INTO pagamentos_cliente (venda_id, valor, data_agendada, status, payment_method, observacoes, created_at)
 SELECT o.sale_id, ic.amount - ic.covered, ic.due_date, 'pendente', ic.payment_method, ic.notes, ic.created_at
 FROM vw_installment_coverage ic
 JOIN obligations o ON o.id = ic.obligation_id AND o.direction = 'RECEIVABLE' AND o.deleted_at IS NULL
 WHERE ic.status <> 'COVERED';
 
--- Pagamento ao Supplier da Purchase.
 UPDATE purchases p
 SET paid_amount = x.paid, paid_at = x.last_day
 FROM (
@@ -99,7 +88,6 @@ FROM (
 ) x
 WHERE x.purchase_id = p.id AND x.amount > 0 AND x.settled >= x.amount;
 
--- Frete e comissão pagos (pela categoria da movimentação quitada).
 UPDATE vendas v
 SET frete_pago = LEAST(v.frete_valor, x.paid)
 FROM (
@@ -124,9 +112,6 @@ FROM (
 ) x
 WHERE x.sale_id = v.id AND v.comissao_valor > 0 AND x.paid >= v.comissao_valor;
 
--- ============================================================
--- Alertas: volta ao pagamento_id (sem correspondente — a função regenera)
--- ============================================================
 DELETE FROM notificacoes;
 DROP INDEX IF EXISTS uq_notificacoes_obligation_installment;
 ALTER TABLE notificacoes
@@ -134,9 +119,6 @@ ALTER TABLE notificacoes
   DROP COLUMN installment_id,
   ADD COLUMN pagamento_id UUID UNIQUE REFERENCES pagamentos_cliente(id);
 
--- ============================================================
--- Remove o modelo novo
--- ============================================================
 DROP FUNCTION IF EXISTS sp_sync_obligations(TEXT, UUID);
 DROP VIEW IF EXISTS vw_payment_alerts;
 DROP VIEW IF EXISTS vw_movement_allocation;
@@ -156,9 +138,6 @@ DROP TYPE movement_category;
 DROP TYPE obligation_direction;
 DROP TYPE supplier_kind;
 
--- ============================================================
--- Views legadas (definições da 007 e da 006)
--- ============================================================
 CREATE VIEW vw_vendas_resumo AS
 SELECT
   v.*,
@@ -218,7 +197,6 @@ LEFT JOIN (
 ) pi ON pi.purchase_id = p.id
 WHERE p.deleted_at IS NULL;
 
--- Alertas de Receipt (007)
 CREATE OR REPLACE FUNCTION gerar_notificacoes_pagamentos()
 RETURNS void AS $$
 DECLARE

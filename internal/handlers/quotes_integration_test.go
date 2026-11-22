@@ -1,10 +1,5 @@
 package handlers
 
-// Testes de integração do fluxo Quote → Sale contra um Postgres real.
-// Rodam só com TEST_DATABASE_URL apontando para um banco com as migrations 001–003
-// aplicadas (o teste cria seus próprios dados e não limpa o banco — use um banco descartável):
-//
-//	TEST_DATABASE_URL="host=localhost user=sales password=sales dbname=salesdb sslmode=disable" go test ./internal/handlers
 import (
 	"bytes"
 	"encoding/json"
@@ -94,7 +89,6 @@ func TestIntegration_QuoteLifecycleAndConvert(t *testing.T) {
 		t.Errorf("convert again = %d, want 409", code)
 	}
 
-	// Sale: valores copiados, origem do Quote exposta, sem Supplier (PDR-001).
 	code, sale := api.do("GET", "/vendas/"+conv["sale_id"].(string), nil)
 	if code != 200 || sale["quote_id"] != id || sale["total_venda"].(float64) != 500 {
 		t.Errorf("sale = %d quote_id=%v total=%v", code, sale["quote_id"], sale["total_venda"])

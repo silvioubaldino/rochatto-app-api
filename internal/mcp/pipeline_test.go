@@ -44,7 +44,6 @@ func (m *memAudit) last(t *testing.T) AuditEntry {
 	return m.entries[len(m.entries)-1]
 }
 
-// Ferramentas de teste (não fazem parte do catálogo).
 type echoIn struct {
 	Name string `json:"name"`
 	N    int    `json:"n,omitempty"`
@@ -96,7 +95,6 @@ func TestPipeline_SuccessStructuredContentAndAudit(t *testing.T) {
 	if string(sc) != `{"echo":"oi Ana"}` {
 		t.Errorf("structuredContent = %s", sc)
 	}
-	// O bloco content traz o MESMO JSON serializado (§3.3).
 	cj, _ := json.Marshal(res.Content[0])
 	if !strings.Contains(string(cj), `{\"echo\":\"oi Ana\"}`) {
 		t.Errorf("content = %s", cj)
@@ -120,7 +118,6 @@ func TestPipeline_ScopeEnforcement(t *testing.T) {
 	aud := &memAudit{}
 	p := newTestPipeline(t, fakeGateway{}, aud, nil, []toolkit.Tool{read, write})
 
-	// Connection só com read: escrita → FORBIDDEN, handler não roda, e a chamada é auditada.
 	res := p.Call(context.Background(), write, principal("read"), json.RawMessage(`{"name":"x"}`))
 	if !res.IsError || errPayload(t, res.StructuredContent).Code != toolkit.CodeForbidden || called {
 		t.Fatalf("esperava FORBIDDEN sem executar: %+v called=%v", res, called)
@@ -131,7 +128,6 @@ func TestPipeline_ScopeEnforcement(t *testing.T) {
 	if msg := errPayload(t, res.StructuredContent).Message; msg != "esta conexão não tem permissão de escrita" {
 		t.Errorf("message = %q", msg)
 	}
-	// Com write passa; leitura continua exigindo read.
 	if res := p.Call(context.Background(), write, principal("read", "write"), json.RawMessage(`{"name":"x"}`)); res.IsError || !called {
 		t.Errorf("write deveria executar: %+v", res)
 	}
@@ -198,7 +194,6 @@ func TestPipeline_RateLimit(t *testing.T) {
 	if !res.IsError || errPayload(t, res.StructuredContent).Code != "RATE_LIMITED" {
 		t.Fatalf("esperava RATE_LIMITED: %+v", res)
 	}
-	// Outra Connection tem a própria janela.
 	if res := p.Call(context.Background(), tool, principal("read"), json.RawMessage(`{"name":"x"}`)); res.IsError {
 		t.Errorf("limite deve ser por Connection")
 	}
@@ -226,9 +221,6 @@ func TestPipeline_OutputCap(t *testing.T) {
 	}
 }
 
-// Ponto de extensão do dedupe (§3.7): ferramenta dedupe exige Deduper; com ele, a chamada
-// repetida devolve o resultado original com deduplicated:true, allow_duplicate força a
-// criação, e só a ferramenta dedupe grava `result` na auditoria (§7).
 func TestPipeline_DedupeExtensionPoint(t *testing.T) {
 	type dIn struct {
 		Name           string `json:"name"`
@@ -292,14 +284,12 @@ func TestCanonicalArgs_KeyOrderIndependent(t *testing.T) {
 	if h1 != h2 || h1 == h3 {
 		t.Errorf("hash canônico: h1=%s h2=%s h3=%s", h1, h2, h3)
 	}
-	// allow_duplicate não entra no hash (mas fica nos argumentos auditados).
 	c4, h4 := canonicalArgs(json.RawMessage(`{"a":1,"b":{"y":2,"x":3},"allow_duplicate":true}`))
 	if h4 != h1 || !strings.Contains(string(c4), "allow_duplicate") {
 		t.Errorf("allow_duplicate deve ficar fora do hash: %s", h4)
 	}
 }
 
-// Gateway (nem ao Deduper).
 func TestPipeline_ReadScopeBlocksAllRealWriteTools(t *testing.T) {
 	calls := 0
 	gw := fakeGateway{do: func(string, string, url.Values, any, any) error { calls++; return nil }}
@@ -329,8 +319,6 @@ func TestPipeline_ReadScopeBlocksAllRealWriteTools(t *testing.T) {
 	}
 }
 
-// Só as ferramentas dedupe do catálogo real (9: 7 criações + settle_obligations e record_expense)
-// aceitam allow_duplicate e gravam result; o hash ignora allow_duplicate.
 func TestPipeline_RealDedupeToolsAreTheCreations(t *testing.T) {
 	var dd []string
 	for _, tool := range Catalog() {

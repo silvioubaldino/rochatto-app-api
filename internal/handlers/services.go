@@ -13,9 +13,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// ServicesHandler expõe /services (AYD-010): catálogo de Services vendidos na Sale (instalação,
-// consultoria…). Nome único entre os não excluídos, sem diferenciar caixa; soft-delete mantém o
-// vínculo dos Items já vendidos.
 type ServicesHandler struct {
 	db *gorm.DB
 }
@@ -40,7 +37,6 @@ type serviceRequest struct {
 
 const duplicateServiceMsg = "já existe um serviço com esse nome"
 
-// foldSQL: minúsculas e sem acento, no banco (sem depender da extensão unaccent).
 const foldSQL = `translate(lower(%s), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc')`
 
 func (r serviceRequest) validated() (*models.Service, error) {

@@ -1,7 +1,4 @@
-// Package gateway é o Gateway em processo do Assistant connector (AYD-006): despacha para o
-// mesmo ServeMux das rotas /api/v1 — mesmos handlers, validações e transações — sem passar
-// pela autenticação Firebase (o conector já autenticou o Bearer). O access token do
-// conector nunca é repassado.
+// Package gateway despacha em processo para as rotas /api/v1, sem a autenticação Firebase (o Bearer já foi validado).
 package gateway
 
 import (
@@ -17,12 +14,10 @@ import (
 	"github.com/silvioubaldino/sales-backend/internal/mcp/toolkit"
 )
 
-// InProcess implementa toolkit.Gateway sobre um http.Handler (o apiMux, sem prefixo).
 type InProcess struct {
 	h http.Handler
 }
 
-// New cria o Gateway sobre o mux de /api/v1 (já sem o prefixo, como o StripPrefix entrega).
 func New(h http.Handler) *InProcess { return &InProcess{h: h} }
 
 var _ toolkit.Gateway = (*InProcess)(nil)
@@ -41,7 +36,6 @@ func (r *recorder) WriteHeader(code int) {
 	}
 }
 
-// Do implementa toolkit.Gateway.
 func (g *InProcess) Do(ctx context.Context, method, path string, query url.Values, body, out any) (err error) {
 	// Só rotas de negócio: o servidor OAuth nunca é alcançável por ferramentas.
 	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "/oauth/") {

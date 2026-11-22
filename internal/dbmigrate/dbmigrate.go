@@ -1,7 +1,4 @@
 // Package dbmigrate aplica as migrations embutidas (package migrations) com golang-migrate.
-//
-// Usa o driver pgx/v5 a partir de um *sql.DB, então DATABASE_URL pode estar em qualquer
-// formato aceito pelo pgx (URL postgres:// / postgresql:// ou DSN key=value).
 package dbmigrate
 
 import (
@@ -12,19 +9,16 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	pgxmigrate "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
-	_ "github.com/jackc/pgx/v5/stdlib" // registra o driver database/sql "pgx"
+	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/silvioubaldino/sales-backend/migrations"
 )
 
-// Migrator encapsula o *migrate.Migrate e a conexão que ele usa.
 type Migrator struct {
 	M  *migrate.Migrate
 	db *sql.DB
 }
 
-// New abre uma conexão dedicada e prepara o golang-migrate com as migrations embutidas.
-// Chame Close ao terminar.
 func New(databaseURL string) (*Migrator, error) {
 	src, err := iofs.New(migrations.FS, ".")
 	if err != nil {
@@ -51,13 +45,11 @@ func New(databaseURL string) (*Migrator, error) {
 	return &Migrator{M: m, db: db}, nil
 }
 
-// Close libera source, driver e conexão.
 func (m *Migrator) Close() error {
 	srcErr, dbErr := m.M.Close()
 	return errors.Join(srcErr, dbErr, m.db.Close())
 }
 
-// Up aplica todas as migrations pendentes. "Nada a aplicar" não é erro.
 func (m *Migrator) Up() error {
 	if err := m.M.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return err
@@ -65,7 +57,6 @@ func (m *Migrator) Up() error {
 	return nil
 }
 
-// Version devolve a versão atual (0 se nenhuma migration foi aplicada) e o flag dirty.
 func (m *Migrator) Version() (uint, bool, error) {
 	v, dirty, err := m.M.Version()
 	if errors.Is(err, migrate.ErrNilVersion) {
@@ -74,7 +65,6 @@ func (m *Migrator) Version() (uint, bool, error) {
 	return v, dirty, err
 }
 
-// Up é o atalho usado no startup do servidor (MIGRATE_ON_START=true).
 func Up(databaseURL string) (version uint, err error) {
 	m, err := New(databaseURL)
 	if err != nil {

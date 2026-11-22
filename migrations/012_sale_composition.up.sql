@@ -1,9 +1,3 @@
--- AYD-009@context / SPEC-010: composição da venda.
---   preço ao cliente = Items + cobranças adicionais (sale_charges; frete cobrado)
---   custos da venda  = sale_costs (frete pago, instalador, comissão, outro), cada um com credor
--- Os componentes alimentam as contas (AYD-007): SALE_CHARGE → conta a receber do Customer;
--- SALE_COST → conta a pagar por credor. vendas.frete_valor / comissao_valor migram para
--- sale_costs e são removidos. (frete_pago / comissao_paga já viraram quitações na 010.)
 -- ATENÇÃO (down): custos LABOR/OTHER, cobranças e credores se perdem (ver docs/ops/database.md).
 
 CREATE TYPE sale_charge_kind AS ENUM ('FREIGHT', 'OTHER');
@@ -48,7 +42,6 @@ CREATE INDEX idx_sale_costs_sale_id       ON sale_costs(sale_id)           WHERE
 CREATE INDEX idx_sale_costs_payee_sup     ON sale_costs(payee_supplier_id) WHERE deleted_at IS NULL;
 CREATE INDEX idx_sale_costs_payee_partner ON sale_costs(payee_partner_id)  WHERE deleted_at IS NULL;
 
--- Foto das contas da Sale antes da migração: o valor de cada conta tem de ser o mesmo depois.
 CREATE TEMP TABLE mig_before AS
 SELECT id, amount FROM vw_obligations WHERE sale_id IS NOT NULL;
 
@@ -142,8 +135,6 @@ CREATE TRIGGER trg_obligations_sync AFTER INSERT OR UPDATE OR DELETE ON sale_cha
 CREATE TRIGGER trg_obligations_sync AFTER INSERT OR UPDATE OR DELETE ON sale_costs
   FOR EACH ROW EXECUTE FUNCTION trg_sync_obligations_sale_component();
 
--- Trocar o Partner indicador da Sale leva junto a comissão que estava no Partner anterior
--- (o credor padrão da comissão é o indicador — AYD-009 §2).
 CREATE OR REPLACE FUNCTION trg_sync_obligations_sale() RETURNS trigger AS $$
 BEGIN
   IF TG_OP = 'UPDATE' AND NEW.vendedor_externo_id IS DISTINCT FROM OLD.vendedor_externo_id THEN
@@ -160,7 +151,6 @@ $$ LANGUAGE plpgsql;
 
 SELECT sp_sync_obligations('SALE', id) FROM vendas;
 
--- Verificação: nenhuma conta da Sale mudou de valor nem sumiu.
 DO $$
 DECLARE
   v_bad INT;
@@ -179,9 +169,6 @@ ALTER TABLE vendas
   DROP COLUMN frete_valor,
   DROP COLUMN comissao_valor;
 
--- Resumo por Sale. total_venda = preço ao cliente (Items + cobranças); total_custo = pedras
--- (+ rateio dos custos adicionais da compra, AYD-008); costs_total = custos da venda (previstos);
--- lucro = preço − total_custo − costs_total. costs_paid / costs_open vêm das contas a pagar.
 CREATE VIEW vw_vendas_resumo AS
 SELECT
   v.*,

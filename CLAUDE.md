@@ -43,6 +43,7 @@ internal/
   fulfillment/              → regras puras do atendimento da Sale (transições, cancelamento — SPEC-002)
   purchasing/               → regras puras da composição da compra (SPEC-009): tipos/métodos, rateio (`Allocate`), unidades, rótulo
   saleitem/                 → regras puras do tipo de Item PRODUCT × SERVICE (coerência, valor do custo LABOR da conversão — SPEC-011)
+  closing/ pendingactions/ search/ → regras puras da jornada do dono (SPEC-012): fechamento da venda (`closing`, erros com `field`), pendências do dia (kinds, janela, urgência) e busca (termo, tipos, limite)
   obligations/              → contas, parcelas, quitações e movimentações (SPEC-008): regras puras (`rules.go`: categoria × sinal, categoria padrão, geração/validação/cobertura de parcelas, alocação) + acesso a dados transacional (`store.go`, `movements.go`, `summary.go`)
   dbmigrate/                → golang-migrate sobre as migrations embutidas
   models/                   → structs GORM de domínio e tipos compartilhados
@@ -152,6 +153,7 @@ go vet ./... && TEST_DATABASE_URL=$DATABASE_URL go test ./...
 | 12 | `docs/specs/SPEC-009-purchase-composition.md` | Composição da compra (AYD-008): `purchase_charges` (frete de compra, descarga, imposto, outros, com credor), `allocation_method`, rateio e custo de entrada (`vw_purchase_line_costs`), migração 011, `stock_value`, rateio no Profit dos Items sob encomenda, `add_purchase_charge` no connector (catálogo `1.0.0`, 37 ferramentas) |
 | 13 | `docs/specs/SPEC-010-sale-composition.md` | Composição da venda (AYD-009): `quote_charges`/`sale_charges` (frete cobrado), `sale_costs` (frete pago, instalador, comissão, outro, com credor), rotas `/vendas/{id}/charges` e `/costs`, Quote → Sale copia cobranças, `vw_vendas_resumo` com preço/custos/Profit novos, migração 012 (remove `frete_*`/`comissao_*`), `set_sale_costs` e `add_sale_charge` no connector (catálogo `1.0.0`, 39 ferramentas) |
 | 14 | `docs/specs/SPEC-011-services-on-sale.md` | Serviços na Sale (AYD-010): `services` (`/services`), Items `kind`/`service_id` em Quote/Sale (`origin` anulável), conversão cria custo da venda `LABOR` ligado ao Item, fora da fila de compra/Stock/ranking de Products, `GET /relatorios/servicos`, migração 013, `search_services` e `get_top_services` no connector (catálogo `1.0.0`, 41 ferramentas) |
+| 15 | `docs/specs/SPEC-012-owner-journey-ux.md` | Jornada do dono (AYD-011): `number` humano em Quote/Sale/Purchase (migração 014, label das contas com o número), `sale_id`/`sale_number` no Quote e cabeçalho editável (`customer_id`/`quote_date`), `items_count`/`first_item_name` e filtros `q`/`referrer_id` nas listas, fechamento da venda (`closing`) em `/quotes/{id}/convert` e `/quotes/quick-sale` numa transação, `PATCH /vendas/{id}/itens/fulfillment` (lote), `stock_balance` no Item, fornecedor habitual do Product, `GET /search` e `GET /pending-actions` (catálogo do connector inalterado) |
 
 ## Deploy (Google Cloud Run — free tier)
 

@@ -15,9 +15,7 @@ type connectionRow struct {
 	LastUsedAt *time.Time  `gorm:"column:last_used_at"`
 }
 
-// listConnections: GET /api/v1/oauth/connections (AYD-006 §2.7). Só Connections não
-// revogadas e já ativadas (com tokens emitidos — um code nunca trocado não é uma conexão
-// em uso); ordem last_used_at desc.
+// Só Connections não revogadas e já ativadas (com tokens emitidos — um code nunca trocado não é uma conexão em uso); ordem last_used_at desc.
 func (s *Server) listConnections(w http.ResponseWriter, r *http.Request) {
 	var rows []connectionRow
 	if err := s.db.WithContext(r.Context()).Raw(`
@@ -46,8 +44,6 @@ func (s *Server) listConnections(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// deleteConnection: DELETE /api/v1/oauth/connections/{id} → 204 (revoga a Connection; o
-// próximo uso no Claude dá 401). 404 se inexistente ou já revogada.
 func (s *Server) deleteConnection(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {

@@ -153,6 +153,14 @@ components:
           type: string
           nullable: true
           description: Nome da categoria (exibido mesmo se a categoria foi excluída)
+        default_supplier_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Fornecedor habitual (AYD-011 C8) — só sugestão para o atendimento sob encomenda
+        default_supplier_name:
+          type: string
+          nullable: true
         created_at:
           type: string
           format: date-time
@@ -189,6 +197,11 @@ components:
           format: uuid
           nullable: true
           description: Categoria existente e não excluída (manter a mesma categoria já excluída é permitido no PUT)
+        default_supplier_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: "AYD-011 C8: Supplier existente e não excluído (400); no PUT, campo ausente mantém o valor atual e null explícito limpa"
 
     # --- Fornecedor ---
     Fornecedor:
@@ -483,6 +496,11 @@ components:
             - $ref: "#/components/schemas/PurchaseStatus"
           nullable: true
           description: Só leitura; status da Purchase do Item (null se não está em Purchase)
+        stock_balance:
+          type: number
+          format: double
+          nullable: true
+          description: "AYD-011 C7: Balance atual do Product (vw_stock_balance) quando origin = FROM_STOCK; null nos demais"
         quantidade:
           type: number
           format: double
@@ -520,6 +538,16 @@ components:
         id:
           type: string
           format: uuid
+        number:
+          type: integer
+          description: "Número humano da Sale (AYD-011 C1); sequencial, só leitura"
+        items_count:
+          type: integer
+          description: "AYD-011 C3: nº de Items (produtos + serviços)"
+        first_item_name:
+          type: string
+          nullable: true
+          description: "AYD-011 C3: nome do primeiro Item (ordem de criação)"
         cliente_id:
           type: string
           format: uuid
@@ -959,9 +987,16 @@ components:
       description: |
         Quote (AYD-001) como devolvido por `/quotes` e `/quotes/{id}` (o detalhe acrescenta `items`).
         Os endpoints de Quote ainda não estão detalhados neste arquivo; aqui consta só o schema
-        com o campo `quick_sale` (AYD-005).
+        com o campo `quick_sale` (AYD-005). AYD-011: `GET /quotes` aceita `referrer_id` e `q` (também o número do
+        Quote); `PUT /quotes/{id}` aceita `customer_id?` e `quote_date?` (ausente = não muda; só OPEN; cliente
+        inexistente ou excluído → 400). O fechamento da venda está em `/quotes/{id}/convert` e `/quotes/quick-sale`.
       properties:
         id: { type: string, format: uuid }
+        number: { type: integer, description: "Número humano do Quote (AYD-011 C1); sequencial, só leitura" }
+        sale_id: { type: string, format: uuid, nullable: true, description: "AYD-011 C2: Sale criada por este Quote (WON); null nos demais" }
+        sale_number: { type: integer, nullable: true }
+        items_count: { type: integer, description: "AYD-011 C3: nº de Items" }
+        first_item_name: { type: string, nullable: true, description: "AYD-011 C3: nome do primeiro Item" }
         customer_id: { type: string, format: uuid }
         customer_name: { type: string }
         referrer_id: { type: string, format: uuid, nullable: true }
@@ -1146,6 +1181,9 @@ components:
         id:
           type: string
           format: uuid
+        number:
+          type: integer
+          description: "Número humano da Purchase (AYD-011 C1); sequencial, só leitura"
         kind:
           $ref: "#/components/schemas/PurchaseKind"
         status:
@@ -1780,6 +1818,170 @@ components:
               margem_media_percent:
                 type: number
                 format: double
+
+    # --- AYD-011 / SPEC-012: jornada do dono ---
+    ClosingRequest:
+      type: object
+      description: |
+        Fechamento da venda (AYD-011 C5): opcional em `POST /quotes/{id}/convert` e `POST /quotes/quick-sale`.
+        Tudo numa transação (nada é gravado se algo falhar); sem `closing` (ou `{}`) a conversão é a de sempre.
+        Erros 400/409 trazem `field` (ex.: `closing.items[1].supplier_id`).
+      properties:
+        delivery_due_date: { type: string, format: date, nullable: true }
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              quote_item_id: { type: string, format: uuid, description: "Em /convert: Item do Quote" }
+              item_index: { type: integer, description: "Em /quick-sale: posição em items[] (0-based)" }
+              origin: { $ref: "#/components/schemas/ItemOrigin" }
+              supplier_id: { type: string, format: uuid, nullable: true, description: "Só MADE_TO_ORDER" }
+              labor_payee_id: { type: string, format: uuid, nullable: true, description: "Só Item SERVICE: credor (Supplier) do custo LABOR" }
+        costs:
+          type: array
+          description: "Mesmo corpo de POST /vendas/{id}/costs (`payee_id`: Partner para COMMISSION, Supplier nos demais)"
+          items:
+            type: object
+            required: [kind, amount]
+            properties:
+              kind: { type: string, enum: [FREIGHT, LABOR, COMMISSION, OTHER] }
+              amount: { type: number, format: double }
+              payee_id: { type: string, format: uuid, nullable: true }
+              description: { type: string, nullable: true }
+        receivable_plan:
+          type: object
+          description: "Mesmo corpo de PUT /obligations/{id}/installments; Σ parcelas > preço → 409"
+          properties:
+            installments:
+              type: array
+              items:
+                type: object
+                required: [due_date, amount]
+                properties:
+                  due_date: { type: string, format: date }
+                  amount: { type: number, format: double }
+                  payment_method: { $ref: "#/components/schemas/PaymentMethod" }
+        down_payment:
+          type: object
+          description: "Mesmo efeito de POST /obligations/{id}/settle (categoria SALE_RECEIPT); > preço → 409"
+          required: [amount, occurred_on, payment_method]
+          properties:
+            amount: { type: number, format: double }
+            occurred_on: { type: string, format: date }
+            payment_method: { $ref: "#/components/schemas/PaymentMethod" }
+
+    ConvertResponse:
+      type: object
+      properties:
+        sale_id: { type: string, format: uuid }
+        quote_id: { type: string, format: uuid }
+        sale_number: { type: integer }
+        warnings:
+          type: array
+          items:
+            type: object
+            properties:
+              code: { type: string, enum: [INSUFFICIENT_STOCK] }
+              quote_item_id: { type: string, format: uuid, description: "Em /convert" }
+              item_index: { type: integer, description: "Em /quick-sale" }
+
+    ClosingErrorResponse:
+      type: object
+      properties:
+        error: { type: string }
+        field: { type: string, example: "closing.items[1].supplier_id" }
+
+    BatchFulfillmentRequest:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            type: object
+            required: [id, origin]
+            properties:
+              id: { type: string, format: uuid }
+              origin: { $ref: "#/components/schemas/ItemOrigin" }
+              fornecedor_id: { type: string, format: uuid, nullable: true }
+
+    BatchFulfillmentResponse:
+      type: object
+      properties:
+        itens:
+          type: array
+          items: { $ref: "#/components/schemas/ItemVendaResponse" }
+        warnings:
+          type: array
+          items:
+            type: object
+            properties:
+              item_id: { type: string, format: uuid }
+              code: { type: string, enum: [INSUFFICIENT_STOCK] }
+
+    SearchResponse:
+      type: object
+      properties:
+        groups:
+          type: array
+          description: "Só grupos com resultado, na ordem de `types`"
+          items:
+            type: object
+            properties:
+              type: { type: string, enum: [CUSTOMER, QUOTE, SALE, PURCHASE, PRODUCT, SERVICE, SUPPLIER, PARTNER] }
+              items:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string, format: uuid }
+                    number: { type: integer, nullable: true, description: "QUOTE, SALE, PURCHASE" }
+                    title: { type: string }
+                    date: { type: string, format: date, nullable: true }
+                    amount: { type: number, format: double, nullable: true }
+                    status: { type: string, nullable: true }
+                    city: { type: string, nullable: true }
+                    kind: { type: string, nullable: true, description: "SUPPLIER.kind, PARTNER.type, PRODUCT.unit" }
+
+    PendingActionsResponse:
+      type: object
+      properties:
+        today: { type: string, format: date }
+        horizon_days: { type: integer }
+        total_overdue: { type: integer }
+        groups:
+          type: array
+          description: "Só grupos com count > 0, na ordem do enum"
+          items:
+            type: object
+            properties:
+              kind:
+                type: string
+                enum: [RECEIVABLE_DUE, PAYABLE_DUE, DELIVERY_DUE, ITEMS_WITHOUT_SUPPLIER, ITEMS_TO_PURCHASE, PURCHASE_TO_ORDER,
+                       PURCHASE_TO_RECEIVE, RECEIVABLE_WITHOUT_PLAN, COST_WITHOUT_PAYEE, QUOTE_STALE, NEGATIVE_STOCK]
+              count: { type: integer }
+              overdue_count: { type: integer }
+              amount: { type: number, format: double, nullable: true }
+              items:
+                type: array
+                description: "Até 20, mais urgentes primeiro"
+                items:
+                  type: object
+                  properties:
+                    entity:
+                      type: object
+                      properties:
+                        type: { type: string, enum: [SALE, QUOTE, PURCHASE, OBLIGATION, PRODUCT, SUPPLIER] }
+                        id: { type: string, format: uuid }
+                    number: { type: integer, nullable: true }
+                    title: { type: string }
+                    date: { type: string, format: date, nullable: true }
+                    overdue: { type: boolean }
+                    amount: { type: number, format: double, nullable: true }
+                    quantity: { type: number, format: double, nullable: true }
 
     HealthResponse:
       type: object
@@ -2895,6 +3097,17 @@ paths:
             type: string
             format: date
           description: "data_venda <= to (inclusivo, YYYY-MM-DD; 400 se inválida)"
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: "AYD-011 C4: nome do cliente, número da Sale (exato, se numérico) ou nome de Item (contém, sem acento nem caixa)"
+        - name: referrer_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: "AYD-011 C4: Sales indicadas pelo Partner (400 se inválido)"
       responses:
         "200":
           description: Lista de vendas ordenada por data_venda DESC
@@ -3167,6 +3380,45 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/vendas/{id}/itens/fulfillment:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: UUID da venda
+        schema:
+          type: string
+          format: uuid
+    patch:
+      tags:
+        - Vendas / Itens
+      summary: Atendimento em lote dos Items da Sale (AYD-011 C6)
+      operationId: batchFulfillment
+      description: |
+        Aplica origem e fornecedor a 1..50 Items com as mesmas regras do PUT por Item, numa transação
+        (tudo ou nada). Custo do FROM_STOCK pela regra RN-16.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BatchFulfillmentRequest"
+      responses:
+        "200":
+          description: Items atualizados (ordem do pedido) e avisos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchFulfillmentResponse"
+        "400":
+          description: "Lote fora de 1..50, id repetido, origem inválida, Item de outra Sale, Item SERVICE, FROM_STOCK sem Product (com `item_id` quando aponta um Item)"
+        "404":
+          description: Venda não encontrada
+        "409":
+          description: "Sale cancelada ou Item travado em Purchase (`{ error, item_id }`)"
+        "401":
+          description: Não autenticado
 
   /api/v1/vendas/{id}/itens/{itemId}:
     parameters:
@@ -4965,6 +5217,169 @@ paths:
         "204": {description: Revogada}
         "404": {description: inexistente ou já revogada}
 
+  # ============================================================
+  # AYD-011 / SPEC-012 — fechamento da venda, busca e pendências
+  # ============================================================
+  /api/v1/quotes/{id}/convert:
+    post:
+      tags:
+        - Quotes
+      summary: Converte o Quote em Sale, com fechamento da venda opcional (AYD-011 C5)
+      operationId: convertQuote
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                closing:
+                  $ref: "#/components/schemas/ClosingRequest"
+      responses:
+        "201":
+          description: Sale criada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConvertResponse"
+        "400":
+          description: "closing inválido (com `field`)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClosingErrorResponse"
+        "404":
+          description: Quote não encontrado
+        "409":
+          description: "Quote não OPEN, Σ parcelas ou entrada acima do preço (com `field`)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClosingErrorResponse"
+        "422":
+          description: Quote sem Items
+        "401":
+          description: Não autenticado
+
+  /api/v1/quotes/quick-sale:
+    post:
+      tags:
+        - Quotes
+      summary: Venda rápida (Quote + Sale num passo), com fechamento da venda opcional (AYD-011 C5)
+      operationId: quickSale
+      description: "Corpo do POST /quotes mais `closing` (Items apontados por `item_index`)."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customer_id, items]
+              properties:
+                customer_id: { type: string, format: uuid }
+                referrer_id: { type: string, format: uuid, nullable: true }
+                quote_date: { type: string, format: date }
+                notes: { type: string, nullable: true }
+                items: { type: array, items: { type: object } }
+                charges: { type: array, items: { $ref: "#/components/schemas/SaleCharge" } }
+                closing:
+                  $ref: "#/components/schemas/ClosingRequest"
+      responses:
+        "201":
+          description: Quote e Sale criados
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConvertResponse"
+        "400":
+          description: "Payload ou closing inválido (com `field`)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClosingErrorResponse"
+        "409":
+          description: "Σ parcelas ou entrada acima do preço (com `field`)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClosingErrorResponse"
+        "401":
+          description: Não autenticado
+
+  /api/v1/search:
+    get:
+      tags:
+        - Busca
+      summary: Busca global (AYD-011 C9)
+      operationId: globalSearch
+      description: |
+        Casa nome (contém, sem acento nem caixa), telefone (CUSTOMER/SUPPLIER/PARTNER), número exato
+        (QUOTE/SALE/PURCHASE, quando `q` é numérico — "98" ou "#98") e o nome do cliente/fornecedor das
+        operações. Ordem no grupo: número exato, começa com `q`, contém; empate → mais recente.
+        Exclui soft-deletados.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string, minLength: 2 }
+        - name: types
+          in: query
+          schema: { type: string }
+          description: "CSV de CUSTOMER, QUOTE, SALE, PURCHASE, PRODUCT, SERVICE, SUPPLIER, PARTNER (default: todos)"
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 10, default: 5 }
+          description: "Por tipo"
+      responses:
+        "200":
+          description: Grupos com resultado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+        "400":
+          description: "q curto, types ou limit inválidos"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+
+  /api/v1/pending-actions:
+    get:
+      tags:
+        - Pendências
+      summary: Pendências do dia (AYD-011 C10)
+      operationId: listPendingActions
+      description: |
+        Calculado na leitura (nada gravado) com a mesma base de GET /obligations, /purchases/pending-sale-items
+        e /stock/balance. Exclui Sales CANCELED e soft-deletados. Não substitui `GET /dashboard/notificacoes`.
+      parameters:
+        - name: horizon_days
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 60, default: 7 }
+      responses:
+        "200":
+          description: Grupos com count > 0, na ordem do enum
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PendingActionsResponse"
+        "400":
+          description: horizon_days fora de 0..60
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+
   # Superfície pública (fora de /api/v1, sem Firebase), montada só com MCP_ENABLED=true:
   # GET /.well-known/oauth-protected-resource[/mcp], GET /.well-known/oauth-authorization-server,
   # POST /oauth/register (DCR), GET /oauth/authorize, POST /oauth/token, POST /oauth/revoke e
@@ -4973,6 +5388,10 @@ paths:
 tags:
   - name: Assistant connector
     description: Consentimento e Connections do conector MCP (AYD-006)
+  - name: Busca
+    description: Busca global (AYD-011)
+  - name: Pendências
+    description: Pendências do dia (AYD-011)
   - name: Health
     description: Verificação de disponibilidade da API (público)
   - name: Clientes

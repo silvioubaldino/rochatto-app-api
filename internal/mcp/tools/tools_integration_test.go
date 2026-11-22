@@ -1,9 +1,5 @@
 package tools_test
 
-// Testes de integração das ferramentas de leitura (AYD-006 §4) contra um Postgres real:
-// cada ferramenta é executada pelo pipeline real (scope, validação, auditoria), pelo
-// Gateway em processo, sobre os handlers REST de verdade — e a saída é validada contra o
-// outputSchema. Rodam só com TEST_DATABASE_URL.
 import (
 	"bytes"
 	"context"
@@ -32,7 +28,7 @@ type env struct {
 	pr     *oauth.Principal
 	byName map[string]toolkit.Tool
 	audit  *mcp.DBAuditor
-	skew   time.Duration // adianta o relógio da deduplicação (simula "depois de 120 s")
+	skew   time.Duration
 }
 
 func newEnv(t *testing.T) *env {
@@ -72,7 +68,6 @@ func newEnv(t *testing.T) *env {
 	return e
 }
 
-// newConnection cria uma Connection (FK da auditoria) e devolve o Principal correspondente.
 func (e *env) newConnection(scopes ...string) *oauth.Principal {
 	e.t.Helper()
 	var connID string
@@ -83,7 +78,6 @@ func (e *env) newConnection(scopes ...string) *oauth.Principal {
 	return &oauth.Principal{ConnectionID: uuid.MustParse(connID), Scopes: scopes}
 }
 
-// rest chama a rota REST diretamente (para semear e para comparar paridade).
 func (e *env) rest(method, path string, body any) (int, map[string]any) {
 	e.t.Helper()
 	var b []byte
@@ -106,7 +100,6 @@ func (e *env) mustREST(method, path string, body any, want int) map[string]any {
 	return out
 }
 
-// call executa a ferramenta pelo pipeline e devolve (structuredContent, isError).
 func (e *env) call(name string, args any) (map[string]any, bool) {
 	e.t.Helper()
 	tool, ok := e.byName[name]
@@ -123,8 +116,6 @@ func (e *env) call(name string, args any) (map[string]any, bool) {
 	return out, res.IsError
 }
 
-// callRaw executa com os argumentos como texto JSON (controla a ordem das chaves) e como a
-// Connection pr.
 func (e *env) callRaw(pr *oauth.Principal, name, args string) (map[string]any, bool) {
 	e.t.Helper()
 	res := e.pipe.Call(context.Background(), e.byName[name], pr, json.RawMessage(args))
@@ -163,7 +154,6 @@ func nowSP() time.Time {
 	return time.Now().In(loc)
 }
 
-// day devolve a data no fuso do negócio, como o app (todaySP).
 func day(offset int) string { return nowSP().AddDate(0, 0, offset).Format("2006-01-02") }
 
 type seed struct {
@@ -190,7 +180,6 @@ func (e *env) seed() seed {
 	s.supplierID = e.mustREST("POST", "/fornecedores", map[string]any{"nome": "Pedras São José", "cidade": "Cachoeiro"}, 201)["id"].(string)
 	e.mustREST("POST", "/fornecedores", map[string]any{"nome": "Mineração Zé"}, 201)
 
-	// Quotes: aberto, perdido, e uma venda convertida.
 	qItems := func(pid string, qty, price, cost float64) []map[string]any {
 		return []map[string]any{{"product_id": pid, "product_name": "Granito Preto", "quantity": qty, "unit_price": price, "unit_cost": cost}}
 	}
@@ -213,7 +202,6 @@ func (e *env) seed() seed {
 	s.saleConvItem1 = obj(conv["itens"].([]any)[0])["id"].(string)
 	s.saleConvItem2 = obj(conv["itens"].([]any)[1])["id"].(string)
 
-	// Item 1 da venda convertida: sob encomenda com Supplier (fila de compra); item 2: do estoque.
 	put := func(saleID, itemID string, body map[string]any) {
 		e.mustREST("PUT", "/vendas/"+saleID+"/itens/"+itemID, body, 200)
 	}
@@ -224,8 +212,6 @@ func (e *env) seed() seed {
 	put(s.saleQuick, s.saleQuickItem, map[string]any{"produto_id": s.pedraID, "produto_nome": "Granito Preto", "quantidade": 4, "preco_venda_unit": 500, "custo_unit": 300,
 		"origin": "MADE_TO_ORDER", "fornecedor_id": s.supplierID})
 
-	// Conta a receber da venda rápida: uma parcela de 700 vencida (gera alerta OVERDUE) e um
-	// recebimento de 500 (PIX) que cobre a parcela pela metade (o quitado cobre as mais antigas).
 	s.saleQuickReceivable = e.mustREST("GET", "/obligations?origin_type=SALE&origin_id="+s.saleQuick+"&direction=RECEIVABLE", nil, 200)["items"].([]any)[0].(map[string]any)["id"].(string)
 	plan := e.mustREST("PUT", "/obligations/"+s.saleQuickReceivable+"/installments",
 		map[string]any{"installments": []map[string]any{{"due_date": day(-3), "amount": 700}}}, 200)
@@ -234,7 +220,6 @@ func (e *env) seed() seed {
 		map[string]any{"amount": 500, "movement": map[string]any{"occurred_on": day(0), "payment_method": "PIX"}}, 201)
 	s.receiptRecv = obj(obj(paid["movement"])["settlements"].([]any)[0])["id"].(string)
 
-	// Purchase consolidada com o item sob encomenda da venda rápida.
 	s.purchaseID = e.mustREST("POST", "/purchases", map[string]any{"kind": "MADE_TO_ORDER", "supplier_id": s.supplierID,
 		"expected_date": "2026-12-01", "sale_item_ids": []string{s.saleQuickItem}}, 201)["id"].(string)
 	return s
@@ -270,7 +255,6 @@ func TestIntegration_CatalogReadTools(t *testing.T) {
 		if out["total"] != float64(1) {
 			t.Errorf("filtro referrer_id = %v", out)
 		}
-		// Paginação (§3.4).
 		out = e.ok("search_customers", map[string]any{"limit": 2})
 		if len(items(out)) != 2 || out["total"] != float64(3) || out["has_more"] != true {
 			t.Errorf("limit 2 = %v", out)
@@ -295,7 +279,7 @@ func TestIntegration_CatalogReadTools(t *testing.T) {
 			t.Errorf("recent_sales = %v", sales)
 		}
 		e.fail("get_customer", map[string]any{"customer_id": uuid.NewString()}, "NOT_FOUND", "registro não encontrado")
-		e.fail("get_customer", map[string]any{"customer_id": "não-é-uuid"}, "", "") // 400 da API ou do schema
+		e.fail("get_customer", map[string]any{"customer_id": "não-é-uuid"}, "", "")
 	})
 
 	t.Run("search_products e search_suppliers e search_partners", func(t *testing.T) {
@@ -317,7 +301,6 @@ func TestIntegration_CatalogReadTools(t *testing.T) {
 		if out := e.ok("search_suppliers", map[string]any{}); out["total"] != float64(2) {
 			t.Errorf("todos os suppliers = %v", out)
 		}
-		// AYD-007: kind (STONE por padrão) na saída e como filtro.
 		if sp["kind"] != "STONE" {
 			t.Errorf("kind do fornecedor = %v, quero STONE", sp["kind"])
 		}
@@ -434,7 +417,6 @@ func TestIntegration_SalesProcurementStockReadTools(t *testing.T) {
 		if rr["status"] != "RECEIVED" || rr["amount"] != float64(500) || rr["payment_method"] != "PIX" || rr["paid_at"] != day(0) {
 			t.Errorf("receipt recebido = %v", rr)
 		}
-		// A parcela de 700 está coberta em 500 pelo recebimento: pendente pelo que falta.
 		if rp["status"] != "PENDING" || rp["scheduled_date"] != day(-3) || rp["amount"] != float64(200) {
 			t.Errorf("receipt pendente = %v", rp)
 		}
@@ -451,7 +433,6 @@ func TestIntegration_SalesProcurementStockReadTools(t *testing.T) {
 			t.Fatalf("grupos = %v", out)
 		}
 		g := obj(groups[0])
-		// O item da venda convertida (sob encomenda COM Supplier) é o único pendente.
 		pi := obj(g["items"].([]any)[0])
 		if g["supplier_id"] != s.supplierID || pi["id"] != s.saleConvItem1 || pi["customer_name"] != "Maria Souza" || pi["product_name"] != "Granito sob encomenda" ||
 			pi["quantity"] != float64(2) || pi["unit_cost"] != float64(600) || pi["sale_id"] != s.saleConv {
@@ -512,7 +493,6 @@ func TestIntegration_SalesProcurementStockReadTools(t *testing.T) {
 				row = obj(it)
 			}
 		}
-		// 5 de ajuste inicial − 1 do item FROM_STOCK da venda convertida.
 		if row["product_id"] != s.mármoreID || row["balance"] != float64(4) || row["outflow_qty"] != float64(1) || row["adjustment_qty"] != float64(5) || row["last_inflow_cost"] != float64(450) {
 			t.Errorf("saldo = %v", row)
 		}
@@ -597,7 +577,6 @@ func TestIntegration_FinanceAndAnalyticsReadTools(t *testing.T) {
 		if obj(out["sales"])["average_ticket"] == nil || out["open_deliveries"] != float64(2) {
 			t.Errorf("kpis = %v", out)
 		}
-		// Sem Quotes no período a taxa vem ausente (a rota devolve null).
 		empty := e.ok("get_dashboard_kpis", map[string]any{"from": "2000-01-01", "to": "2000-01-31"})
 		if _, has := obj(empty["quotes"])["conversion_rate"]; has || obj(empty["quotes"])["created"] != float64(0) {
 			t.Errorf("sem quotes = %v", empty["quotes"])
@@ -663,7 +642,6 @@ func TestIntegration_FinanceAndAnalyticsReadTools(t *testing.T) {
 		if _, has := a["receipt_id"]; has {
 			t.Error("receipt_id foi substituído por obligation_id/installment_id")
 		}
-		// Marca como lido (REST): some do padrão, volta com only_unread=false.
 		e.mustREST("POST", "/dashboard/notificacoes/"+a["id"].(string)+"/lida", nil, 204)
 		if out := e.ok("list_payment_alerts", map[string]any{}); len(items(out)) != 0 {
 			t.Errorf("lidos não aparecem por padrão: %v", out)
@@ -678,14 +656,12 @@ func TestIntegration_FinanceAndAnalyticsReadTools(t *testing.T) {
 	})
 }
 
-// AYD-007 §8: list_obligations e list_financial_movements (leitura) pelo pipeline real.
 func TestIntegration_ObligationAndMovementReadTools(t *testing.T) {
 	e := newEnv(t)
 	s := e.seed()
 
 	t.Run("list_obligations: padrão em aberto, filtros, totais e paginação", func(t *testing.T) {
 		out := e.ok("list_obligations", map[string]any{})
-		// Em aberto: a receber das 2 vendas, a pagar da compra (1200) — a venda convertida ainda não tem compra.
 		if out["total"] != float64(3) || len(items(out)) != 3 || out["has_more"] != false || out["offset"] != float64(0) {
 			t.Fatalf("list_obligations = %v", out)
 		}
@@ -693,7 +669,6 @@ func TestIntegration_ObligationAndMovementReadTools(t *testing.T) {
 		if tot["amount"] != float64(2000+2800+1200) || tot["settled"] != float64(500) || tot["open"] != float64(5500) {
 			t.Errorf("totals = %v", tot)
 		}
-		// Mais próxima do vencimento primeiro: a conta com a parcela vencida (venda rápida).
 		first := obj(items(out)[0])
 		if first["id"] != s.saleQuickReceivable || first["overdue"] != true || first["status"] != "PARTIAL" || first["direction"] != "RECEIVABLE" ||
 			first["amount"] != float64(2000) || first["settled"] != float64(500) || first["open"] != float64(1500) {
@@ -798,7 +773,6 @@ func TestIntegration_AuditAndErrorsThroughPipeline(t *testing.T) {
 	e.fail("get_sale", map[string]any{"sale_id": uuid.NewString()}, "NOT_FOUND", "venda não encontrada")
 	e.fail("get_sale", map[string]any{}, "INVALID_INPUT", "")
 
-	// Toda chamada (leitura, erro de API e erro de schema) gera um registro de auditoria.
 	var rows []struct {
 		Tool, Outcome, ErrorCode string
 		Result                   *string

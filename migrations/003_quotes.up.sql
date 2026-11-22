@@ -1,7 +1,5 @@
--- QUOTE STATUS
 CREATE TYPE quote_status AS ENUM ('OPEN', 'WON', 'LOST');
 
--- QUOTES
 CREATE TABLE quotes (
   id           UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
   customer_id  UUID         NOT NULL REFERENCES clientes(id),
@@ -14,7 +12,6 @@ CREATE TABLE quotes (
   created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
--- QUOTE ITEMS
 CREATE TABLE quote_items (
   id             UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
   quote_id       UUID          NOT NULL REFERENCES quotes(id) ON DELETE CASCADE,
@@ -26,10 +23,8 @@ CREATE TABLE quote_items (
   created_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW()
 );
 
--- SALE ORIGIN (RN-01): a Sale nasce de um Quote
 ALTER TABLE vendas ADD COLUMN quote_id UUID UNIQUE REFERENCES quotes(id);
 
--- VIEW DE RESUMO (campo calculado — nunca persistido)
 CREATE VIEW vw_quotes_resumo AS
 SELECT
   q.*,
@@ -39,7 +34,6 @@ LEFT JOIN quote_items qi ON qi.quote_id = q.id
 WHERE q.deleted_at IS NULL
 GROUP BY q.id;
 
--- ÍNDICES
 CREATE INDEX idx_quotes_customer_id  ON quotes(customer_id);
 CREATE INDEX idx_quotes_status       ON quotes(status);
 CREATE INDEX idx_quotes_quote_date   ON quotes(quote_date);

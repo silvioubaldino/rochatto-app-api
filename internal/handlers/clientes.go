@@ -31,18 +31,15 @@ func (h *ClientesHandler) Register(mux *http.ServeMux) {
 }
 
 type clienteRequest struct {
-	Nome        string  `json:"nome"`
-	Telefone    *string `json:"telefone"`
-	Email       *string `json:"email"`
-	Endereco    *string `json:"endereco"`
-	Cidade      *string `json:"cidade"`
-	Observacoes *string `json:"observacoes"`
-	// AYD-003 (campos novos em inglês)
-	LeadSource *string    `json:"lead_source"`
-	ReferrerID *uuid.UUID `json:"referrer_id"`
+	Nome        string     `json:"nome"`
+	Telefone    *string    `json:"telefone"`
+	Email       *string    `json:"email"`
+	Endereco    *string    `json:"endereco"`
+	Cidade      *string    `json:"cidade"`
+	Observacoes *string    `json:"observacoes"`
+	LeadSource  *string    `json:"lead_source"`
+	ReferrerID  *uuid.UUID `json:"referrer_id"`
 }
-
-// --- LeadSource (AYD-003) ---
 
 var validLeadSources = map[string]bool{
 	"REFERRAL":  true,
@@ -51,10 +48,7 @@ var validLeadSources = map[string]bool{
 	"OTHER":     true,
 }
 
-// validateLeadSource normaliza lead_source (trim; "" → null) e aplica a regra do AYD-003:
-// referrer_id é obrigatório se lead_source = PARTNER e proibido caso contrário (inclusive
-// com lead_source null). Devolve a mensagem de erro ("" quando válido). A existência do
-// Partner é checada no banco à parte.
+// validateLeadSource normaliza lead_source (trim; "" → null) e aplica a regra: referrer_id é obrigatório se lead_source = PARTNER e proibido caso contrário (inclusive com lead_source null).
 func validateLeadSource(req *clienteRequest) string {
 	req.LeadSource = nullIfBlank(req.LeadSource)
 	if req.LeadSource != nil && !validLeadSources[*req.LeadSource] {
@@ -70,8 +64,6 @@ func validateLeadSource(req *clienteRequest) string {
 	return ""
 }
 
-// baseQuery lê clientes com o nome do Partner (referrer_name). O JOIN não filtra Partners
-// excluídos: um Customer indicado por um Partner já excluído continua mostrando o nome.
 func (h *ClientesHandler) baseQuery(ctx context.Context) *gorm.DB {
 	return h.db.WithContext(ctx).
 		Model(&models.Cliente{}).
@@ -85,10 +77,7 @@ func (h *ClientesHandler) fetch(ctx context.Context, id uuid.UUID) (models.Clien
 	return c, err
 }
 
-// checkReferrer valida lead_source/referrer_id; current é o referrer_id já gravado (nil
-// na criação). Um referrer_id novo precisa apontar para um Partner existente e não
-// excluído; manter o mesmo referrer_id de um Partner já excluído é permitido (o vínculo
-// histórico é preservado). Escreve a resposta e devolve false quando inválido.
+// Um referrer_id novo precisa apontar para um Partner existente e não excluído; manter o mesmo referrer_id de um Partner já excluído é permitido (o vínculo histórico é preservado).
 func (h *ClientesHandler) checkReferrer(w http.ResponseWriter, ctx context.Context, req *clienteRequest, current *uuid.UUID) bool {
 	if msg := validateLeadSource(req); msg != "" {
 		models.WriteError(w, http.StatusBadRequest, msg)
@@ -246,7 +235,6 @@ func (h *ClientesHandler) update(w http.ResponseWriter, r *http.Request) {
 	h.respond(w, r.Context(), http.StatusOK, c.ID)
 }
 
-// respond relê o Customer (com referrer_name) e escreve a resposta.
 func (h *ClientesHandler) respond(w http.ResponseWriter, ctx context.Context, status int, id uuid.UUID) {
 	c, err := h.fetch(ctx, id)
 	if err != nil {

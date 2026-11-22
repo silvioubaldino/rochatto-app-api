@@ -1,13 +1,9 @@
--- AYD-003@context: cadastros comerciais (Partner com tipo, lead source do Customer,
--- categoria de Product). Termos do GLO; colunas/tabelas novas em inglês (ADR-001).
 
--- PARTNER (reaproveita vendedores_externos — sem rename físico; IDs e FKs preservados)
 CREATE TYPE partner_type AS ENUM ('ARCHITECT', 'ENGINEER', 'BUILDER', 'OTHER');
 
 ALTER TABLE vendedores_externos
   ADD COLUMN type partner_type NOT NULL DEFAULT 'OTHER';
 
--- CUSTOMER: lead source (lista fixa) + qual Partner indicou
 CREATE TYPE lead_source_type AS ENUM ('REFERRAL', 'INSTAGRAM', 'PARTNER', 'OTHER');
 
 ALTER TABLE clientes
@@ -23,7 +19,6 @@ ALTER TABLE clientes
 CREATE INDEX idx_clientes_lead_source ON clientes(lead_source);
 CREATE INDEX idx_clientes_referrer_id ON clientes(referrer_id);
 
--- PRODUCT CATEGORY (cadastrável pelo dono)
 CREATE TABLE product_categories (
   id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   name        TEXT        NOT NULL,
@@ -31,7 +26,6 @@ CREATE TABLE product_categories (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- nome único ignorando caixa entre categorias não excluídas
 CREATE UNIQUE INDEX ux_product_categories_name
   ON product_categories (lower(name)) WHERE deleted_at IS NULL;
 

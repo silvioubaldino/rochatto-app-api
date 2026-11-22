@@ -15,11 +15,10 @@ import (
 	"github.com/silvioubaldino/sales-backend/internal/models"
 	"github.com/silvioubaldino/sales-backend/internal/obligations"
 	"github.com/silvioubaldino/sales-backend/internal/saleitem"
+	"github.com/silvioubaldino/sales-backend/internal/search"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
-
-// --- Handler ---
 
 type VendasHandler struct {
 	db *gorm.DB
@@ -29,8 +28,7 @@ func NewVendasHandler(db *gorm.DB) *VendasHandler {
 	return &VendasHandler{db: db}
 }
 
-// Register: a Sale só nasce de um Quote (POST /quotes/{id}/convert ou /quotes/quick-sale —
-// RN-01); POST /vendas não existe mais (AYD-002).
+// Register: a Sale só nasce de um Quote (POST /quotes/{id}/convert ou /quotes/quick-sale — RN-01); POST /vendas não existe mais.
 func (h *VendasHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /vendas", h.list)
 	mux.HandleFunc("GET /vendas/{id}", h.get)
@@ -40,10 +38,10 @@ func (h *VendasHandler) Register(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /vendas/{id}/itens", h.listItens)
 	mux.HandleFunc("POST /vendas/{id}/itens", h.createItem)
+	mux.HandleFunc("PATCH /vendas/{id}/itens/fulfillment", h.batchFulfillment)
 	mux.HandleFunc("PUT /vendas/{id}/itens/{itemId}", h.updateItem)
 	mux.HandleFunc("DELETE /vendas/{id}/itens/{itemId}", h.deleteItem)
 
-	// AYD-009: cobranças ao cliente (preço) e custos da venda (com credor).
 	mux.HandleFunc("GET /vendas/{id}/charges", h.listCharges)
 	mux.HandleFunc("POST /vendas/{id}/charges", h.createCharge)
 	mux.HandleFunc("PUT /vendas/{id}/charges/{chargeId}", h.updateCharge)
@@ -54,18 +52,13 @@ func (h *VendasHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /vendas/{id}/costs/{costId}", h.deleteCost)
 }
 
-// --- Request types ---
-
-// vendaUpdateRequest: status de entrega não é mais aceito aqui (só via PATCH delivery-status).
-// Status só existe para detectar o campo legado e responder 400.
 type vendaUpdateRequest struct {
 	VendedorExternoID   *uuid.UUID      `json:"vendedor_externo_id"`
 	Status              json.RawMessage `json:"status"`
 	DeliveryStatus      json.RawMessage `json:"delivery_status"`
 	DataEntregaPrevista *string         `json:"data_entrega_prevista"`
 	Observacoes         *string         `json:"observacoes"`
-	// Campos removidos (AYD-007/009): só detectados para responder 400 — frete e comissão são
-	// custos da venda (POST /vendas/{id}/costs) e pagá-los é quitar a conta (POST /settlements).
+	// Campos removidos: só detectados para responder 400 — frete e comissão são custos da venda (POST /vendas/{id}/costs) e pagá-los é quitar a conta (POST /settlements).
 	FreteValor    json.RawMessage `json:"frete_valor"`
 	ComissaoValor json.RawMessage `json:"comissao_valor"`
 	FretePago     json.RawMessage `json:"frete_pago"`
@@ -81,8 +74,6 @@ type deliveryStatusResponse struct {
 	DeliveryStatus string    `json:"delivery_status"`
 }
 
-// itemRequest: custo_unit é ponteiro para distinguir "não veio" (FROM_STOCK → custo da
-// última entrada — RN-16). pago_fornecedor saiu do contrato (AYD-002).
 type itemRequest struct {
 	ProdutoID      *uuid.UUID `json:"produto_id"`
 	ProdutoNome    string     `json:"produto_nome"`
@@ -92,15 +83,13 @@ type itemRequest struct {
 	PrecoVendaUnit float64    `json:"preco_venda_unit"`
 	CustoUnit      *float64   `json:"custo_unit"`
 	Origin         *string    `json:"origin"`
-	// AYD-010: tipo do Item (default PRODUCT) e serviço do catálogo (só SERVICE; opcional).
-	Kind      *string    `json:"kind"`
-	ServiceID *uuid.UUID `json:"service_id"`
+	Kind           *string    `json:"kind"`
+	ServiceID      *uuid.UUID `json:"service_id"`
 }
-
-// --- Response types ---
 
 type vendaListResponse struct {
 	ID                  uuid.UUID  `json:"id"`
+	Number              int        `json:"number"`
 	ClienteID           uuid.UUID  `json:"cliente_id"`
 	ClienteNome         string     `json:"cliente_nome"`
 	VendedorExternoID   *uuid.UUID `json:"vendedor_externo_id"`
@@ -111,18 +100,20 @@ type vendaListResponse struct {
 	DataVenda           string     `json:"data_venda"`
 	DataEntregaPrevista *string    `json:"data_entrega_prevista"`
 	Observacoes         *string    `json:"observacoes"`
-	TotalVenda          float64    `json:"total_venda"` // preço ao cliente: Items + cobranças (AYD-009)
+	TotalVenda          float64    `json:"total_venda"`
 	ChargesTotal        float64    `json:"charges_total"`
-	TotalCusto          float64    `json:"total_custo"`    // pedras (+ rateio dos custos adicionais da compra)
-	CostsTotal          float64    `json:"costs_total"`    // custos da venda previstos
-	CostsPaid           float64    `json:"costs_paid"`     // Σ quitado das contas a pagar da venda
-	CostsOpen           float64    `json:"costs_open"`     // Σ em aberto das contas a pagar da venda
-	TotalRecebido       float64    `json:"total_recebido"` // Σ quitações da conta RECEIVABLE (AYD-007)
-	Received            float64    `json:"received"`       // = total_recebido
+	TotalCusto          float64    `json:"total_custo"`
+	CostsTotal          float64    `json:"costs_total"`
+	CostsPaid           float64    `json:"costs_paid"`
+	CostsOpen           float64    `json:"costs_open"`
+	TotalRecebido       float64    `json:"total_recebido"`
+	Received            float64    `json:"received"`
 	AReceber            float64    `json:"a_receber"`
-	Receivable          float64    `json:"receivable"` // RN-05: aberto da conta RECEIVABLE
+	Receivable          float64    `json:"receivable"`
 	Lucro               float64    `json:"lucro"`
 	CreatedAt           time.Time  `json:"created_at"`
+	ItemsCount          int        `json:"items_count"`
+	FirstItemName       *string    `json:"first_item_name"`
 }
 
 type vendaDetailResponse struct {
@@ -130,9 +121,7 @@ type vendaDetailResponse struct {
 	Itens       []itemResponse           `json:"itens"`
 	Composition saleComposition          `json:"composition"`
 	Obligations []obligations.Obligation `json:"obligations"`
-	// Warnings: OVERSETTLED quando alguma conta da Sale ficou com quitado > valor (ex.: troca de
-	// Partner depois de quitar a comissão) — o dono ajusta a quitação (AYD-007 §2).
-	Warnings []string `json:"warnings"`
+	Warnings    []string                 `json:"warnings"`
 }
 
 type itemResponse struct {
@@ -143,9 +132,10 @@ type itemResponse struct {
 	FornecedorNome *string    `json:"fornecedor_nome"`
 	Kind           string     `json:"kind"`
 	ServiceID      *uuid.UUID `json:"service_id"`
-	Origin         *string    `json:"origin"` // null em Item de serviço
+	Origin         *string    `json:"origin"`
 	PurchaseID     *uuid.UUID `json:"purchase_id"`
 	PurchaseStatus *string    `json:"purchase_status"` // só leitura: status da Purchase do Item (null se não está em Purchase)
+	StockBalance   *float64   `json:"stock_balance"`
 	Quantidade     float64    `json:"quantidade"`
 	PrecoVendaUnit float64    `json:"preco_venda_unit"`
 	CustoUnit      float64    `json:"custo_unit"`
@@ -154,16 +144,16 @@ type itemResponse struct {
 	CreatedAt      time.Time  `json:"created_at"`
 }
 
-// itemMutationResponse: resposta de POST/PUT de Item — sempre traz warnings (pode ser []).
 type itemMutationResponse struct {
 	itemResponse
 	Warnings []string `json:"warnings"`
 }
 
-// --- Internal row types ---
-
 type vendaResumoRow struct {
 	ID                  uuid.UUID  `gorm:"column:id"`
+	Number              int        `gorm:"column:number"`
+	ItemsCount          int        `gorm:"column:items_count"`
+	FirstItemName       *string    `gorm:"column:first_item_name"`
 	ClienteID           uuid.UUID  `gorm:"column:cliente_id"`
 	VendedorExternoID   *uuid.UUID `gorm:"column:vendedor_externo_id"`
 	DeliveryStatus      string     `gorm:"column:delivery_status"`
@@ -190,6 +180,9 @@ type vendaResumoRow struct {
 func (row vendaResumoRow) toListResponse() vendaListResponse {
 	return vendaListResponse{
 		ID:                  row.ID,
+		Number:              row.Number,
+		ItemsCount:          row.ItemsCount,
+		FirstItemName:       row.FirstItemName,
 		ClienteID:           row.ClienteID,
 		ClienteNome:         row.ClienteNome,
 		VendedorExternoID:   row.VendedorExternoID,
@@ -215,10 +208,16 @@ func (row vendaResumoRow) toListResponse() vendaListResponse {
 	}
 }
 
-// itemRow: Item de Sale + status da Purchase (LEFT JOIN).
 type itemRow struct {
 	models.ItemVenda
-	PurchaseStatus *string `gorm:"column:purchase_status"`
+	PurchaseStatus *string  `gorm:"column:purchase_status"`
+	StockBalance   *float64 `gorm:"column:stock_balance"`
+}
+
+func (r itemRow) toResponse() itemResponse {
+	resp := itemToResponse(r.ItemVenda, r.PurchaseStatus)
+	resp.StockBalance = r.StockBalance
+	return resp
 }
 
 func itemToResponse(item models.ItemVenda, purchaseStatus *string) itemResponse {
@@ -242,12 +241,14 @@ func itemToResponse(item models.ItemVenda, purchaseStatus *string) itemResponse 
 	}
 }
 
-// --- Helper methods ---
-
 func (h *VendasHandler) resumoQuery(ctx context.Context) *gorm.DB {
 	return h.db.WithContext(ctx).
 		Table("vw_vendas_resumo vr").
-		Select("vr.*, c.nome AS cliente_nome, ve.nome AS vendedor_externo_nome"). // vr.* inclui quote_id, delivery_status, payment_status
+		Select(`vr.*, vn.number AS number, c.nome AS cliente_nome, ve.nome AS vendedor_externo_nome,
+			(SELECT COUNT(*) FROM itens_venda iv WHERE iv.venda_id = vr.id) AS items_count,
+			(SELECT iv.produto_nome FROM itens_venda iv WHERE iv.venda_id = vr.id
+			  ORDER BY iv.created_at, iv.id LIMIT 1) AS first_item_name`).
+		Joins("JOIN vendas vn ON vn.id = vr.id").
 		Joins("JOIN clientes c ON c.id = vr.cliente_id").
 		Joins("LEFT JOIN vendedores_externos ve ON ve.id = vr.vendedor_externo_id")
 }
@@ -267,8 +268,11 @@ func (h *VendasHandler) fetchVendaResumo(ctx context.Context, id uuid.UUID) (*ve
 func fetchItemRows(db *gorm.DB, where string, args ...any) ([]itemRow, error) {
 	var rows []itemRow
 	err := db.Table("itens_venda").
-		Select("itens_venda.*, p.status AS purchase_status").
+		Select(`itens_venda.*, p.status AS purchase_status,
+			CASE WHEN itens_venda.origin = 'FROM_STOCK' AND itens_venda.produto_id IS NOT NULL
+			     THEN COALESCE(sb.balance, 0) END AS stock_balance`).
 		Joins("LEFT JOIN purchases p ON p.id = itens_venda.purchase_id").
+		Joins("LEFT JOIN vw_stock_balance sb ON sb.product_id = itens_venda.produto_id").
 		Where(where, args...).
 		Order("itens_venda.created_at ASC").
 		Scan(&rows).Error
@@ -282,7 +286,7 @@ func (h *VendasHandler) fetchItens(ctx context.Context, vendaID uuid.UUID) ([]it
 	}
 	out := make([]itemResponse, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, itemToResponse(r.ItemVenda, r.PurchaseStatus))
+		out = append(out, r.toResponse())
 	}
 	return out, nil
 }
@@ -321,9 +325,7 @@ func (h *VendasHandler) buildDetailResponse(ctx context.Context, vendaID uuid.UU
 	}, nil
 }
 
-// validateItemFields valida o payload do Item (regras que não dependem do banco).
 func validateItemFields(req itemRequest) string {
-	// Item de serviço do catálogo pode vir sem nome: assume o nome do serviço (AYD-010).
 	if strings.TrimSpace(req.ProdutoNome) == "" && req.ServiceID == nil {
 		return "campo 'produto_nome' é obrigatório"
 	}
@@ -350,7 +352,6 @@ func validateItemFields(req itemRequest) string {
 	return ""
 }
 
-// parseEnumList separa "A,B" e valida cada valor contra o enum.
 func parseEnumList(raw string, valid map[string]bool) ([]string, bool) {
 	var out []string
 	for _, v := range strings.Split(raw, ",") {
@@ -367,16 +368,10 @@ func parseDate(s string) (time.Time, error) {
 	return time.Parse("2006-01-02", strings.TrimSpace(s))
 }
 
-// ============================================================
-// Vendas
-// ============================================================
-
 func (h *VendasHandler) list(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	query := h.resumoQuery(r.Context())
 
-	// delivery_status / payment_status aceitam vários valores separados por vírgula
-	// (ex.: payment_status=PENDING,PARTIAL).
 	for _, f := range []struct {
 		param string
 		valid map[string]bool
@@ -405,8 +400,6 @@ func (h *VendasHandler) list(w http.ResponseWriter, r *http.Request) {
 		}
 		query = query.Where("vr.cliente_id = ?", clienteID)
 	}
-	// AYD-004: período por data_venda (inclusivo). freight_pending/commission_pending saíram
-	// (AYD-009): use GET /obligations?origin_type=SALE&counterparty_type=…
 	for _, f := range []struct{ param, op string }{{"from", ">="}, {"to", "<="}} {
 		raw := q.Get(f.param)
 		if raw == "" {
@@ -419,8 +412,17 @@ func (h *VendasHandler) list(w http.ResponseWriter, r *http.Request) {
 		}
 		query = query.Where("vr.data_venda "+f.op+" ?", d)
 	}
+	if ref := q.Get("referrer_id"); ref != "" {
+		if _, err := uuid.Parse(ref); err != nil {
+			models.WriteError(w, http.StatusBadRequest, "referrer_id inválido")
+			return
+		}
+		query = query.Where("vr.vendedor_externo_id = ?", ref)
+	}
+	if term := strings.TrimSpace(q.Get("q")); term != "" {
+		query = applySaleSearch(query, term)
+	}
 	if q.Get("pendente") == "true" {
-		// "a receber" exclui Sales canceladas (AYD-002).
 		query = query.Where("vr.receivable > 0 AND vr.delivery_status <> 'CANCELED'")
 	}
 
@@ -438,6 +440,22 @@ func (h *VendasHandler) list(w http.ResponseWriter, r *http.Request) {
 		vendas = append(vendas, row.toListResponse())
 	}
 	writeJSON(w, http.StatusOK, vendas)
+}
+
+func applySaleSearch(query *gorm.DB, term string) *gorm.DB {
+	like := "%" + search.EscapeLike(search.Normalize(term)) + "%"
+	cond := foldLike("c.nome") + ` OR EXISTS (SELECT 1 FROM itens_venda iq WHERE iq.venda_id = vr.id AND ` +
+		foldLike("iq.produto_nome") + `)`
+	args := []any{like, like}
+	if n, ok := search.AsNumber(term); ok {
+		cond += " OR vn.number = ?"
+		args = append(args, n)
+	}
+	return query.Where("("+cond+")", args...)
+}
+
+func foldLike(col string) string {
+	return strings.Replace(foldSQL, "%s", col, 1) + ` LIKE ? ESCAPE '\'`
 }
 
 func (h *VendasHandler) get(w http.ResponseWriter, r *http.Request) {
@@ -490,7 +508,6 @@ func (h *VendasHandler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Atualiza só os campos editáveis (não cliente_id, data_venda nem delivery_status).
 	result := h.db.WithContext(r.Context()).
 		Model(&models.Venda{}).
 		Where("id = ?", id).
@@ -533,9 +550,6 @@ func (h *VendasHandler) delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// updateDeliveryStatus: PATCH /vendas/{id}/delivery-status. Cancelar exige que nenhum Item
-// esteja em Purchase ORDERED/RECEIVED; Items em Purchase OPEN são liberados na mesma
-// transação (RN-15). CANCELED é terminal.
 func (h *VendasHandler) updateDeliveryStatus(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
@@ -592,17 +606,12 @@ func changeDeliveryStatus(tx *gorm.DB, saleID uuid.UUID, next string) error {
 	}
 
 	if next == fulfillment.DeliveryCanceled {
-		// Libera os Items das Purchases OPEN (os únicos que podem estar em Purchase aqui).
 		if err := tx.Exec(`UPDATE itens_venda SET purchase_id = NULL WHERE venda_id = ? AND purchase_id IS NOT NULL`, saleID).Error; err != nil {
 			return err
 		}
 	}
 	return tx.Model(&models.Venda{}).Where("id = ?", saleID).Update("delivery_status", next).Error
 }
-
-// ============================================================
-// Itens de Venda
-// ============================================================
 
 func (h *VendasHandler) listItens(w http.ResponseWriter, r *http.Request) {
 	vendaID, err := uuid.Parse(r.PathValue("id"))
@@ -631,7 +640,6 @@ func (h *VendasHandler) listItens(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, itens)
 }
 
-// lockOpenSale carrega a Sale (FOR UPDATE) e recusa Sale cancelada (409).
 func lockOpenSale(tx *gorm.DB, vendaID uuid.UUID) (*models.Venda, error) {
 	var venda models.Venda
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&venda, "id = ?", vendaID).Error; err != nil {
@@ -646,7 +654,6 @@ func lockOpenSale(tx *gorm.DB, vendaID uuid.UUID) (*models.Venda, error) {
 	return &venda, nil
 }
 
-// checkItemRefs confere que produto_id e fornecedor_id (se vierem) existem.
 func checkItemRefs(tx *gorm.DB, req itemRequest) (*models.Produto, error) {
 	var produto *models.Produto
 	if req.ProdutoID != nil {
@@ -671,14 +678,12 @@ func checkItemRefs(tx *gorm.DB, req itemRequest) (*models.Produto, error) {
 	return produto, nil
 }
 
-// lastInflowCost: custo da última entrada do Product (vw_stock_balance), nil se nunca houve.
 func lastInflowCost(tx *gorm.DB, productID uuid.UUID) (*float64, error) {
 	var cost *float64
 	err := tx.Raw(`SELECT last_inflow_cost FROM vw_stock_balance WHERE product_id = ?`, productID).Scan(&cost).Error
 	return cost, err
 }
 
-// stockWarnings devolve ["INSUFFICIENT_STOCK"] se o Item FROM_STOCK deixou o Balance negativo.
 func stockWarnings(tx *gorm.DB, item models.ItemVenda) ([]string, error) {
 	warnings := []string{}
 	if item.Origin == nil || *item.Origin != fulfillment.OriginFromStock || item.ProdutoID == nil {
@@ -695,9 +700,16 @@ func stockWarnings(tx *gorm.DB, item models.ItemVenda) ([]string, error) {
 	return warnings, nil
 }
 
-// resolveItemCost aplica RN-16: FROM_STOCK sem custo_unit no payload → custo da última
-// entrada. Sem entrada registrada, usa fallback (custo atual do Item no PUT; custo de
-// referência do Product no POST; senão 0).
+func itemStockBalance(tx *gorm.DB, item models.ItemVenda) (*float64, error) {
+	if item.Origin == nil || *item.Origin != fulfillment.OriginFromStock || item.ProdutoID == nil {
+		return nil, nil
+	}
+	var balance float64
+	err := tx.Raw(`SELECT COALESCE((SELECT balance FROM vw_stock_balance WHERE product_id = ?), 0)`, *item.ProdutoID).Scan(&balance).Error
+	return &balance, err
+}
+
+// Sem entrada registrada, usa fallback (custo atual do Item no PUT; custo de referência do Product no POST; senão 0).
 func resolveItemCost(tx *gorm.DB, req itemRequest, origin string, fallback float64) (float64, error) {
 	if req.CustoUnit != nil {
 		return *req.CustoUnit, nil
@@ -714,8 +726,6 @@ func resolveItemCost(tx *gorm.DB, req itemRequest, origin string, fallback float
 	return fallback, nil
 }
 
-// checkServiceRef confere que service_id existe (404). current é o service_id já gravado no Item:
-// mantê-lo é permitido mesmo que o serviço tenha sido excluído depois (o vínculo se preserva).
 func checkServiceRef(tx *gorm.DB, id, current *uuid.UUID) (*models.Service, error) {
 	if id == nil {
 		return nil, nil
@@ -734,7 +744,6 @@ func checkServiceRef(tx *gorm.DB, id, current *uuid.UUID) (*models.Service, erro
 	return &svc, nil
 }
 
-// itemKindError aplica a coerência do Item com o tipo (AYD-010 §2) e o custo do serviço (sempre 0).
 func itemKindError(kind string, req itemRequest) error {
 	if msg := saleitem.Validate(saleitem.Fields{
 		Kind: kind, HasProduct: req.ProdutoID != nil, HasService: req.ServiceID != nil,
@@ -748,7 +757,6 @@ func itemKindError(kind string, req itemRequest) error {
 	return nil
 }
 
-// serviceItemName: nome do Item de serviço — o informado ou, se vazio, o do catálogo.
 func serviceItemName(req itemRequest, svc *models.Service) string {
 	if name := strings.TrimSpace(req.ProdutoNome); name != "" || svc == nil {
 		return name
@@ -834,7 +842,8 @@ func (h *VendasHandler) createItem(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		resp = itemMutationResponse{itemResponse: itemToResponse(item, nil), Warnings: warnings}
-		return nil
+		resp.StockBalance, err = itemStockBalance(tx, item)
+		return err
 	})
 	if err != nil {
 		writeTxError(w, "CreateItem", err)
@@ -843,7 +852,6 @@ func (h *VendasHandler) createItem(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, resp)
 }
 
-// lockItemInPurchase devolve o status da Purchase do Item (ou "" se o Item não está em Purchase).
 func purchaseStatusOf(tx *gorm.DB, item models.ItemVenda) (string, error) {
 	if item.PurchaseID == nil {
 		return "", nil
@@ -902,7 +910,6 @@ func (h *VendasHandler) updateItem(w http.ResponseWriter, r *http.Request) {
 			}
 			return err
 		}
-		// Mudar o tipo de um Item existente é 409: remova e adicione outro (AYD-010).
 		if req.Kind != nil {
 			if k, _ := saleitem.Resolve(req.Kind); k != item.Kind {
 				return errStatus(http.StatusConflict, "o tipo (kind) do item não muda: remova o item e adicione outro")
@@ -930,7 +937,6 @@ func (h *VendasHandler) updateItem(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 
-		// origin ausente no PUT mantém a atual.
 		origin := ""
 		if item.Origin != nil {
 			origin = *item.Origin
@@ -982,7 +988,8 @@ func (h *VendasHandler) updateItem(w http.ResponseWriter, r *http.Request) {
 			ps = &purchaseStatus
 		}
 		resp = itemMutationResponse{itemResponse: itemToResponse(item, ps), Warnings: warnings}
-		return nil
+		resp.StockBalance, err = itemStockBalance(tx, item)
+		return err
 	})
 	if err != nil {
 		writeTxError(w, "UpdateItem", err)
@@ -1023,7 +1030,6 @@ func (h *VendasHandler) deleteItem(w http.ResponseWriter, r *http.Request) {
 			return itemInPurchaseError(purchaseStatus)
 		}
 
-		// A Sale mantém ao menos 1 Item.
 		var count int64
 		if err := tx.Model(&models.ItemVenda{}).Where("venda_id = ?", vendaID).Count(&count).Error; err != nil {
 			return err
@@ -1043,9 +1049,7 @@ func (h *VendasHandler) deleteItem(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// releaseItemCosts trata os custos da venda ligados ao Item (sale_costs.sale_item_id) antes de
-// excluí-lo. Item de serviço leva o custo junto (soft-delete) — 409 se a conta do credor desse
-// custo já tem quitação (AYD-010). Qualquer vínculo restante é desfeito (FK).
+// releaseItemCosts trata os custos da venda ligados ao Item (sale_costs.sale_item_id) antes de excluí-lo.
 func releaseItemCosts(tx *gorm.DB, item models.ItemVenda) error {
 	if item.Kind == saleitem.KindService {
 		var settled int64

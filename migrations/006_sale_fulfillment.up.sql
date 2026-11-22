@@ -1,14 +1,7 @@
--- AYD-002@context: atendimento da Sale — origem do Item, Purchase, Stock e status da Sale.
--- Entidades/colunas novas em inglês (ADR-001); legado PT (vendas, itens_venda) mantido.
--- Simplificações do MVP: PDR-001@context.
---
 -- ATENÇÃO (produção): parte desta migration é irreversível — vendas.status, itens_venda.pago_fornecedor
 -- e a tabela estoque são removidos depois de migrados. Antes de aplicar, confira as entradas de
 -- estoque sem produto_id (não migram) — ver docs/ops/database.md.
 
--- ============================================================
--- ENUMS
--- ============================================================
 CREATE TYPE item_origin             AS ENUM ('MADE_TO_ORDER', 'FROM_STOCK');
 CREATE TYPE purchase_kind           AS ENUM ('MADE_TO_ORDER', 'STOCK_REPLENISHMENT');
 CREATE TYPE purchase_status         AS ENUM ('OPEN', 'ORDERED', 'RECEIVED');
@@ -16,9 +9,6 @@ CREATE TYPE supplier_payment_status AS ENUM ('PENDING', 'PAID');
 CREATE TYPE sale_delivery_status    AS ENUM ('TO_DELIVER', 'DELIVERED', 'CANCELED');
 CREATE TYPE stock_adjustment_reason AS ENUM ('INITIAL', 'COUNT', 'OTHER');
 
--- ============================================================
--- PURCHASE (consolidada por Supplier; um pagamento por Purchase — RN-06)
--- ============================================================
 CREATE TABLE purchases (
   id             UUID                    PRIMARY KEY DEFAULT gen_random_uuid(),
   kind           purchase_kind           NOT NULL,
@@ -38,8 +28,6 @@ CREATE TABLE purchases (
 CREATE INDEX idx_purchases_supplier_id ON purchases(supplier_id);
 CREATE INDEX idx_purchases_status      ON purchases(status);
 
--- Linhas de reposição de Stock (só kind STOCK_REPLENISHMENT). As linhas de uma Purchase
--- MADE_TO_ORDER são os próprios Items de Sale (itens_venda.purchase_id).
 CREATE TABLE purchase_items (
   id          UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
   purchase_id UUID          NOT NULL REFERENCES purchases(id) ON DELETE CASCADE,
@@ -52,9 +40,6 @@ CREATE TABLE purchase_items (
 CREATE INDEX idx_purchase_items_purchase_id ON purchase_items(purchase_id);
 CREATE INDEX idx_purchase_items_product_id  ON purchase_items(product_id);
 
--- ============================================================
--- STOCK ADJUSTMENT (imutável — erro se corrige com outro ajuste)
--- ============================================================
 CREATE TABLE stock_adjustments (
   id          UUID                    PRIMARY KEY DEFAULT gen_random_uuid(),
   product_id  UUID                    NOT NULL REFERENCES produtos(id),
@@ -68,9 +53,6 @@ CREATE TABLE stock_adjustments (
 
 CREATE INDEX idx_stock_adjustments_product_id ON stock_adjustments(product_id);
 
--- ============================================================
--- ITEM DE SALE: origem + Purchase
--- ============================================================
 ALTER TABLE itens_venda
   ADD COLUMN origin      item_origin NOT NULL DEFAULT 'MADE_TO_ORDER',
   ADD COLUMN purchase_id UUID REFERENCES purchases(id);
@@ -84,22 +66,12 @@ ALTER TABLE itens_venda
 CREATE INDEX idx_itens_venda_purchase_id ON itens_venda(purchase_id);
 CREATE INDEX idx_itens_venda_produto_id  ON itens_venda(produto_id);
 
--- ============================================================
--- SALE: status de entrega (substitui status_venda)
--- ============================================================
 ALTER TABLE vendas
   ADD COLUMN delivery_status sale_delivery_status NOT NULL DEFAULT 'TO_DELIVER';
 
 CREATE INDEX idx_vendas_delivery_status ON vendas(delivery_status);
 
--- ============================================================
--- MIGRAÇÃO DOS DADOS LEGADOS (tabela do AYD-002)
--- ============================================================
-
--- vendas.status → delivery_status (A_ENTREGAR*, A_RETIRAR, ENTREGUE_PARCIAL → TO_DELIVER)
 UPDATE vendas SET delivery_status = 'DELIVERED' WHERE status = 'ENTREGUE';
-
--- itens_venda existentes: origin = MADE_TO_ORDER (default), purchase_id = null.
 
 -- pago_fornecedor (questão em aberto 1, decidida): uma Purchase legada RECEIVED por Supplier com
 -- os Items de Sales não canceladas (e não excluídas) que têm Supplier E (Sale ENTREGUE ou
@@ -142,10 +114,7 @@ SELECT produto_id, quantidade_entrada, custo_unit, 'INITIAL', data_entrada, obse
 FROM estoque
 WHERE produto_id IS NOT NULL AND quantidade_entrada <> 0;
 
--- ============================================================
--- APOSENTA O LEGADO
--- ============================================================
-DROP VIEW IF EXISTS vw_vendas_resumo;   -- depende de vendas.status / itens_venda.pago_fornecedor
+DROP VIEW IF EXISTS vw_vendas_resumo;
 
 ALTER TABLE itens_venda DROP COLUMN pago_fornecedor;
 DROP INDEX IF EXISTS idx_vendas_status;
@@ -153,12 +122,6 @@ ALTER TABLE vendas DROP COLUMN status;
 DROP TYPE status_venda;
 DROP TABLE estoque;
 
--- ============================================================
--- VIEWS (campos calculados — nunca persistidos; somas pré-agregadas por subconsulta)
--- ============================================================
-
--- Resumo por Sale. Uma linha por Sale (inclusive CANCELED — os totais do painel/dashboard é
--- que filtram delivery_status <> 'CANCELED').
 CREATE VIEW vw_vendas_resumo AS
 SELECT
   v.*,
@@ -192,8 +155,6 @@ LEFT JOIN (
 ) rc ON rc.venda_id = v.id
 WHERE v.deleted_at IS NULL;
 
--- Resumo por Purchase: total_cost = Σ linhas (Items de Sale para MADE_TO_ORDER, linhas de
--- reposição para STOCK_REPLENISHMENT); to_pay = total_cost − pago (0 se PAID).
 CREATE VIEW vw_purchases_resumo AS
 SELECT
   p.*,
@@ -217,9 +178,6 @@ LEFT JOIN (
 ) pi ON pi.purchase_id = p.id
 WHERE p.deleted_at IS NULL;
 
--- Balance por Product (RN-03/RN-16): Inflow (reposição recebida) − Outflow (Items FROM_STOCK
--- de Sales não canceladas) + ajustes. Custo da última entrada: a mais recente entre linhas de
--- reposição recebidas e ajustes INITIAL/COUNT com custo.
 CREATE VIEW vw_stock_balance AS
 WITH replenishment AS (
   SELECT pi.product_id, pi.quantity, pi.unit_cost, p.received_at AS event_date, pi.created_at

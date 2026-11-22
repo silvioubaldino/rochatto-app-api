@@ -1,8 +1,5 @@
 package tools_test
 
-// Testes de integração das ferramentas de ESCRITA (SPEC-007 / AYD-006 §4): cada ferramenta
-// roda pelo pipeline real (scope, validação, dedupe, auditoria), pelo Gateway em processo,
-// sobre os handlers REST de verdade, num Postgres descartável (TEST_DATABASE_URL).
 import (
 	"context"
 	"encoding/json"
@@ -13,7 +10,6 @@ import (
 	"github.com/silvioubaldino/sales-backend/internal/mcp"
 )
 
-// writeFixture: um cliente, um fornecedor, dois produtos e uma Sale (venda rápida) de 1 item.
 type writeFixture struct {
 	customer, supplier, product, product2 string
 	sale, item                            string
@@ -33,8 +29,6 @@ func (e *env) writeFixture() writeFixture {
 	return f
 }
 
-// receiptCount conta os "recebimentos" da Sale como get_sale os mostra: quitações da conta a
-// receber + parcelas ainda não cobertas (AYD-007).
 func (e *env) receiptCount(saleID string) int {
 	e.t.Helper()
 	list := e.mustREST("GET", "/obligations?origin_type=SALE&origin_id="+saleID+"&direction=RECEIVABLE", nil, 200)["items"].([]any)
@@ -102,7 +96,7 @@ func TestIntegration_WriteQuoteToSaleFlow(t *testing.T) {
 		sale["delivery_status"] != "TO_DELIVER" || len(sale["items"].([]any)) != 2 || len(sale["receipts"].([]any)) != 0 {
 		t.Fatalf("sale = %v", conv)
 	}
-	e.fail("convert_quote_to_sale", map[string]any{"quote_id": qid}, "", "") // já WON
+	e.fail("convert_quote_to_sale", map[string]any{"quote_id": qid}, "", "")
 	e.fail("convert_quote_to_sale", map[string]any{"quote_id": uuidNew()}, "NOT_FOUND", "")
 
 	qs := e.ok("create_quick_sale", map[string]any{"customer_id": cid, "items": qItems[:1]})
@@ -138,17 +132,14 @@ func TestIntegration_WriteDedupeLimits(t *testing.T) {
 		if isErr || out["deduplicated"] != true || e.movementCount("VEHICLE") != 3 {
 			t.Errorf("ordem das chaves: %v (movimentações=%d)", out, e.movementCount("VEHICLE"))
 		}
-		// Argumentos diferentes → cria.
 		e.ok("record_expense", map[string]any{"category": "VEHICLE", "amount": 11, "occurred_on": day(0), "payment_method": "CASH"})
 		if e.movementCount("VEHICLE") != 4 {
 			t.Error("argumentos diferentes devem criar")
 		}
-		// Outra Connection → cria (a chave inclui a Connection).
 		other := e.newConnection("read", "write")
 		if out, _ := e.callRaw(other, "record_expense", `{"category":"VEHICLE","amount":11,"occurred_on":"`+day(0)+`","payment_method":"CASH"}`); out["deduplicated"] != nil || e.movementCount("VEHICLE") != 5 {
 			t.Errorf("outra Connection: %v", out)
 		}
-		// Mais de 120 s depois → cria.
 		e.skew = 121 * time.Second
 		defer func() { e.skew = 0 }()
 		if out := e.ok("record_expense", args); out["deduplicated"] != nil || e.movementCount("VEHICLE") != 6 {
@@ -178,7 +169,6 @@ func TestIntegration_WriteSalePartialUpdate(t *testing.T) {
 	f := e.writeFixture()
 	e.mustREST("PUT", "/vendas/"+f.sale, map[string]any{"observacoes": "x", "data_entrega_prevista": "2026-12-20"}, 200)
 
-	// Só o prazo muda; o que não foi enviado permanece.
 	out := e.ok("update_sale", map[string]any{"sale_id": f.sale, "expected_delivery_date": "2026-12-25"})
 	s := obj(out["sale"])
 	if s["notes"] != "x" || s["expected_delivery_date"] != "2026-12-25" {
@@ -198,7 +188,6 @@ func TestIntegration_WriteSalePartialUpdate(t *testing.T) {
 		t.Errorf("novos = %v", got)
 	}
 
-	// Validações: ≥ 1 campo; campos removidos/fora do schema; venda inexistente.
 	e.fail("update_sale", map[string]any{"sale_id": f.sale}, "INVALID_INPUT", "ao menos um campo")
 	e.fail("update_sale", map[string]any{"sale_id": f.sale, "freight_amount": 10}, "INVALID_INPUT", "")
 	e.fail("update_sale", map[string]any{"sale_id": f.sale, "commission_paid": true}, "INVALID_INPUT", "")
@@ -208,11 +197,10 @@ func TestIntegration_WriteSalePartialUpdate(t *testing.T) {
 
 func TestIntegration_WriteSaleComposition(t *testing.T) {
 	e := newEnv(t)
-	f := e.writeFixture() // venda de 4 × 500 = 2000, custo 4 × 300
+	f := e.writeFixture()
 	driver := e.mustREST("POST", "/fornecedores", map[string]any{"nome": "Motorista X", "kind": "TRANSPORT"}, 201)["id"].(string)
 	partner := e.mustREST("POST", "/partners", map[string]any{"name": "Arq Ana", "type": "ARCHITECT"}, 201)["id"].(string)
 
-	// add_sale_charge: frete cobrado de 100 soma ao preço e à conta a receber; dedupe.
 	out := e.ok("add_sale_charge", map[string]any{"sale_id": f.sale, "kind": "FREIGHT", "amount": 100})
 	ch := obj(out["charge"])
 	sale := obj(out["sale"])
@@ -226,7 +214,6 @@ func TestIntegration_WriteSaleComposition(t *testing.T) {
 		t.Errorf("dedupe = %v", dup)
 	}
 
-	// set_sale_costs: frete pago 150 ao motorista e comissão 50 (padrão: Partner indicador, aqui nenhum).
 	e.mustREST("PUT", "/vendas/"+f.sale, map[string]any{"vendedor_externo_id": partner}, 200)
 	args := map[string]any{"sale_id": f.sale, "costs": []map[string]any{
 		{"kind": "FREIGHT", "amount": 150, "payee_supplier_id": driver},
@@ -242,25 +229,21 @@ func TestIntegration_WriteSaleComposition(t *testing.T) {
 	if obj(comm["payee"])["type"] != "PARTNER" || obj(comm["payee"])["id"] != partner {
 		t.Errorf("comissão deveria ter o Partner indicador como credor: %v", comm)
 	}
-	// Repetir atualiza em vez de duplicar.
 	args["costs"].([]map[string]any)[0]["amount"] = 175
 	out = e.ok("set_sale_costs", args)
 	if n := len(obj(obj(out["sale"])["composition"])["costs"].([]any)); n != 2 || obj(out["sale"])["costs_total"] != float64(225) {
 		t.Errorf("set_sale_costs idempotente = %v", out)
 	}
-	// Validações.
 	e.fail("set_sale_costs", map[string]any{"sale_id": f.sale, "costs": []map[string]any{{"kind": "COMMISSION", "amount": 1, "payee_supplier_id": driver}}}, "INVALID_INPUT", "Partner")
 	e.fail("set_sale_costs", map[string]any{"sale_id": f.sale, "costs": []map[string]any{{"kind": "FREIGHT", "amount": 1, "payee_partner_id": partner}}}, "INVALID_INPUT", "comissão")
 	e.fail("set_sale_costs", map[string]any{"sale_id": f.sale, "costs": []map[string]any{}}, "INVALID_INPUT", "")
 	e.fail("set_sale_costs", map[string]any{"sale_id": f.sale, "costs": []map[string]any{{"kind": "FREIGHT", "amount": -1}}}, "INVALID_INPUT", "")
 
-	// get_sale traz a composição, o Profit e as contas.
 	got := obj(e.ok("get_sale", map[string]any{"sale_id": f.sale})["sale"])
 	if obj(got["composition"])["costs_total"] != float64(225) || len(got["obligations"].([]any)) != 3 {
 		t.Errorf("get_sale = %v", got)
 	}
 
-	// create_quick_sale com charges.
 	q := e.ok("create_quick_sale", map[string]any{"customer_id": f.customer, "items": []map[string]any{
 		{"product_id": f.product, "product_name": "Granito Escrita", "quantity": 1, "unit_price": 500, "unit_cost": 300}},
 		"charges": []map[string]any{{"kind": "FREIGHT", "amount": 80}}})
@@ -279,22 +262,18 @@ func TestIntegration_WriteSaleItemsDeliveryAndCancel(t *testing.T) {
 	e := newEnv(t)
 	f := e.writeFixture()
 
-	// Parcial: só a quantidade muda; os demais campos permanecem.
 	it := obj(e.ok("update_sale_item", map[string]any{"sale_id": f.sale, "item_id": f.item, "quantity": 6.5, "unit_price": 510})["item"])
 	if it["quantity"] != 6.5 || it["unit_price"] != float64(510) || it["unit_cost"] != float64(300) || it["product_name"] != "Granito Escrita" || it["product_id"] != f.product {
 		t.Fatalf("item = %v", it)
 	}
-	// Fornecedor: nome acompanha o id; null limpa.
 	it = obj(e.ok("update_sale_item", map[string]any{"sale_id": f.sale, "item_id": f.item, "origin": "MADE_TO_ORDER", "supplier_id": f.supplier})["item"])
 	if it["supplier_id"] != f.supplier || it["supplier_name"] != "Pedras Escrita" || it["origin"] != "MADE_TO_ORDER" {
 		t.Fatalf("fornecedor = %v", it)
 	}
-	// FROM_STOCK sem saldo: permitido, com aviso; o custo vem da API (RN-16: sem entrada, mantém).
 	out := e.ok("update_sale_item", map[string]any{"sale_id": f.sale, "item_id": f.item, "origin": "FROM_STOCK"})
 	if w := out["warnings"].([]any); len(w) != 1 || w[0] != "INSUFFICIENT_STOCK" || obj(out["item"])["origin"] != "FROM_STOCK" {
 		t.Errorf("FROM_STOCK = %v", out)
 	}
-	// Com entrada de estoque, FROM_STOCK passa a usar o custo da última entrada e some o aviso.
 	e.ok("create_stock_adjustment", map[string]any{"product_id": f.product, "quantity": 100, "reason": "INITIAL", "unit_cost": 280})
 	out = e.ok("update_sale_item", map[string]any{"sale_id": f.sale, "item_id": f.item, "origin": "MADE_TO_ORDER"})
 	out = e.ok("update_sale_item", map[string]any{"sale_id": f.sale, "item_id": f.item, "origin": "FROM_STOCK"})
@@ -319,7 +298,6 @@ func TestIntegration_WriteSaleItemsDeliveryAndCancel(t *testing.T) {
 	e.fail("update_sale_item", map[string]any{"sale_id": f.sale, "item_id": f.item, "quantity": 99}, "CONFLICT", "")
 	e.fail("cancel_sale", map[string]any{"sale_id": f.sale}, "CONFLICT", "compra pedida ou recebida")
 
-	// Entrega.
 	d := e.ok("set_sale_delivery_status", map[string]any{"sale_id": f.sale, "delivery_status": "DELIVERED"})
 	if d["delivery_status"] != "DELIVERED" || d["sale_id"] != f.sale || len(d["warnings"].([]any)) != 0 {
 		t.Errorf("delivered = %v", d)
@@ -330,7 +308,6 @@ func TestIntegration_WriteSaleItemsDeliveryAndCancel(t *testing.T) {
 	e.fail("set_sale_delivery_status", map[string]any{"sale_id": f.sale, "delivery_status": "CANCELED"}, "INVALID_INPUT", "")
 	e.fail("set_sale_delivery_status", map[string]any{"sale_id": uuidNew(), "delivery_status": "DELIVERED"}, "NOT_FOUND", "venda não encontrada")
 
-	// Cancelamento: libera Items de Purchase aberta e é terminal.
 	g := e.writeFixture()
 	e.ok("update_sale_item", map[string]any{"sale_id": g.sale, "item_id": g.item, "origin": "MADE_TO_ORDER", "supplier_id": g.supplier})
 	openP := obj(e.ok("create_purchase", map[string]any{"kind": "MADE_TO_ORDER", "supplier_id": g.supplier, "sale_item_ids": []string{g.item}})["purchase"])["id"].(string)
@@ -348,12 +325,11 @@ func TestIntegration_WriteSaleItemsDeliveryAndCancel(t *testing.T) {
 func TestIntegration_WriteProcurementAndStock(t *testing.T) {
 	e := newEnv(t)
 	f := e.writeFixture()
-	g := e.writeFixture() // 2ª venda, mesmo fornecedor lógico (outro registro)
+	g := e.writeFixture()
 	for _, x := range []writeFixture{f, g} {
 		e.ok("update_sale_item", map[string]any{"sale_id": x.sale, "item_id": x.item, "origin": "MADE_TO_ORDER", "supplier_id": f.supplier})
 	}
 
-	// Compra consolidada MADE_TO_ORDER (N Sales → 1 Purchase) + inclusão posterior de itens.
 	cp := e.ok("create_purchase", map[string]any{"kind": "MADE_TO_ORDER", "supplier_id": f.supplier, "expected_date": "2026-12-10", "notes": "lote", "sale_item_ids": []string{f.item}})
 	p := obj(cp["purchase"])
 	pid := p["id"].(string)
@@ -373,7 +349,6 @@ func TestIntegration_WriteProcurementAndStock(t *testing.T) {
 	e.fail("create_purchase", map[string]any{"kind": "STOCK_REPLENISHMENT", "supplier_id": f.supplier, "sale_item_ids": []string{f.item}}, "INVALID_INPUT", "não aceita 'sale_item_ids'")
 	e.fail("create_purchase", map[string]any{"kind": "MADE_TO_ORDER", "supplier_id": uuidNew(), "sale_item_ids": []string{f.item}}, "", "")
 
-	// Status: OPEN → ORDERED → RECEIVED com as datas; made-to-order não movimenta Stock.
 	o := e.ok("set_purchase_status", map[string]any{"purchase_id": pid, "status": "ORDERED"})
 	if o["status"] != "ORDERED" || o["ordered_at"] == nil || o["purchase_id"] != pid {
 		t.Errorf("ORDERED = %v", o)
@@ -386,7 +361,6 @@ func TestIntegration_WriteProcurementAndStock(t *testing.T) {
 	e.fail("set_purchase_status", map[string]any{"purchase_id": uuidNew(), "status": "ORDERED"}, "NOT_FOUND", "")
 	e.fail("set_purchase_status", map[string]any{"purchase_id": pid, "status": "EM_ROTA"}, "INVALID_INPUT", "")
 
-	// Reposição de estoque: Purchase recebida gera Inflow; ajuste devolve o Balance.
 	rp := obj(e.ok("create_purchase", map[string]any{"kind": "STOCK_REPLENISHMENT", "supplier_id": f.supplier,
 		"items": []map[string]any{{"product_id": f.product2, "quantity": 12.5, "unit_cost": 410.25}}})["purchase"])
 	if rp["kind"] != "STOCK_REPLENISHMENT" || len(rp["items"].([]any)) != 1 || len(rp["sale_items"].([]any)) != 0 {
@@ -424,7 +398,7 @@ func TestIntegration_WriteAudit(t *testing.T) {
 	f := e.writeFixture()
 	exp := map[string]any{"category": "VEHICLE", "amount": 100, "occurred_on": day(0), "payment_method": "CASH"}
 	r := e.ok("record_expense", exp)
-	e.ok("record_expense", exp) // deduplicada
+	e.ok("record_expense", exp)
 	e.ok("update_sale", map[string]any{"sale_id": f.sale, "notes": "audit"})
 	e.fail("cancel_sale", map[string]any{"sale_id": uuidNew()}, "NOT_FOUND", "")
 
@@ -451,7 +425,6 @@ func TestIntegration_WriteAudit(t *testing.T) {
 	if c := byTool["cancel_sale"]; len(c) != 1 || c[0].Outcome != "ERROR" || c[0].ErrorCode == nil || *c[0].ErrorCode != "NOT_FOUND" || c[0].HasResult {
 		t.Errorf("cancel_sale com erro: %+v", c)
 	}
-	// O result guardado é a saída original (usada pela deduplicação).
 	var stored string
 	e.db.Raw(`SELECT result::text FROM mcp_tool_calls WHERE tool='record_expense' AND result IS NOT NULL`).Scan(&stored)
 	var m map[string]any
@@ -460,7 +433,6 @@ func TestIntegration_WriteAudit(t *testing.T) {
 	}
 }
 
-// Connection só com read: nenhuma das escritas chega à API (também coberto no e2e via /mcp).
 func TestIntegration_WriteRequiresWriteScope(t *testing.T) {
 	e := newEnv(t)
 	f := e.writeFixture()

@@ -16,30 +16,30 @@ type Base struct {
 
 type Cliente struct {
 	Base
-	Nome        string  `gorm:"not null"         json:"nome"`
-	Telefone    *string `                        json:"telefone"`
-	Email       *string `                        json:"email"`
-	Endereco    *string `                        json:"endereco"`
-	Cidade      *string `                        json:"cidade"`
-	Observacoes *string `                        json:"observacoes"`
-	// AYD-003: campos novos em inglês num recurso legado (ADR-001).
+	Nome         string     `gorm:"not null"         json:"nome"`
+	Telefone     *string    `                        json:"telefone"`
+	Email        *string    `                        json:"email"`
+	Endereco     *string    `                        json:"endereco"`
+	Cidade       *string    `                        json:"cidade"`
+	Observacoes  *string    `                        json:"observacoes"`
 	LeadSource   *string    `gorm:"column:lead_source;type:lead_source_type" json:"lead_source"`
 	ReferrerID   *uuid.UUID `gorm:"column:referrer_id;type:uuid"            json:"referrer_id"`
-	ReferrerName *string    `gorm:"column:referrer_name;->;-:migration"      json:"referrer_name"` // só leitura (JOIN)
+	ReferrerName *string    `gorm:"column:referrer_name;->;-:migration"      json:"referrer_name"`
 }
 
 func (Cliente) TableName() string { return "clientes" }
 
 type Produto struct {
 	Base
-	Nome            string   `gorm:"not null" json:"nome"`
-	Descricao       *string  `                json:"descricao"`
-	PrecoReferencia *float64 `gorm:"type:decimal(12,2)" json:"preco_referencia"`
-	CustoReferencia *float64 `gorm:"type:decimal(12,2)" json:"custo_referencia"`
-	Unidade         *string  `                json:"unidade"`
-	// AYD-003: categoria (campos novos em inglês num recurso legado — ADR-001).
-	CategoryID   *uuid.UUID `gorm:"column:category_id;type:uuid"       json:"category_id"`
-	CategoryName *string    `gorm:"column:category_name;->;-:migration" json:"category_name"` // só leitura (JOIN)
+	Nome                string     `gorm:"not null" json:"nome"`
+	Descricao           *string    `                json:"descricao"`
+	PrecoReferencia     *float64   `gorm:"type:decimal(12,2)" json:"preco_referencia"`
+	CustoReferencia     *float64   `gorm:"type:decimal(12,2)" json:"custo_referencia"`
+	Unidade             *string    `                json:"unidade"`
+	CategoryID          *uuid.UUID `gorm:"column:category_id;type:uuid"       json:"category_id"`
+	CategoryName        *string    `gorm:"column:category_name;->;-:migration" json:"category_name"`
+	DefaultSupplierID   *uuid.UUID `gorm:"column:default_supplier_id;type:uuid"            json:"default_supplier_id"`
+	DefaultSupplierName *string    `gorm:"column:default_supplier_name;->;-:migration"     json:"default_supplier_name"`
 }
 
 func (Produto) TableName() string { return "produtos" }
@@ -50,15 +50,11 @@ type Fornecedor struct {
 	Telefone    *string `               json:"telefone"`
 	Cidade      *string `               json:"cidade"`
 	Observacoes *string `               json:"observacoes"`
-	// AYD-007: cadastro de fornecedores e prestadores (STONE | TRANSPORT | LABOR | TAX_AUTHORITY | OTHER).
-	Kind string `gorm:"column:kind;type:supplier_kind;not null;default:'STONE'" json:"kind"`
+	Kind        string  `gorm:"column:kind;type:supplier_kind;not null;default:'STONE'" json:"kind"`
 }
 
 func (Fornecedor) TableName() string { return "fornecedores" }
 
-// Partner (referrer) — AYD-003. Reaproveita a tabela legada vendedores_externos (sem
-// rename físico: IDs e FKs de quotes.referrer_id / vendas.vendedor_externo_id preservados);
-// as colunas PT são mapeadas para o contrato em inglês.
 type Partner struct {
 	Base
 	Name  string  `gorm:"column:nome;not null"                                json:"name"`
@@ -69,7 +65,6 @@ type Partner struct {
 
 func (Partner) TableName() string { return "vendedores_externos" }
 
-// ProductCategory — AYD-003 (entidade nova, inglês — ADR-001).
 type ProductCategory struct {
 	Base
 	Name string `gorm:"column:name;not null" json:"name"`
@@ -77,7 +72,6 @@ type ProductCategory struct {
 
 func (ProductCategory) TableName() string { return "product_categories" }
 
-// Service — serviço do catálogo vendido na Sale (instalação, consultoria — AYD-010).
 type Service struct {
 	Base
 	Name           string   `gorm:"column:name;not null"                          json:"name"`
@@ -91,10 +85,9 @@ func (Service) TableName() string { return "services" }
 
 type Venda struct {
 	Base
-	ClienteID         uuid.UUID  `gorm:"type:uuid;not null"                             json:"cliente_id"`
-	VendedorExternoID *uuid.UUID `gorm:"type:uuid"                                      json:"vendedor_externo_id"`
-	QuoteID           *uuid.UUID `gorm:"type:uuid;uniqueIndex"                          json:"quote_id"`
-	// AYD-002: status de entrega (manual). O de pagamento é calculado (vw_vendas_resumo).
+	ClienteID           uuid.UUID  `gorm:"type:uuid;not null"                             json:"cliente_id"`
+	VendedorExternoID   *uuid.UUID `gorm:"type:uuid"                                      json:"vendedor_externo_id"`
+	QuoteID             *uuid.UUID `gorm:"type:uuid;uniqueIndex"                          json:"quote_id"`
 	DeliveryStatus      string     `gorm:"column:delivery_status;type:sale_delivery_status;not null;default:'TO_DELIVER'" json:"delivery_status"`
 	DataVenda           time.Time  `gorm:"type:date;not null"                              json:"data_venda"`
 	DataEntregaPrevista *time.Time `gorm:"type:date"                                       json:"data_entrega_prevista"`
@@ -113,19 +106,15 @@ type ItemVenda struct {
 	Quantidade     float64    `gorm:"type:decimal(12,3);not null"                     json:"quantidade"`
 	PrecoVendaUnit float64    `gorm:"type:decimal(12,2);not null"                     json:"preco_venda_unit"`
 	CustoUnit      float64    `gorm:"type:decimal(12,2);not null"                     json:"custo_unit"`
-	// AYD-002: origem do Item e Purchase que o atende (pagamento ao Supplier é da Purchase).
-	// AYD-010: Item de serviço (kind SERVICE) não tem origem, Supplier nem Purchase (origin NULL).
-	Origin     *string    `gorm:"column:origin;type:item_origin"                                  json:"origin"`
-	PurchaseID *uuid.UUID `gorm:"column:purchase_id;type:uuid"                                   json:"purchase_id"`
-	Kind       string     `gorm:"column:kind;type:item_kind;not null;default:'PRODUCT'"           json:"kind"`
-	ServiceID  *uuid.UUID `gorm:"column:service_id;type:uuid"                                    json:"service_id"`
-	CreatedAt  time.Time  `                                                        json:"created_at"`
+	Origin         *string    `gorm:"column:origin;type:item_origin"                                  json:"origin"`
+	PurchaseID     *uuid.UUID `gorm:"column:purchase_id;type:uuid"                                   json:"purchase_id"`
+	Kind           string     `gorm:"column:kind;type:item_kind;not null;default:'PRODUCT'"           json:"kind"`
+	ServiceID      *uuid.UUID `gorm:"column:service_id;type:uuid"                                    json:"service_id"`
+	CreatedAt      time.Time  `                                                        json:"created_at"`
 }
 
 func (ItemVenda) TableName() string { return "itens_venda" }
 
-// Quote e QuoteItem usam nomenclatura canônica em inglês (ADR-001) — entidades novas,
-// distintas do legado PT (Venda/ItemVenda).
 type Quote struct {
 	Base
 	CustomerID uuid.UUID  `gorm:"column:customer_id;type:uuid;not null"        json:"customer_id"`
@@ -134,7 +123,7 @@ type Quote struct {
 	LostReason *string    `gorm:"column:lost_reason"                           json:"lost_reason"`
 	QuoteDate  time.Time  `gorm:"column:quote_date;type:date;not null"         json:"quote_date"`
 	Notes      *string    `gorm:"column:notes"                                 json:"notes"`
-	// QuickSale: somente leitura via API — true só para o Quote criado por POST /quotes/quick-sale (AYD-005).
+	// QuickSale: somente leitura via API — true só para o Quote criado por POST /quotes/quick-sale.
 	QuickSale bool `gorm:"column:quick_sale;not null;default:false" json:"quick_sale"`
 }
 
@@ -148,15 +137,13 @@ type QuoteItem struct {
 	Quantity    float64    `gorm:"column:quantity;type:decimal(12,3);not null"     json:"quantity"`
 	UnitPrice   float64    `gorm:"column:unit_price;type:decimal(12,2);not null"   json:"unit_price"`
 	UnitCost    float64    `gorm:"column:unit_cost;type:decimal(12,2);not null"    json:"unit_cost"`
-	// AYD-010: tipo do Item e serviço do catálogo (só SERVICE).
-	Kind      string     `gorm:"column:kind;type:item_kind;not null;default:'PRODUCT'" json:"kind"`
-	ServiceID *uuid.UUID `gorm:"column:service_id;type:uuid"                           json:"service_id"`
-	CreatedAt time.Time  `                                                        json:"created_at"`
+	Kind        string     `gorm:"column:kind;type:item_kind;not null;default:'PRODUCT'" json:"kind"`
+	ServiceID   *uuid.UUID `gorm:"column:service_id;type:uuid"                           json:"service_id"`
+	CreatedAt   time.Time  `                                                        json:"created_at"`
 }
 
 func (QuoteItem) TableName() string { return "quote_items" }
 
-// QuoteCharge / SaleCharge — cobrança adicional ao cliente, ex.: frete cobrado (AYD-009).
 type QuoteCharge struct {
 	Base
 	QuoteID     uuid.UUID `gorm:"column:quote_id;type:uuid;not null"          json:"quote_id"`
@@ -177,7 +164,6 @@ type SaleCharge struct {
 
 func (SaleCharge) TableName() string { return "sale_charges" }
 
-// SaleCost — custo da venda além das pedras, com credor (Supplier ou Partner; nenhum = "a definir").
 type SaleCost struct {
 	Base
 	SaleID          uuid.UUID  `gorm:"column:sale_id;type:uuid;not null"          json:"sale_id"`
@@ -207,9 +193,6 @@ type Notificacao struct {
 
 func (Notificacao) TableName() string { return "notificacoes" }
 
-// Purchase — AYD-002 (entidade nova, inglês — ADR-001). Consolida custo e pagamento ao
-// Supplier. Totais (total_cost, paid, payable, payment_status) vêm de vw_purchases_resumo e das
-// contas da compra (AYD-007).
 type Purchase struct {
 	Base
 	Kind             string     `gorm:"column:kind;type:purchase_kind;not null"                        json:"kind"`
@@ -235,7 +218,6 @@ type PurchaseCharge struct {
 
 func (PurchaseCharge) TableName() string { return "purchase_charges" }
 
-// PurchaseItem — linha de reposição de Stock (só Purchases STOCK_REPLENISHMENT).
 type PurchaseItem struct {
 	ID         uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
 	PurchaseID uuid.UUID `gorm:"column:purchase_id;type:uuid;not null"           json:"purchase_id"`
@@ -247,7 +229,6 @@ type PurchaseItem struct {
 
 func (PurchaseItem) TableName() string { return "purchase_items" }
 
-// StockAdjustment — ajuste manual de Stock (±), imutável.
 type StockAdjustment struct {
 	ID         uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"   json:"id"`
 	ProductID  uuid.UUID `gorm:"column:product_id;type:uuid;not null"              json:"product_id"`

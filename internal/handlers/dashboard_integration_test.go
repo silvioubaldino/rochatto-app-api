@@ -1,9 +1,5 @@
 package handlers
 
-// Testes de integração do AYD-005 (Dashboard): GET /dashboard/kpis, quick_sale no Quote e
-// relatórios corrigidos. Mesmas condições dos outros *_integration_test: só com
-// TEST_DATABASE_URL (banco descartável; dados não são limpos — períodos futuros únicos por
-// execução isolam os totais e os globais são conferidos por diferença).
 import (
 	"fmt"
 	"math/rand"
@@ -13,11 +9,10 @@ import (
 
 func newDashboardEnv(t *testing.T) fxEnv {
 	t.Helper()
-	e := newFinanceEnv(t) // inclui Dashboard e Finance
+	e := newFinanceEnv(t)
 	return e
 }
 
-// uniquePeriod devolve um mês futuro único por execução: from, to e um dia dentro dele.
 func uniquePeriod() (from, to, mid string) {
 	year := 2100 + rand.Intn(7000)
 	return fmt.Sprintf("%d-05-01", year), fmt.Sprintf("%d-05-31", year), fmt.Sprintf("%d-05-10", year)
@@ -37,7 +32,6 @@ func sub(m map[string]any, k string) map[string]any {
 	return v
 }
 
-// quote cria um Quote normal (não venda rápida) com 1 Item, na data dada.
 func (e fxEnv) quote(date string) string {
 	e.t.Helper()
 	code, q := e.api.do("POST", "/quotes", map[string]any{
@@ -54,8 +48,6 @@ func TestIntegration_KPIsPeriodSalesQuotesAndBalances(t *testing.T) {
 	e := newDashboardEnv(t)
 	from, to, mid := uniquePeriod()
 
-	// Sales: A (200, lucro 200-120-10-5 = 65) e D (100, custo 50, lucro 50) no período;
-	// B cancelada no período (fora de tudo); C fora do período.
 	saleA := e.simpleSale(2, 100, 60)
 	mustExec(t, e.db, `UPDATE vendas SET data_venda = ? WHERE id = ?`, mid, saleA)
 	setLegacyCosts(t, e.db, saleA, 10, 5)
@@ -69,9 +61,7 @@ func TestIntegration_KPIsPeriodSalesQuotesAndBalances(t *testing.T) {
 	saleC := e.simpleSale(1, 999, 1)
 	mustExec(t, e.db, `UPDATE vendas SET data_venda = ? WHERE id = ?`, from[:4]+"-07-01", saleC)
 
-	// Quotes (coorte, por quote_date): 1 aberto, 1 perdido, 1 ganho (convertido), 1 excluído,
-	// 1 fora do período — e uma venda rápida (nasce WON) que NÃO entra na conversão.
-	e.quote(mid) // aberto
+	e.quote(mid)
 	lost := e.quote(mid)
 	if code, _ := e.api.do("PATCH", "/quotes/"+lost+"/status", map[string]any{"status": "LOST", "lost_reason": "preço"}); code != 200 {
 		t.Fatal("LOST")
@@ -86,7 +76,7 @@ func TestIntegration_KPIsPeriodSalesQuotesAndBalances(t *testing.T) {
 	if code, _ := e.api.do("DELETE", "/quotes/"+del, nil); code != 204 {
 		t.Fatal("DELETE quote")
 	}
-	e.quote(from[:4] + "-08-01") // fora do período
+	e.quote(from[:4] + "-08-01")
 	code, qs := e.api.do("POST", "/quotes/quick-sale", map[string]any{
 		"customer_id": e.cid, "quote_date": mid, "items": []map[string]any{qItem("Pedra", 1, 100, 60, "")}})
 	if code != 201 {
@@ -101,12 +91,11 @@ func TestIntegration_KPIsPeriodSalesQuotesAndBalances(t *testing.T) {
 		t.Errorf("period = %v", p)
 	}
 	sales := sub(res, "sales")
-	e.wantNum("sales", sales, "count", 4) // A, D, convertida (100/60) e venda rápida (100/60)
+	e.wantNum("sales", sales, "count", 4)
 	e.wantNum("sales", sales, "revenue", 500)
 	e.wantNum("sales", sales, "profit", 65+50+40+40)
 	e.wantNum("sales", sales, "average_ticket", 125)
 
-	// Só os Quotes normais: aberto, perdido, ganho = 3 (quick sale, excluído e fora saem).
 	quotes := sub(res, "quotes")
 	e.wantNum("quotes", quotes, "created", 3)
 	e.wantNum("quotes", quotes, "won", 1)
@@ -114,7 +103,6 @@ func TestIntegration_KPIsPeriodSalesQuotesAndBalances(t *testing.T) {
 	e.wantNum("quotes", quotes, "open", 1)
 	e.wantNum("quotes", quotes, "conversion_rate", 0.3333)
 
-	// O Quote da venda rápida expõe quick_sale = true; os demais false.
 	_, qd := e.api.do("GET", "/quotes/"+must(t, qs, "quote_id"), nil)
 	if qd["quick_sale"] != true {
 		t.Errorf("quote da venda rápida: quick_sale = %v", qd["quick_sale"])
@@ -124,7 +112,6 @@ func TestIntegration_KPIsPeriodSalesQuotesAndBalances(t *testing.T) {
 		t.Errorf("quote convertido: quick_sale = %v", qw["quick_sale"])
 	}
 
-	// open_deliveries: todas as Sales TO_DELIVER (A, D, C, convertida, venda rápida; B cancelada fora).
 	if num(res, "open_deliveries") < 5 {
 		t.Errorf("open_deliveries = %v, want >= 5", res["open_deliveries"])
 	}
@@ -164,8 +151,6 @@ func TestIntegration_KPIsMatchFinanceSummary(t *testing.T) {
 			t.Errorf("sales.%s: finance=%v kpis=%v", key, fs[key], ks[key])
 		}
 	}
-	// Os saldos vêm das mesmas contas (AYD-007): o a receber é o mesmo e o a pagar do painel é a
-	// soma dos três a pagar do dashboard (fornecedores + frete + comissão).
 	fb, kb := sub(fin, "balances"), sub(k, "balances")
 	for _, key := range []string{"receivable", "payable_to_suppliers", "commission_payable", "freight_payable"} {
 		if _, ok := kb[key]; !ok {
@@ -190,7 +175,6 @@ func TestIntegration_KPIsDefaultPeriodAndNullConversion(t *testing.T) {
 		t.Errorf("período default = %v, want %s..%s", p, wantFrom, now.Format("2006-01-02"))
 	}
 
-	// Período sem Quotes nem Sales: conversion_rate null, ticket 0, tudo zerado.
 	from, to, _ := uniquePeriod()
 	res = e.kpis("?from=" + from + "&to=" + to)
 	quotes := sub(res, "quotes")
@@ -213,7 +197,6 @@ func TestIntegration_KPIsInvalidPeriod(t *testing.T) {
 	}
 }
 
-// quick_sale só é true na venda rápida; payloads de criação/edição não conseguem setá-lo.
 func TestIntegration_QuoteQuickSaleReadOnly(t *testing.T) {
 	e := newDashboardEnv(t)
 	code, q := e.api.do("POST", "/quotes", map[string]any{
@@ -271,7 +254,6 @@ func TestIntegration_MonthlyReportExactlyNMonthsZeroFilled(t *testing.T) {
 		}
 	}
 
-	// Sale (200, lucro 80) 2 meses atrás e Sale cancelada no mesmo mês (não conta).
 	two := cur.AddDate(0, -2, 0).Format("2006-01-02")
 	s1 := e.simpleSale(2, 100, 60)
 	mustExec(t, e.db, `UPDATE vendas SET data_venda = ? WHERE id = ?`, two, s1)
@@ -280,7 +262,6 @@ func TestIntegration_MonthlyReportExactlyNMonthsZeroFilled(t *testing.T) {
 	if code, _ := e.api.do("PATCH", "/vendas/"+s2+"/delivery-status", map[string]any{"delivery_status": "CANCELED"}); code != 200 {
 		t.Fatal("cancelar")
 	}
-	// Sale mais antiga que a janela: não aparece.
 	s3 := e.simpleSale(1, 700, 1)
 	mustExec(t, e.db, `UPDATE vendas SET data_venda = ? WHERE id = ?`, cur.AddDate(0, -n, 0).Format("2006-01-02"), s3)
 
@@ -300,7 +281,6 @@ func TestIntegration_MonthlyReportExactlyNMonthsZeroFilled(t *testing.T) {
 		}
 	}
 
-	// N=1 → só o mês corrente; limites e valores inválidos → 400.
 	if got := e.monthly(1); len(got) != 1 || got[0]["mes"] != cur.Format("2006-01-02") {
 		t.Errorf("meses=1 = %v", got)
 	}
@@ -312,7 +292,6 @@ func TestIntegration_MonthlyReportExactlyNMonthsZeroFilled(t *testing.T) {
 			t.Errorf("meses=%s = %d, want 400", q, code)
 		}
 	}
-	// Default = 12.
 	if code, res := e.api.do("GET", "/relatorios/vendas", nil); code != 200 || len(res["dados"].([]any)) != 12 {
 		t.Errorf("default meses: %d %v", code, res)
 	}
@@ -322,13 +301,13 @@ func TestIntegration_ProductsReportFromToLegacyAndUnit(t *testing.T) {
 	e := newDashboardEnv(t)
 	from, to, mid := uniquePeriod()
 	outside := from[:4] + "-09-01"
-	pid := e.product() // unidade 'm2'
+	pid := e.product()
 
 	s1 := e.simpleSaleOf(qItem("Pedra", 2, 100, 60, pid))
 	mustExec(t, e.db, `UPDATE vendas SET data_venda = ? WHERE id = ?`, mid, s1)
 	s2 := e.simpleSaleOf(qItem("Pedra", 4, 130, 70, pid))
 	mustExec(t, e.db, `UPDATE vendas SET data_venda = ? WHERE id = ?`, mid, s2)
-	s3 := e.simpleSaleOf(qItem("Pedra", 1, 9999, 1, pid)) // fora do período
+	s3 := e.simpleSaleOf(qItem("Pedra", 1, 9999, 1, pid))
 	mustExec(t, e.db, `UPDATE vendas SET data_venda = ? WHERE id = ?`, outside, s3)
 	legacy := uniq("Legado")
 	s4 := e.simpleSaleOf(qItem(legacy, 1, 50, 20, ""))
@@ -372,7 +351,6 @@ func TestIntegration_ProductsReportFromToLegacyAndUnit(t *testing.T) {
 	}
 	check("from/to", "from="+from+"&to="+to)
 	check("legado", "data_inicio="+from+"&data_fim="+to)
-	// from/to vencem os legados quando ambos são enviados (legado aponta para outro mês).
 	check("from/to vencem", "from="+from+"&to="+to+"&data_inicio="+outside+"&data_fim="+outside)
 
 	for _, q := range []string{"from=2026-13-01", "to=abc", "from=2026-05-02&to=2026-05-01", "data_inicio=x", "data_inicio=2026-05-02&data_fim=2026-05-01"} {
@@ -382,7 +360,6 @@ func TestIntegration_ProductsReportFromToLegacyAndUnit(t *testing.T) {
 	}
 }
 
-// simpleSaleOf: Sale por venda rápida com os Items dados.
 func (e fxEnv) simpleSaleOf(items ...map[string]any) string {
 	e.t.Helper()
 	id, _ := e.sale(items...)

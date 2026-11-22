@@ -1,7 +1,5 @@
 package tools_test
 
-// Testes de integração das ferramentas de serviços (AYD-010 / SPEC-011): search_services,
-// get_top_services e kind/service_id nas ferramentas de orçamento e venda. Só com TEST_DATABASE_URL.
 import (
 	"testing"
 )
@@ -87,7 +85,6 @@ func TestIntegration_ServiceTools(t *testing.T) {
 			t.Fatalf("get_top_services = %v", out)
 		}
 		s := obj(list[0])
-		// 12 m² a 300 (quote convertido) + 10 m² a 360 (venda rápida, depois do ajuste); custo 2880 + 1600.
 		if s["service_id"] != inst || s["service_name"] != "Instalação" || s["unit"] != "m²" || s["sales_count"] != float64(2) ||
 			s["quantity"] != float64(22) || s["revenue"] != float64(3600+3600) || s["average_price"] != float64(7200)/22 {
 			t.Errorf("Instalação = %v", s)
@@ -103,7 +100,6 @@ func TestIntegration_ServiceTools(t *testing.T) {
 	})
 }
 
-// checkServiceSale confere o Item de serviço e o custo LABOR criado na conversão.
 func checkServiceSale(t *testing.T, sale map[string]any, serviceID string, laborCost float64) {
 	t.Helper()
 	var svc map[string]any

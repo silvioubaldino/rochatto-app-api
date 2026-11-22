@@ -2,7 +2,6 @@ package tools
 
 import "time"
 
-// Tipos compartilhados de saída (AYD-006 §4.2) e seus decodificadores do formato REST.
 // Campos opcionais usam ponteiro + omitempty (omitidos, nunca null).
 
 import "github.com/silvioubaldino/sales-backend/internal/mcp/toolkit"
@@ -34,7 +33,7 @@ type ProductSummary struct {
 type SupplierSummary struct {
 	ID    UUID                 `json:"id"`
 	Name  string               `json:"name"`
-	Kind  toolkit.SupplierKind `json:"kind"` // fornecedor ou prestador (AYD-007): STONE, TRANSPORT, LABOR, TAX_AUTHORITY, OTHER
+	Kind  toolkit.SupplierKind `json:"kind"`
 	Phone *string              `json:"phone,omitempty"`
 	City  *string              `json:"city,omitempty"`
 	Notes *string              `json:"notes,omitempty"`
@@ -50,17 +49,16 @@ type PartnerSummary struct {
 
 type QuoteItem struct {
 	ID          UUID             `json:"id"`
-	Kind        toolkit.ItemKind `json:"kind"` // PRODUCT (pedra) ou SERVICE (serviço — AYD-010)
+	Kind        toolkit.ItemKind `json:"kind"`
 	ProductID   *UUID            `json:"product_id,omitempty"`
 	ServiceID   *UUID            `json:"service_id,omitempty"`
-	ProductName string           `json:"product_name"` // nome do produto ou do serviço
+	ProductName string           `json:"product_name"`
 	Quantity    float64          `json:"quantity"`
 	UnitPrice   float64          `json:"unit_price"`
 	UnitCost    float64          `json:"unit_cost"`
 	TotalPrice  float64          `json:"total_price"`
 }
 
-// QuoteSummary é o QuoteDetail sem Items (listagens).
 type QuoteSummary struct {
 	ID           UUID                `json:"id"`
 	Status       toolkit.QuoteStatus `json:"status"`
@@ -113,20 +111,19 @@ type SaleSummary struct {
 
 type SaleItem struct {
 	ID           UUID                `json:"id"`
-	Kind         toolkit.ItemKind    `json:"kind"` // PRODUCT (pedra) ou SERVICE (serviço — AYD-010)
+	Kind         toolkit.ItemKind    `json:"kind"`
 	ProductID    *UUID               `json:"product_id,omitempty"`
 	ServiceID    *UUID               `json:"service_id,omitempty"`
-	ProductName  string              `json:"product_name"` // nome do produto ou do serviço
+	ProductName  string              `json:"product_name"`
 	SupplierID   *UUID               `json:"supplier_id,omitempty"`
 	SupplierName *string             `json:"supplier_name,omitempty"`
-	Origin       *toolkit.ItemOrigin `json:"origin,omitempty"` // ausente em Item de serviço
+	Origin       *toolkit.ItemOrigin `json:"origin,omitempty"`
 	PurchaseID   *UUID               `json:"purchase_id,omitempty"`
 	Quantity     float64             `json:"quantity"`
 	UnitPrice    float64             `json:"unit_price"`
-	UnitCost     float64             `json:"unit_cost"` // serviço: sempre 0 (o custo é um custo da venda LABOR)
+	UnitCost     float64             `json:"unit_cost"`
 }
 
-// ServiceSummary é um Service do catálogo (AYD-010).
 type ServiceSummary struct {
 	ID             UUID     `json:"id"`
 	Name           string   `json:"name"`
@@ -187,7 +184,6 @@ type SaleDetail struct {
 	Obligations []ObligationSummary `json:"obligations"`
 }
 
-// PurchaseSummary é o PurchaseDetail do AYD-002 sem as linhas (listagens).
 type PurchaseSummary struct {
 	ID            UUID                          `json:"id"`
 	Kind          toolkit.PurchaseKind          `json:"kind"`
@@ -199,16 +195,14 @@ type PurchaseSummary struct {
 	OrderedAt     *Date                         `json:"ordered_at,omitempty"`
 	ReceivedAt    *Date                         `json:"received_at,omitempty"`
 	PaymentStatus toolkit.SupplierPaymentStatus `json:"payment_status"`
-	PaidAmount    *float64                      `json:"paid_amount,omitempty"` // Σ quitado das contas da compra (AYD-007)
+	PaidAmount    *float64                      `json:"paid_amount,omitempty"`
 	PaidAt        *Date                         `json:"paid_at,omitempty"`
 	TotalCost     float64                       `json:"total_cost"`
-	ToPay         float64                       `json:"to_pay"` // Σ em aberto das contas da compra
+	ToPay         float64                       `json:"to_pay"`
 	LineCount     int                           `json:"line_count"`
 	CreatedAt     time.Time                     `json:"created_at"`
 }
 
-// restPurchaseSummary espelha o resumo da compra na rota REST (AYD-007): `paid` e `payable` (Σ das
-// contas da compra) viram paid_amount e to_pay do contrato da ferramenta.
 type restPurchaseSummary struct {
 	ID            UUID                          `json:"id"`
 	Kind          toolkit.PurchaseKind          `json:"kind"`
@@ -240,9 +234,6 @@ func (r restPurchaseSummary) toEN() PurchaseSummary {
 	return p
 }
 
-// PurchaseSaleItem é o item de venda atendido por uma Purchase, com os campos legados PT
-// da rota REST traduzidos para EN (AYD-006 §4.2/§5, "Pending purchase item"). product_id
-// não vem do REST (que não o expõe em sale_items) e fica ausente.
 type PurchaseSaleItem struct {
 	ID           UUID    `json:"id"`
 	SaleID       UUID    `json:"sale_id"`
@@ -253,7 +244,6 @@ type PurchaseSaleItem struct {
 	UnitCost     float64 `json:"unit_cost"`
 }
 
-// restPurchaseSaleItem espelha o JSON legado PT de sale_items na rota REST.
 type restPurchaseSaleItem struct {
 	ID           UUID    `json:"id"`
 	SaleID       UUID    `json:"sale_id"`
@@ -327,7 +317,7 @@ type PurchaseDetail struct {
 	OrderedAt        *Date                    `json:"ordered_at,omitempty"`
 	ReceivedAt       *Date                    `json:"received_at,omitempty"`
 	AllocationMethod toolkit.AllocationMethod `json:"allocation_method"`
-	TotalCost        float64                  `json:"total_cost"` // Σ das pedras (= composition.goods_total)
+	TotalCost        float64                  `json:"total_cost"`
 	LineCount        int                      `json:"line_count"`
 	CreatedAt        time.Time                `json:"created_at"`
 	Composition      PurchaseComposition      `json:"composition"`
@@ -340,7 +330,6 @@ type PurchaseDetail struct {
 	Items            []PurchaseLine           `json:"items"`
 }
 
-// StockBalanceRow é a linha de GET /stock/balance (AYD-002, já EN).
 type StockBalanceRow struct {
 	ProductID      UUID     `json:"product_id"`
 	ProductName    string   `json:"product_name"`
@@ -351,7 +340,7 @@ type StockBalanceRow struct {
 	Balance        float64  `json:"balance"`
 	LastInflowCost *float64 `json:"last_inflow_cost,omitempty"`
 	LastInflowDate *Date    `json:"last_inflow_date,omitempty"`
-	StockValue     float64  `json:"stock_value"` // GREATEST(balance, 0) × custo de entrada (AYD-008)
+	StockValue     float64  `json:"stock_value"`
 }
 
 type StockMovement struct {
@@ -367,8 +356,6 @@ type StockBalanceDetail struct {
 	StockBalanceRow
 	Movements []StockMovement `json:"movements"`
 }
-
-// --- Formato REST legado (PT) lido pelos adaptadores ---
 
 type legacyCustomer struct {
 	ID           UUID                `json:"id"`
@@ -504,8 +491,6 @@ type legacySaleDetail struct {
 	Obligations []ObligationSummary `json:"obligations"`
 }
 
-// toEN devolve a Sale com os Items; os Receipts (recebimentos) são derivados da conta a receber
-// (parcelas e quitações — AYD-007) e preenchidos por get_sale via withReceipts.
 func (d legacySaleDetail) toEN() SaleDetail {
 	out := SaleDetail{SaleSummary: d.legacySale.toEN(), Items: make([]SaleItem, 0, len(d.Itens)), Receipts: []Receipt{},
 		Composition: d.Composition.normalized(), Obligations: d.Obligations}

@@ -33,7 +33,6 @@ func TestPaginate(t *testing.T) {
 	if len(p.Items) != 1 || p.HasMore {
 		t.Errorf("última página = %+v", p)
 	}
-	// offset além do total → vazia e não-nula (JSON []), padrão de 20 itens, teto de 100.
 	if p = toolkit.Paginate(all, toolkit.Page{Offset: 99}); p.Items == nil || len(p.Items) != 0 || p.Offset != 5 || p.HasMore {
 		t.Errorf("offset além = %+v", p)
 	}
@@ -80,7 +79,6 @@ func TestReceiptsOfTranslatesInstallmentsAndSettlements(t *testing.T) {
 	if r := got[1]; r.ID != "s1" || r.Status != "RECEIVED" || r.Amount != 500 || r.PaidAt == nil || *r.PaidAt != "2026-11-01" || r.PaymentMethod == nil {
 		t.Errorf("recebido = %+v", r)
 	}
-	// Conta sem nada em aberto (quitada ou venda cancelada): parcelas não viram PENDING.
 	d.Open = 0
 	if got = receiptsOf(d); len(got) != 1 || got[0].Status != "RECEIVED" {
 		t.Errorf("sem aberto = %+v", got)
@@ -123,7 +121,6 @@ func TestToLegacySalePutAppliesOnlySentFields(t *testing.T) {
 			t.Errorf("%s não existe mais no PUT: %v", gone, body)
 		}
 	}
-	// null explícito limpa.
 	body = toLegacySalePut(cur, UpdateSaleIn{
 		ExpectedDeliveryDate: toolkit.Nullable[Date]{Present: true, Null: true},
 		Notes:                toolkit.Nullable[string]{Present: true, Null: true},
@@ -137,13 +134,11 @@ func TestToLegacyItemPut(t *testing.T) {
 	sup := UUID("s1")
 	mto := toolkit.ItemOrigin("MADE_TO_ORDER")
 	cur := legacySaleItem{ID: "i", ProdutoNome: "G", Origin: &mto, Quantidade: 2, PrecoVendaUnit: 10, CustoUnit: 6, FornecedorID: &sup}
-	// Só a quantidade: o resto permanece, inclusive o custo.
 	q := toolkit.Qty(3)
 	b := toLegacyItemPut(cur, UpdateSaleItemIn{Quantity: &q})
 	if b["quantidade"] != 3.0 || b["preco_venda_unit"] != 10.0 || b["custo_unit"] != 6.0 || b["origin"] != toolkit.ItemOrigin("MADE_TO_ORDER") || b["fornecedor_id"] != &sup {
 		t.Errorf("PUT = %v", b)
 	}
-	// Mudar a origem sem informar custo omite custo_unit (a API aplica RN-16); com custo, vale o informado.
 	b = toLegacyItemPut(cur, UpdateSaleItemIn{Origin: "FROM_STOCK"})
 	if _, has := b["custo_unit"]; has || b["origin"] != toolkit.ItemOrigin("FROM_STOCK") {
 		t.Errorf("origem nova sem custo = %v", b)
@@ -152,7 +147,6 @@ func TestToLegacyItemPut(t *testing.T) {
 	if b = toLegacyItemPut(cur, UpdateSaleItemIn{Origin: "FROM_STOCK", UnitCost: &c}); b["custo_unit"] != 7.0 {
 		t.Errorf("custo informado = %v", b)
 	}
-	// Mesma origem não mexe no custo; supplier null limpa id e nome.
 	b = toLegacyItemPut(cur, UpdateSaleItemIn{Origin: "MADE_TO_ORDER", SupplierID: toolkit.Nullable[UUID]{Present: true, Null: true}})
 	if b["custo_unit"] != 6.0 || b["fornecedor_id"] != nil || b["fornecedor_nome"] != nil {
 		t.Errorf("supplier null = %v", b)

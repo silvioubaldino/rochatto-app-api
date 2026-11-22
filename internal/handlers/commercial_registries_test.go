@@ -24,11 +24,8 @@ func TestValidatePartnerRequest(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Arrange
 			req := tc.req
-			// Act
 			got := validatePartnerRequest(&req)
-			// Assert
 			if tc.wantErr != (got != "") {
 				t.Errorf("wantErr=%v, got %q", tc.wantErr, got)
 			}
@@ -83,7 +80,6 @@ func TestNormalizeName(t *testing.T) {
 	if _, msg := normalizeName("name", " "); !strings.Contains(msg, "'name'") {
 		t.Errorf("message should name the field, got %q", msg)
 	}
-	// 200 runas multibyte continuam válidas (limite por caractere, não por byte).
 	if _, msg := normalizeName("name", strings.Repeat("é", 200)); msg != "" {
 		t.Errorf("200 runes should be valid, got %q", msg)
 	}
