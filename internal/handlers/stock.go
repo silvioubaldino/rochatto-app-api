@@ -160,16 +160,24 @@ func validateAdjustment(req adjustmentRequest) string {
 
 // --- Endpoints ---
 
-func (h *StockHandler) listBalance(w http.ResponseWriter, r *http.Request) {
-	query := h.db.WithContext(r.Context()).Table("vw_stock_balance")
-	if q := strings.TrimSpace(r.URL.Query().Get("q")); q != "" {
+// fetchStockBalances lê vw_stock_balance (por nome); onlyNegative = só Balance < 0. É a base de
+// GET /stock/balance e das pendências (AYD-011 C10).
+func fetchStockBalances(db *gorm.DB, q string, onlyNegative bool) ([]stockBalanceRow, error) {
+	query := db.Table("vw_stock_balance")
+	if q = strings.TrimSpace(q); q != "" {
 		query = query.Where("product_name ILIKE ?", "%"+q+"%")
 	}
-	if r.URL.Query().Get("only_negative") == "true" {
+	if onlyNegative {
 		query = query.Where("balance < 0")
 	}
 	var rows []stockBalanceRow
-	if err := query.Order("product_name ASC").Scan(&rows).Error; err != nil {
+	err := query.Order("product_name ASC").Scan(&rows).Error
+	return rows, err
+}
+
+func (h *StockHandler) listBalance(w http.ResponseWriter, r *http.Request) {
+	rows, err := fetchStockBalances(h.db.WithContext(r.Context()), r.URL.Query().Get("q"), r.URL.Query().Get("only_negative") == "true")
+	if err != nil {
 		log.Printf("ERROR ListStockBalance: %v", err)
 		models.WriteError(w, http.StatusInternalServerError, "erro interno")
 		return

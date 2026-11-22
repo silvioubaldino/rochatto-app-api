@@ -62,6 +62,8 @@ func main() {
 	handlers.NewStockHandler(db).Register(apiMux)
 	handlers.NewDashboardHandler(db).Register(apiMux)
 	handlers.NewFinanceHandler(db).Register(apiMux)
+	handlers.NewSearchHandler(db).Register(apiMux)         // AYD-011 C9
+	handlers.NewPendingActionsHandler(db).Register(apiMux) // AYD-011 C10
 
 	root := http.NewServeMux()
 	root.HandleFunc("GET /health", handlers.Health(env))

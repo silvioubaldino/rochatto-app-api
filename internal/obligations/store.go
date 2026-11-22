@@ -72,8 +72,12 @@ type ListFilter struct {
 	OriginID         *uuid.UUID
 	Overdue          *bool
 	DueTo            *time.Time
-	Limit            int
-	Offset           int
+	// Filtros internos (não expostos em GET /obligations) — pendências do dia (AYD-011 C10):
+	// NoPlan = sem parcela a vencer nem due_date; NoCounterparty = credor "a definir".
+	NoPlan         bool
+	NoCounterparty bool
+	Limit          int
+	Offset         int
 }
 
 func (f ListFilter) where() (string, []any) {
@@ -110,6 +114,12 @@ func (f ListFilter) where() (string, []any) {
 	}
 	if f.DueTo != nil {
 		add("o.effective_due <= ?", *f.DueTo)
+	}
+	if f.NoPlan {
+		add("o.effective_due IS NULL")
+	}
+	if f.NoCounterparty {
+		add("o.counterparty_id IS NULL")
 	}
 	return strings.Join(conds, " AND "), args
 }

@@ -240,4 +240,7 @@ func TestJourney_StockBalanceAndDefaultSupplier(t *testing.T) {
 }
 
 // registerJourneyHandlers registra os handlers novos do AYD-011 (acrescentados por contrato).
-func registerJourneyHandlers(db *gorm.DB, mux *http.ServeMux) {}
+func registerJourneyHandlers(db *gorm.DB, mux *http.ServeMux) {
+	NewSearchHandler(db).Register(mux)
+	NewPendingActionsHandler(db).Register(mux)
+}

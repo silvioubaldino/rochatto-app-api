@@ -743,23 +743,28 @@ func (h *PurchasesHandler) delete(w http.ResponseWriter, r *http.Request) {
 // Fila de Items a comprar (RF-31)
 // ============================================================
 
-func (h *PurchasesHandler) pendingSaleItems(w http.ResponseWriter, r *http.Request) {
-	type row struct {
-		ID           uuid.UUID  `gorm:"column:id"`
-		SaleID       uuid.UUID  `gorm:"column:sale_id"`
-		CustomerName string     `gorm:"column:customer_name"`
-		ProdutoID    *uuid.UUID `gorm:"column:produto_id"`
-		ProdutoNome  string     `gorm:"column:produto_nome"`
-		Quantidade   float64    `gorm:"column:quantidade"`
-		CustoUnit    float64    `gorm:"column:custo_unit"`
-		SaleDate     time.Time  `gorm:"column:sale_date"`
-		SupplierID   *uuid.UUID `gorm:"column:supplier_id"`
-		SupplierName *string    `gorm:"column:supplier_name"`
-	}
-	var rows []row
-	err := h.db.WithContext(r.Context()).Raw(`
+// pendingRow é um Item sob encomenda ainda sem Purchase (a fila "a comprar").
+type pendingRow struct {
+	ID           uuid.UUID  `gorm:"column:id"`
+	SaleID       uuid.UUID  `gorm:"column:sale_id"`
+	CustomerName string     `gorm:"column:customer_name"`
+	ProdutoID    *uuid.UUID `gorm:"column:produto_id"`
+	ProdutoNome  string     `gorm:"column:produto_nome"`
+	Quantidade   float64    `gorm:"column:quantidade"`
+	CustoUnit    float64    `gorm:"column:custo_unit"`
+	SaleDate     time.Time  `gorm:"column:sale_date"`
+	DueDate      *time.Time `gorm:"column:due_date"` // prazo de entrega da Sale
+	SupplierID   *uuid.UUID `gorm:"column:supplier_id"`
+	SupplierName *string    `gorm:"column:supplier_name"`
+}
+
+// pendingSaleItemRows lê a fila "a comprar": Items MADE_TO_ORDER de Sales ativas ainda sem
+// Purchase. É a base de GET /purchases/pending-sale-items e das pendências (AYD-011 C10).
+func pendingSaleItemRows(db *gorm.DB) ([]pendingRow, error) {
+	var rows []pendingRow
+	err := db.Raw(`
 		SELECT i.id, i.venda_id AS sale_id, c.nome AS customer_name, i.produto_id, i.produto_nome,
-		       i.quantidade, i.custo_unit, v.data_venda AS sale_date,
+		       i.quantidade, i.custo_unit, v.data_venda AS sale_date, v.data_entrega_prevista AS due_date,
 		       i.fornecedor_id AS supplier_id, COALESCE(f.nome, i.fornecedor_nome) AS supplier_name
 		FROM itens_venda i
 		JOIN vendas v ON v.id = i.venda_id
@@ -770,6 +775,11 @@ func (h *PurchasesHandler) pendingSaleItems(w http.ResponseWriter, r *http.Reque
 		  AND v.deleted_at IS NULL
 		  AND v.delivery_status <> 'CANCELED'
 		ORDER BY v.data_venda, i.created_at`).Scan(&rows).Error
+	return rows, err
+}
+
+func (h *PurchasesHandler) pendingSaleItems(w http.ResponseWriter, r *http.Request) {
+	rows, err := pendingSaleItemRows(h.db.WithContext(r.Context()))
 	if err != nil {
 		log.Printf("ERROR PendingSaleItems: %v", err)
 		models.WriteError(w, http.StatusInternalServerError, "erro interno")
