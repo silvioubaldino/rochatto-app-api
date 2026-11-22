@@ -7,7 +7,6 @@ func discoveryHeaders(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 }
 
-// protectedResource: RFC 9728 (AYD-006 §2.1). `resource` == URL digitada no Claude.
 func (s *Server) protectedResource(w http.ResponseWriter, r *http.Request) {
 	discoveryHeaders(w)
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -19,7 +18,6 @@ func (s *Server) protectedResource(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// authorizationServer: RFC 8414. Não anuncia client_id_metadata_document_supported (DCR).
 func (s *Server) authorizationServer(w http.ResponseWriter, r *http.Request) {
 	discoveryHeaders(w)
 	base := s.cfg.PublicBaseURL

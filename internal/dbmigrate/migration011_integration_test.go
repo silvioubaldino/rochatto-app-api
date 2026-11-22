@@ -72,11 +72,11 @@ func TestIntegration_Migration011PurchaseComposition(t *testing.T) {
 		cust  = "00000000-0000-0000-0000-0000000000c1"
 		supA  = "00000000-0000-0000-0000-0000000000f1"
 		supB  = "00000000-0000-0000-0000-0000000000f2"
-		prodM = "00000000-0000-0000-0000-0000000000e1" // m2
-		prodS = "00000000-0000-0000-0000-0000000000e2" // saco
+		prodM = "00000000-0000-0000-0000-0000000000e1"
+		prodS = "00000000-0000-0000-0000-0000000000e2"
 		sale  = "00000000-0000-0000-0000-000000000001"
-		purR  = "00000000-0000-0000-0000-0000000000d1" // reposição: 10 m2 × 100
-		purM  = "00000000-0000-0000-0000-0000000000d2" // sob encomenda: 1 Item 4 × 50
+		purR  = "00000000-0000-0000-0000-0000000000d1"
+		purM  = "00000000-0000-0000-0000-0000000000d2"
 	)
 	exec(`INSERT INTO clientes (id, nome) VALUES ($1, 'Cliente')`, cust)
 	exec(`INSERT INTO fornecedores (id, nome) VALUES ($1, 'Matheus RJ'), ($2, 'Jairo')`, supA, supB)

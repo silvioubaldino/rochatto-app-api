@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-var pkceChallengeRE = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`) // BASE64URL(SHA-256) sem padding
+var pkceChallengeRE = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
 
 type clientRow struct {
 	ClientID     string      `gorm:"column:client_id"`
@@ -28,12 +28,10 @@ func (s *Server) findClient(r *http.Request, clientID string) (*clientRow, error
 	return &c, nil
 }
 
-// redirectError responde 302 para redirect_uri?error=...&state=... (RFC 6749 §4.1.2.1).
 func redirectError(w http.ResponseWriter, r *http.Request, redirectURI, state, code, desc string) {
 	http.Redirect(w, r, withQuery(redirectURI, map[string]string{"error": code, "error_description": desc, "state": state}), http.StatusFound)
 }
 
-// withQuery acrescenta parâmetros (ignorando vazios) preservando a query já existente.
 func withQuery(rawURL string, params map[string]string) string {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -49,8 +47,6 @@ func withQuery(rawURL string, params map[string]string) string {
 	return u.String()
 }
 
-// authorize: GET /oauth/authorize (AYD-006 §2.3). Valida em duas camadas e, em sucesso,
-// cria o authorization request e redireciona ao app web (/conectar?request_id=…).
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	invalidLink := func() {
@@ -77,7 +73,6 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Camada 2: 302 para o redirect_uri.
 	state := q.Get("state")
 	if q.Get("response_type") != "code" {
 		redirectError(w, r, redirectURI, state, "unsupported_response_type", "response_type deve ser code")
@@ -127,7 +122,6 @@ func registeredRedirect(registered []string, given string) bool {
 	return false
 }
 
-// redirectHost devolve o host (com porta) do redirect_uri, para o dono conferir no consentimento.
 func redirectHost(uri string) string {
 	u, err := url.Parse(uri)
 	if err != nil {

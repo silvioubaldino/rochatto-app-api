@@ -8,11 +8,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// ErrInvalidToken: token inexistente, expirado, revogado, de outro resource, ou Connection
-// revogada / fora da allowlist. O /mcp responde 401 em todos os casos.
+// ErrInvalidToken: token inexistente, expirado, revogado, de outro resource, ou Connection revogada / fora da allowlist.
 var ErrInvalidToken = errors.New("invalid token")
 
-// Principal é a Connection autenticada por um access token.
 type Principal struct {
 	ConnectionID uuid.UUID
 	ClientName   string
@@ -22,7 +20,6 @@ type Principal struct {
 	ExpiresAt    time.Time
 }
 
-// HasScope diz se a Connection tem o scope.
 func (p *Principal) HasScope(scope string) bool {
 	for _, s := range p.Scopes {
 		if s == scope {
@@ -32,9 +29,6 @@ func (p *Principal) HasScope(scope string) bool {
 	return false
 }
 
-// VerifyAccessToken valida o access token do /mcp (AYD-006 §1): hash, validade, Connection
-// ativa, resource e — a cada chamada — a allowlist (se o e-mail saiu, revoga a Connection).
-// Atualiza last_used_at no máximo 1×/min.
 func (s *Server) VerifyAccessToken(ctx context.Context, token string) (*Principal, error) {
 	if token == "" {
 		return nil, ErrInvalidToken

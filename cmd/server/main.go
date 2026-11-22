@@ -4,7 +4,7 @@ import (
 	"log"
 	"net/http"
 	"os"
-	_ "time/tzdata" // fuso America/Sao_Paulo mesmo em imagem sem tzdata
+	_ "time/tzdata"
 
 	"github.com/joho/godotenv"
 	"github.com/silvioubaldino/sales-backend/internal/auth"
@@ -33,8 +33,6 @@ func main() {
 	}
 
 	allow := ownerAllowlist(env)
-	// Assistant connector (AYD-006): MCP_ENABLED=false (padrão) não monta nada; com true,
-	// PUBLIC_BASE_URL/WEB_APP_URL inválidas impedem a api de subir.
 	mcpCfg, err := oauth.LoadConfig(env, os.Getenv)
 	if err != nil {
 		log.Fatalf("configuração do Assistant connector: %v", err)
@@ -62,15 +60,15 @@ func main() {
 	handlers.NewStockHandler(db).Register(apiMux)
 	handlers.NewDashboardHandler(db).Register(apiMux)
 	handlers.NewFinanceHandler(db).Register(apiMux)
-	handlers.NewSearchHandler(db).Register(apiMux)         // AYD-011 C9
-	handlers.NewPendingActionsHandler(db).Register(apiMux) // AYD-011 C10
+	handlers.NewSearchHandler(db).Register(apiMux)
+	handlers.NewPendingActionsHandler(db).Register(apiMux)
 
 	root := http.NewServeMux()
 	root.HandleFunc("GET /health", handlers.Health(env))
 	if mcpCfg.Enabled {
 		oauthServer := oauth.New(db, mcpCfg, allow)
-		oauthServer.RegisterAPI(apiMux)  // consentimento e Connections (atrás do Firebase + allowlist)
-		oauthServer.RegisterPublic(root) // discovery e /oauth/*
+		oauthServer.RegisterAPI(apiMux)
+		oauthServer.RegisterPublic(root)
 		mcpHandler, err := mcp.NewHandler(mcp.Options{
 			Config:   mcpCfg,
 			Verifier: oauthServer,

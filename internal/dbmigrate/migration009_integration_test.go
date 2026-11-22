@@ -1,8 +1,5 @@
 package dbmigrate
 
-// Teste de integração da migração 009 (AYD-006@context): tabelas técnicas do Assistant
-// connector, constraints do contrato e o ciclo down → up. Roda só com TEST_DATABASE_URL e
-// permissão de CREATE DATABASE (banco descartável próprio; senão é pulado).
 import (
 	"database/sql"
 	"fmt"
@@ -70,8 +67,6 @@ func TestIntegration_Migration009AssistantConnector(t *testing.T) {
 	if err := exec(`INSERT INTO oauth_clients(client_id, redirect_uris) VALUES ('c1', ARRAY['https://claude.ai/cb'])`); err != nil {
 		t.Fatal(err)
 	}
-	// Constraints: revoked_reason, kind, status e outcome só aceitam os valores do contrato;
-	// token_hash é único.
 	var connID string
 	if err := db.QueryRow(`INSERT INTO oauth_connections(client_id, owner_uid, scopes, resource) VALUES ('c1','u','{read}','r') RETURNING id`).Scan(&connID); err != nil {
 		t.Fatal(err)
@@ -93,7 +88,6 @@ func TestIntegration_Migration009AssistantConnector(t *testing.T) {
 	if err := exec(tok); err == nil {
 		t.Error("token_hash deveria ser único")
 	}
-	// Apagar a Connection leva os tokens (CASCADE) e preserva a auditoria (SET NULL).
 	if err := exec(`INSERT INTO mcp_tool_calls(call_id, connection_id, tool, arguments_hash, outcome) VALUES (gen_random_uuid(),'` + connID + `','t','h','OK')`); err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +101,6 @@ func TestIntegration_Migration009AssistantConnector(t *testing.T) {
 		t.Errorf("tokens=%d auditoria órfã=%d, quero 0 e 1", tokens, calls)
 	}
 
-	// down → up.
 	if err := m.M.Migrate(8); err != nil {
 		t.Fatalf("down 009: %v", err)
 	}

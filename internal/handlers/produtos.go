@@ -31,19 +31,15 @@ func (h *ProdutosHandler) Register(mux *http.ServeMux) {
 }
 
 type produtoRequest struct {
-	Nome            string   `json:"nome"`
-	Descricao       *string  `json:"descricao"`
-	PrecoReferencia *float64 `json:"preco_referencia"`
-	CustoReferencia *float64 `json:"custo_referencia"`
-	Unidade         *string  `json:"unidade"`
-	// AYD-003 (campo novo em inglês)
-	CategoryID *uuid.UUID `json:"category_id"`
-	// AYD-011 C8: ausente mantém o valor atual (PUT); null explícito limpa.
+	Nome              string       `json:"nome"`
+	Descricao         *string      `json:"descricao"`
+	PrecoReferencia   *float64     `json:"preco_referencia"`
+	CustoReferencia   *float64     `json:"custo_referencia"`
+	Unidade           *string      `json:"unidade"`
+	CategoryID        *uuid.UUID   `json:"category_id"`
 	DefaultSupplierID optionalUUID `json:"default_supplier_id"`
 }
 
-// baseQuery lê produtos com o nome da categoria (category_name). O JOIN não filtra
-// categorias excluídas: o Product mantém o vínculo e exibe o nome (AYD-003).
 func (h *ProdutosHandler) baseQuery(ctx context.Context) *gorm.DB {
 	return h.db.WithContext(ctx).
 		Model(&models.Produto{}).
@@ -58,7 +54,6 @@ func (h *ProdutosHandler) fetch(ctx context.Context, id uuid.UUID) (models.Produ
 	return p, err
 }
 
-// respond relê o Product (com category_name) e escreve a resposta.
 func (h *ProdutosHandler) respond(w http.ResponseWriter, ctx context.Context, status int, id uuid.UUID) {
 	p, err := h.fetch(ctx, id)
 	if err != nil {
@@ -69,10 +64,7 @@ func (h *ProdutosHandler) respond(w http.ResponseWriter, ctx context.Context, st
 	writeJSON(w, status, p)
 }
 
-// checkCategory valida category_id; current é o category_id já gravado (nil na criação).
-// Uma categoria nova precisa existir e não estar excluída (400); manter a mesma categoria
-// já excluída é permitido (o Product mantém o vínculo — AYD-003). Escreve a resposta e
-// devolve false quando inválido.
+// Uma categoria nova precisa existir e não estar excluída (400); manter a mesma categoria já excluída é permitido (o Product mantém o vínculo.
 func (h *ProdutosHandler) checkCategory(w http.ResponseWriter, ctx context.Context, categoryID, current *uuid.UUID) bool {
 	if categoryID == nil || (current != nil && *current == *categoryID) {
 		return true
@@ -90,9 +82,6 @@ func (h *ProdutosHandler) checkCategory(w http.ResponseWriter, ctx context.Conte
 	return true
 }
 
-// checkDefaultSupplier valida default_supplier_id (400 se inexistente ou excluído); manter o
-// fornecedor já gravado é permitido mesmo excluído (como a categoria — AYD-003). Escreve a
-// resposta e devolve false quando inválido.
 func (h *ProdutosHandler) checkDefaultSupplier(w http.ResponseWriter, ctx context.Context, id, current *uuid.UUID) bool {
 	if id == nil || (current != nil && *current == *id) {
 		return true

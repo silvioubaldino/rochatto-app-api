@@ -1,7 +1,4 @@
-// Package oauth implementa o servidor de autorização OAuth 2.1 mínimo do Assistant
-// connector (AYD-006@context §2, ADR-002@context): discovery, DCR, authorize (delegando o
-// login ao app web), token com refresh rotativo, revogação, API de consentimento e de
-// Connections, e o verificador do access token usado pelo /mcp.
+// Package oauth implementa o servidor de autorização OAuth 2.1 do Assistant connector.
 package oauth
 
 import (
@@ -12,23 +9,18 @@ import (
 	"strings"
 )
 
-// DefaultRedirectURI é o callback do Claude (default de MCP_ALLOWED_REDIRECT_URIS).
 const DefaultRedirectURI = "https://claude.ai/api/mcp/auth_callback"
 
-// Config reúne as variáveis do conector (AYD-006 §Contratos).
 type Config struct {
 	Enabled             bool
-	PublicBaseURL       string   // issuer; sem barra final
-	WebAppURL           string   // origem do app web (destino do consentimento)
-	AllowedRedirectURIs []string // redirect_uri aceitos no DCR
+	PublicBaseURL       string
+	WebAppURL           string
+	AllowedRedirectURIs []string
 }
 
-// Resource é a URL do MCP (resource indicator): {PUBLIC_BASE_URL}/mcp.
 func (c Config) Resource() string { return c.PublicBaseURL + "/mcp" }
 
 // LoadConfig lê MCP_ENABLED, PUBLIC_BASE_URL, WEB_APP_URL e MCP_ALLOWED_REDIRECT_URIS.
-// Com MCP_ENABLED=true, URLs ausentes/inválidas são erro (a api não sobe — mesma postura
-// do ALLOWED_EMAILS). Com MCP_ENABLED ausente/false, nada é validado nem montado.
 func LoadConfig(env string, get func(string) string) (Config, error) {
 	var c Config
 	if raw := strings.TrimSpace(get("MCP_ENABLED")); raw != "" {
@@ -73,7 +65,6 @@ func LoadConfig(env string, get func(string) string) (Config, error) {
 	return c, nil
 }
 
-// validatePublicBaseURL: HTTPS, porta 443 (implícita ou :443), sem path nem barra final.
 func validatePublicBaseURL(s string) error {
 	if s == "" {
 		return errors.New("obrigatória com MCP_ENABLED=true")
@@ -94,7 +85,6 @@ func validatePublicBaseURL(s string) error {
 	return nil
 }
 
-// validateWebAppURL: origem do app web. https; em desenvolvimento aceita http (localhost).
 func validateWebAppURL(env, s string) error {
 	if s == "" {
 		return errors.New("obrigatória com MCP_ENABLED=true")
@@ -130,8 +120,6 @@ func validateRedirectURI(s string) error {
 	return nil
 }
 
-// redirectMatches compara um redirect_uri apresentado com um registrado/permitido:
-// igualdade exata; exceção RFC 8252 para http em loopback, onde a porta é ignorada.
 func redirectMatches(registered, given string) bool {
 	if registered == given {
 		return true

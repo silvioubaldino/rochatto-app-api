@@ -1,15 +1,11 @@
 package handlers
 
-// Testes de integração do AYD-007 §5 / SPEC-008 — quitação (pagar/receber): um Pix para várias
-// contas, categoria padrão, limites 400/409, MIXED_COUNTERPARTIES, movimentação já lançada e
-// concorrência. Só rodam com TEST_DATABASE_URL.
 import (
 	"net/http"
 	"sync"
 	"testing"
 )
 
-// purchaseAccount cria uma Purchase de reposição de custo `cost` e devolve (purchaseID, contaID).
 func (e fxEnv) purchaseAccount(sup string, cost float64) (string, string) {
 	e.t.Helper()
 	code, p := e.api.do("POST", "/purchases", map[string]any{"kind": "STOCK_REPLENISHMENT", "supplier_id": sup,
@@ -33,7 +29,6 @@ func mvIn(day string) map[string]any {
 	return map[string]any{"occurred_on": day, "payment_method": "PIX"}
 }
 
-// Um Pix quita várias contas (dois pedidos ao mesmo fornecedor): 1 movimentação (−Σ) e N quitações.
 func TestIntegration_SettlementOnePixManyAccounts(t *testing.T) {
 	e := newFinanceEnv(t)
 	sup := e.supplier()
@@ -62,7 +57,6 @@ func TestIntegration_SettlementOnePixManyAccounts(t *testing.T) {
 		t.Errorf("warnings = %v, want []", res["warnings"])
 	}
 
-	// Valores explícitos: quitação parcial de uma conta.
 	_, c := e.purchaseAccount(sup, 500)
 	code, res = e.api.do("POST", "/settlements", map[string]any{"movement": mvIn("2027-03-02"), "allocations": []map[string]any{alloc(c, 120.5)}})
 	if mv = res["movement"].(map[string]any); code != 201 || num(mv, "amount") != -120.5 {
@@ -71,7 +65,6 @@ func TestIntegration_SettlementOnePixManyAccounts(t *testing.T) {
 	if o := res["obligations"].([]any)[0].(map[string]any); o["status"] != "PARTIAL" || num(o, "open") != 379.5 {
 		t.Errorf("conta parcial = %v", o)
 	}
-	// Desfazer a quitação não anula a movimentação.
 	sid := mv["settlements"].([]any)[0].(map[string]any)["id"].(string)
 	if code, _ := e.api.do("DELETE", "/settlements/"+sid, nil); code != 204 {
 		t.Fatalf("DELETE settlement = %d", code)
@@ -88,8 +81,6 @@ func TestIntegration_SettlementOnePixManyAccounts(t *testing.T) {
 	}
 }
 
-// Categoria padrão: RECEIVABLE → SALE_RECEIPT; compra → PURCHASE_PAYMENT; custo da venda → o tipo
-// do custo (misto → OTHER_EXPENSE); categoria explícita precisa combinar com o sinal.
 func TestIntegration_SettlementDefaultCategory(t *testing.T) {
 	e := newFinanceEnv(t)
 	partner := e.partner()
@@ -119,7 +110,6 @@ func TestIntegration_SettlementDefaultCategory(t *testing.T) {
 	if got := catOf(alloc(freight, 5), alloc(commission, 5)); got != "OTHER_EXPENSE" {
 		t.Errorf("frete + comissão = %s, want OTHER_EXPENSE (misto)", got)
 	}
-	// Frete e comissão SEM Partner na mesma conta → misto.
 	sale2 := e.simpleSale(1, 1000, 400)
 	setLegacyCosts(t, e.db, sale2, 100, 50)
 	if got := catOf(alloc(e.api.payableOf("SALE", sale2, ""), 10)); got != "OTHER_EXPENSE" {
@@ -129,7 +119,6 @@ func TestIntegration_SettlementDefaultCategory(t *testing.T) {
 	if got := catOf(alloc(pacc, 10)); got != "PURCHASE_PAYMENT" {
 		t.Errorf("compra = %s", got)
 	}
-	// Categoria explícita: vale se combinar com o sinal.
 	code, res := e.api.do("POST", "/settlements", map[string]any{"movement": map[string]any{"occurred_on": "2027-03-01", "category": "LABOR"}, "allocations": []map[string]any{alloc(freight, 5)}})
 	if code != 201 || res["movement"].(map[string]any)["category"] != "LABOR" {
 		t.Errorf("categoria explícita = %d %v", code, res)
@@ -179,7 +168,6 @@ func TestIntegration_SettlementErrors(t *testing.T) {
 		t.Errorf("movimentação inexistente = %d %v, want 404", code, res)
 	}
 
-	// 409: acima do devido (mensagem do AYD); uma alocação ruim não grava nenhuma das outras.
 	code, res := post(map[string]any{"movement": mvIn("2027-03-01"), "allocations": []map[string]any{alloc(a, 100.01)}})
 	if code != http.StatusConflict || res["error"] != "valor acima do devido" {
 		t.Errorf("acima do devido = %d %v", code, res)
@@ -191,20 +179,17 @@ func TestIntegration_SettlementErrors(t *testing.T) {
 	if o := e.api.obligation(b); num(o, "settled") != 0 {
 		t.Errorf("a falha deveria desfazer tudo (transação): %v", o["settled"])
 	}
-	// Conta já quitada: nada a pagar (409).
 	if code, _ := post(map[string]any{"movement": mvIn("2027-03-01"), "allocations": []map[string]any{alloc(b)}}); code != 201 {
 		t.Fatalf("quitar b = %d", code)
 	}
 	if code, res := post(map[string]any{"movement": mvIn("2027-03-01"), "allocations": []map[string]any{alloc(b)}}); code != 409 {
 		t.Errorf("quitar conta quitada = %d %v, want 409", code, res)
 	}
-	// Venda cancelada.
 	e.api.do("PATCH", "/vendas/"+sale+"/delivery-status", map[string]any{"delivery_status": "CANCELED"})
 	code, res = post(map[string]any{"movement": mvIn("2027-03-01"), "allocations": []map[string]any{alloc(recv, 10)}})
 	if code != 409 || res["error"] != "venda cancelada: recebimentos bloqueados" {
 		t.Errorf("venda cancelada = %d %v", code, res)
 	}
-	// Atalho de 1 conta.
 	if code, _ := e.api.do("POST", "/obligations/"+a+"/settle", map[string]any{"amount": 10}); code != 400 {
 		t.Errorf("settle sem movement = %d, want 400", code)
 	}
@@ -216,7 +201,6 @@ func TestIntegration_SettlementErrors(t *testing.T) {
 	}
 }
 
-// Contas de credores diferentes na mesma movimentação: permitido (201) com warning no corpo.
 func TestIntegration_SettlementMixedCounterparties(t *testing.T) {
 	e := newFinanceEnv(t)
 	_, a := e.purchaseAccount(e.supplier(), 100)
@@ -228,7 +212,6 @@ func TestIntegration_SettlementMixedCounterparties(t *testing.T) {
 	if mv := res["movement"].(map[string]any); num(mv, "amount") != -160 {
 		t.Errorf("movimentação = %v", mv)
 	}
-	// Mesmo credor: sem warning.
 	sup := e.supplier()
 	_, c := e.purchaseAccount(sup, 10)
 	_, d := e.purchaseAccount(sup, 10)
@@ -237,7 +220,6 @@ func TestIntegration_SettlementMixedCounterparties(t *testing.T) {
 	}
 }
 
-// movement_id: usa a movimentação já lançada, respeitando sinal/direção e o saldo livre.
 func TestIntegration_SettlementExistingMovement(t *testing.T) {
 	e := newFinanceEnv(t)
 	sup := e.supplier()
@@ -261,13 +243,11 @@ func TestIntegration_SettlementExistingMovement(t *testing.T) {
 	if code, _ = post(alloc(a, 1)); code != 409 {
 		t.Errorf("movimentação sem saldo livre = %d, want 409", code)
 	}
-	// Direção incompatível: movimentação de saída para conta a receber → 400.
 	recv := e.api.receivable(e.simpleSale(1, 100, 50))
 	mv2 := e.api.movement(map[string]any{"occurred_on": "2027-03-01", "amount": -50, "category": "VEHICLE"})
 	if code, res := e.api.do("POST", "/settlements", map[string]any{"movement_id": mv2["id"], "allocations": []map[string]any{alloc(recv, 10)}}); code != 400 {
 		t.Errorf("saída quitando conta a receber = %d %v, want 400", code, res)
 	}
-	// Entrada avulsa (OTHER_INCOME) pode quitar conta a receber.
 	mv3 := e.api.movement(map[string]any{"occurred_on": "2027-03-01", "amount": 100, "category": "OTHER_INCOME"})
 	if code, res := e.api.do("POST", "/settlements", map[string]any{"movement_id": mv3["id"], "allocations": []map[string]any{alloc(recv)}}); code != 201 {
 		t.Errorf("entrada quitando conta a receber = %d %v", code, res)

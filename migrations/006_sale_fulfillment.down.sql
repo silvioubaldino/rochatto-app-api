@@ -10,7 +10,6 @@ DROP VIEW IF EXISTS vw_stock_balance;
 DROP VIEW IF EXISTS vw_purchases_resumo;
 DROP VIEW IF EXISTS vw_vendas_resumo;
 
--- ESTOQUE (definição da 001)
 CREATE TABLE estoque (
   id                 UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
   produto_id         UUID          REFERENCES produtos(id),
@@ -36,7 +35,6 @@ JOIN purchases p ON p.id = pi.purchase_id
 JOIN produtos pr ON pr.id = pi.product_id
 WHERE p.deleted_at IS NULL AND p.kind = 'STOCK_REPLENISHMENT' AND p.status = 'RECEIVED';
 
--- vendas.status
 CREATE TYPE status_venda AS ENUM (
   'A_ENTREGAR',
   'A_ENTREGAR_DATA',
@@ -48,7 +46,6 @@ ALTER TABLE vendas ADD COLUMN status status_venda NOT NULL DEFAULT 'A_ENTREGAR';
 UPDATE vendas SET status = 'ENTREGUE' WHERE delivery_status = 'DELIVERED';
 CREATE INDEX idx_vendas_status ON vendas(status);
 
--- itens_venda.pago_fornecedor: PAID → custo do Item; PENDING → rateio proporcional do paid_amount.
 ALTER TABLE itens_venda ADD COLUMN pago_fornecedor DECIMAL(12,2) NOT NULL DEFAULT 0;
 UPDATE itens_venda i
 SET pago_fornecedor = ROUND(
@@ -87,7 +84,6 @@ DROP TYPE purchase_status;
 DROP TYPE purchase_kind;
 DROP TYPE item_origin;
 
--- vw_vendas_resumo como na 004 (pré-agregada, com a_pagar_fornecedor).
 CREATE VIEW vw_vendas_resumo AS
 SELECT
   v.*,

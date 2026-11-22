@@ -30,9 +30,7 @@ func TestAllowlistCheck(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Act
 			err := allow.Check(tc.claims)
-			// Assert
 			if err != tc.wantErr {
 				t.Errorf("Check = %v, want %v", err, tc.wantErr)
 			}
@@ -50,10 +48,7 @@ func TestAllowlistEmptyAllowsAll(t *testing.T) {
 	}
 }
 
-// TestRequireAuthAllowlist exercita o middleware inteiro com uma chave RSA local injetada no
-// cache de JWKS (sem rede): token válido + e-mail fora da lista → 403; na lista → 200.
 func TestRequireAuthAllowlist(t *testing.T) {
-	// Arrange
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
@@ -98,9 +93,7 @@ func TestRequireAuthAllowlist(t *testing.T) {
 			req := httptest.NewRequest("GET", "/x", nil)
 			req.Header.Set("Authorization", "Bearer "+tc.token)
 			rec := httptest.NewRecorder()
-			// Act
 			h.ServeHTTP(rec, req)
-			// Assert
 			if rec.Code != tc.want {
 				t.Errorf("status = %d, want %d (body %s)", rec.Code, tc.want, rec.Body.String())
 			}

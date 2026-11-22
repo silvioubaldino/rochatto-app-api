@@ -24,26 +24,21 @@ const (
 	userEmailKey contextKey = "userEmail"
 )
 
-// WithUser devolve um contexto com o uid/e-mail do usuário autenticado (usado pelo
-// middleware e por testes dos handlers protegidos).
 func WithUser(ctx context.Context, uid, email string) context.Context {
 	ctx = context.WithValue(ctx, userUIDKey, uid)
 	return context.WithValue(ctx, userEmailKey, normalizeEmail(email))
 }
 
-// UserEmail devolve o e-mail (minúsculo) do usuário autenticado, se o token trouxe.
 func UserEmail(ctx context.Context) (string, bool) {
 	e, ok := ctx.Value(userEmailKey).(string)
 	return e, ok && e != ""
 }
 
-// UserUID returns the authenticated user's UID from the context.
 func UserUID(ctx context.Context) (string, bool) {
 	uid, ok := ctx.Value(userUIDKey).(string)
 	return uid, ok
 }
 
-// jwksCache holds the Firebase public keys with a TTL.
 type jwksCache struct {
 	mu        sync.RWMutex
 	keys      map[string]*rsa.PublicKey
@@ -150,8 +145,6 @@ func parseRSAPublicKey(k jwk) (*rsa.PublicKey, error) {
 	}, nil
 }
 
-// RequireAuth is an HTTP middleware that validates Firebase JWTs and then restricts access
-// to the owner's e-mails (allow). A valid token outside the allowlist gets 403.
 func RequireAuth(projectID string, allow Allowlist) func(http.Handler) http.Handler {
 	expectedIssuer := "https://securetoken.google.com/" + projectID
 

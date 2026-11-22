@@ -1,10 +1,5 @@
 package dbmigrate
 
-// Teste de integração da migração de dados legados da 006 (AYD-002@context, tabela
-// "Migração dos dados legados" + questão em aberto 1, decidida). Roda só com
-// TEST_DATABASE_URL: cria um banco descartável próprio (precisa de CREATE DATABASE — senão
-// é pulado), aplica até a 005, semeia dados no formato legado, sobe a 006, confere o
-// mapeamento, desce para a 005 e sobe de novo.
 import (
 	"database/sql"
 	"fmt"
@@ -62,7 +57,6 @@ func TestIntegration_Migration006LegacyMapping(t *testing.T) {
 		}
 	}
 
-	// Arrange: dados no formato da 005.
 	const (
 		cust = "00000000-0000-0000-0000-0000000000c1"
 		supA = "00000000-0000-0000-0000-0000000000f1"
@@ -92,12 +86,10 @@ func TestIntegration_Migration006LegacyMapping(t *testing.T) {
 	exec(`INSERT INTO estoque (produto_id, produto_nome, quantidade_entrada, custo_unit, data_entrada, observacoes) VALUES
 		($1, 'P', 10, 55, '2026-01-10', 'carga'), (NULL, 'Sem produto', 5, 40, '2026-01-11', NULL)`, prod)
 
-	// Act
 	if err := m.M.Migrate(6); err != nil {
 		t.Fatalf("migrate 6: %v", err)
 	}
 
-	// Assert: delivery_status.
 	for i, s := range statuses {
 		var got string
 		db.QueryRow(`SELECT delivery_status FROM vendas WHERE id = $1`, sale(i)).Scan(&got)
@@ -109,7 +101,6 @@ func TestIntegration_Migration006LegacyMapping(t *testing.T) {
 			t.Errorf("%s → %s, want %s", s, got, want)
 		}
 	}
-	// Purchases legadas por Supplier.
 	type pur struct {
 		status, payment string
 		paid, total     float64
@@ -150,7 +141,6 @@ func TestIntegration_Migration006LegacyMapping(t *testing.T) {
 			t.Errorf("item %d: em Purchase=%v origin=%s, want %v/MADE_TO_ORDER", n, linked, origin, inPurchase[item(n)])
 		}
 	}
-	// estoque com produto_id → ajuste INITIAL; sem produto_id não migra.
 	var n int
 	var qty, cost float64
 	var reason, adjustedAt string
@@ -164,7 +154,6 @@ func TestIntegration_Migration006LegacyMapping(t *testing.T) {
 	if balance != 10 || lastCost != 55 {
 		t.Errorf("balance = %v custo = %v, want 10/55", balance, lastCost)
 	}
-	// Legado removido.
 	for _, q := range []string{
 		`SELECT 1 FROM information_schema.columns WHERE table_name = 'itens_venda' AND column_name = 'pago_fornecedor'`,
 		`SELECT 1 FROM information_schema.columns WHERE table_name = 'vendas' AND column_name = 'status'`,
@@ -177,7 +166,6 @@ func TestIntegration_Migration006LegacyMapping(t *testing.T) {
 		}
 	}
 
-	// Down volta a um 005 funcional (best-effort) e Up de novo funciona.
 	if err := m.M.Migrate(5); err != nil {
 		t.Fatalf("down para 5: %v", err)
 	}

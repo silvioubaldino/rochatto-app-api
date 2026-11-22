@@ -49,7 +49,6 @@ func TestInProcessGateway(t *testing.T) {
 		t.Errorf("204 = %v", err)
 	}
 
-	// Não-2xx vira *APIError com a mensagem pt-BR literal da API.
 	var ae *toolkit.APIError
 	err := gw.Do(ctx, "GET", "/conflict", nil, nil, nil)
 	if !errors.As(err, &ae) || ae.Status != 409 || ae.Message != "venda cancelada: recebimentos bloqueados" {

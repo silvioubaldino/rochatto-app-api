@@ -1,7 +1,5 @@
 package mcp
 
-// Instructions é o texto canônico de initialize.instructions (AYD-006 §6). Mudar este
-// texto é mudança de contrato minor (§3.9): altere o AYD primeiro.
 const Instructions = `Você está conectado ao Rochatto, sistema de gestão comercial de pedras naturais de um único
 dono. O sistema é a fonte da verdade: nunca invente números; consulte as ferramentas.
 

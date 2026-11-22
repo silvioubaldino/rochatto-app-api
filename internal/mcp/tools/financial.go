@@ -8,7 +8,6 @@ import (
 	"github.com/silvioubaldino/sales-backend/internal/mcp/toolkit"
 )
 
-// FinancialTools: finanças, contas, quitações e movimentações (AYD-006 §4.1 — módulo Financial;
 func FinancialTools() []toolkit.Tool {
 	return []toolkit.Tool{
 		getFinanceSummary, listPaymentAlerts,
@@ -16,8 +15,6 @@ func FinancialTools() []toolkit.Tool {
 		settleObligations, recordExpense, setInstallments,
 	}
 }
-
-// --- tipos EN das contas e movimentações (as rotas REST já são EN — AYD-007) ---
 
 type ObligationOrigin struct {
 	Type  toolkit.OriginType `json:"type"`
@@ -36,7 +33,6 @@ type NextInstallment struct {
 	AmountOpen float64 `json:"amount_open"`
 }
 
-// ObligationSummary é a conta a pagar/receber de uma compra ou venda, por credor.
 type ObligationSummary struct {
 	ID              UUID                        `json:"id"`
 	Direction       toolkit.ObligationDirection `json:"direction"`
@@ -87,7 +83,6 @@ type ObligationSettlement struct {
 	Movement MovementSummary `json:"movement"`
 }
 
-// ObligationDetail é a conta com componentes, parcelas (plano) e quitações.
 type ObligationDetail struct {
 	ObligationSummary
 	Components   []ObligationComponent  `json:"components"`
@@ -115,7 +110,6 @@ type MovementSettlement struct {
 	Amount       float64 `json:"amount"`
 }
 
-// FinancialMovement é o dinheiro executado: entrada (+) ou saída (−).
 type FinancialMovement struct {
 	MovementSummary
 	Settlements []MovementSettlement `json:"settlements"`
@@ -136,14 +130,11 @@ type MovementList struct {
 	Totals  MovementTotals      `json:"totals"`
 }
 
-// settleResult é a resposta de POST /settlements e de POST /obligations/{id}/settle.
 type settleResult struct {
 	Movement    FinancialMovement   `json:"movement"`
 	Obligations []ObligationSummary `json:"obligations"`
 	Warnings    []string            `json:"warnings"`
 }
-
-// --- get_finance_summary (resposta de /finance/summary — AYD-004/AYD-007, já EN) ---
 
 type Period struct {
 	From Date `json:"from"`
@@ -162,7 +153,7 @@ type FinanceSales struct {
 }
 
 type ReceivedByMethod struct {
-	PaymentMethod *toolkit.PaymentMethod `json:"payment_method,omitempty"` // ausente = "não informado"
+	PaymentMethod *toolkit.PaymentMethod `json:"payment_method,omitempty"`
 	Amount        float64                `json:"amount"`
 }
 
@@ -251,8 +242,6 @@ var getFinanceSummary = toolkit.Define(toolkit.Meta{
 	return s, nil
 })
 
-// --- list_payment_alerts ---
-
 type ListPaymentAlertsIn struct {
 	OnlyUnread *bool `json:"only_unread,omitempty" jsonschema:"só alertas não lidos (padrão true)"`
 }
@@ -265,7 +254,7 @@ type PaymentAlert struct {
 	ObligationID     UUID                        `json:"obligation_id"`
 	InstallmentID    *UUID                       `json:"installment_id,omitempty"`
 	CounterpartyName string                      `json:"counterparty_name"`
-	CustomerName     *string                     `json:"customer_name,omitempty"` // só nos alertas a receber
+	CustomerName     *string                     `json:"customer_name,omitempty"`
 	Amount           float64                     `json:"amount"`
 	DueDate          Date                        `json:"due_date"`
 	DaysRemaining    *int                        `json:"days_remaining,omitempty"`
@@ -331,8 +320,6 @@ var listPaymentAlerts = toolkit.Define(toolkit.Meta{
 	return out, nil
 })
 
-// --- list_obligations (R) ---
-
 type ListObligationsIn struct {
 	Direction        toolkit.ObligationDirection `json:"direction,omitempty" jsonschema:"PAYABLE (a pagar) ou RECEIVABLE (a receber)"`
 	Status           []toolkit.ObligationStatus  `json:"status,omitempty" jsonschema:"status da conta (um ou mais; padrão: OPEN e PARTIAL, as em aberto)"`
@@ -381,8 +368,6 @@ var listObligations = toolkit.Define(toolkit.Meta{
 	return out, nil
 })
 
-// --- list_financial_movements (R) ---
-
 type ListFinancialMovementsIn struct {
 	From             Date                      `json:"from,omitempty" jsonschema:"a partir da data do movimento (inclusive)"`
 	To               Date                      `json:"to,omitempty" jsonschema:"até a data do movimento (inclusive)"`
@@ -424,8 +409,6 @@ var listFinancialMovements = toolkit.Define(toolkit.Meta{
 	}
 	return out, nil
 })
-
-// --- settle_obligations (W · dd) ---
 
 type SettleAllocationIn struct {
 	ObligationID UUID              `json:"obligation_id" jsonschema:"id da conta (obtenha com list_obligations)"`
@@ -497,8 +480,6 @@ func nonNilStrings(s []string) []string {
 	return s
 }
 
-// --- record_expense (W · dd) ---
-
 type RecordExpenseIn struct {
 	Category         toolkit.ExpenseCategory `json:"category" jsonschema:"VEHICLE (veículo), TAXES (impostos), FIXED_COSTS (custos fixos), MARKETING, BANK_FEES (tarifas), LABOR (mão de obra avulsa), OTHER_EXPENSE (outra despesa) ou OTHER_INCOME (receita avulsa)"`
 	Amount           toolkit.PosMoney        `json:"amount" jsonschema:"valor em BRL (> 0); o sinal vem da categoria: OTHER_INCOME entra, as demais saem"`
@@ -545,8 +526,6 @@ var recordExpense = toolkit.Define(toolkit.Meta{
 	}
 	return RecordExpenseOut{Movement: mv, Warnings: noWarnings()}, nil
 })
-
-// --- set_installments (W · I) ---
 
 type InstallmentIn struct {
 	DueDate       Date                  `json:"due_date" jsonschema:"vencimento da parcela"`
@@ -595,7 +574,6 @@ var setInstallments = toolkit.Define(toolkit.Meta{
 		return SetInstallmentsOut{}, invalid("first_due_date, interval_months e amount só valem com count")
 	}
 	path := "/obligations/" + pathID(string(in.ObligationID))
-	// Primeiro o plano (pode ser recusado pelas regras); depois o prazo.
 	switch {
 	case hasList:
 		plan := make([]map[string]any, 0, len(in.Installments))
@@ -654,7 +632,6 @@ func (d ObligationDetail) normalized() ObligationDetail {
 	return d
 }
 
-// saleReceivable devolve a conta a receber da Sale (nil se a venda ainda não tem Items).
 func saleReceivable(ctx context.Context, gw toolkit.Gateway, saleID UUID) (*ObligationDetail, error) {
 	list, err := get[ObligationList](ctx, gw, "/obligations", url.Values{
 		"origin_type": {"SALE"}, "origin_id": {string(saleID)}, "direction": {"RECEIVABLE"}, "limit": {"1"}})
@@ -671,8 +648,6 @@ func saleReceivable(ctx context.Context, gw toolkit.Gateway, saleID UUID) (*Obli
 	return &d, nil
 }
 
-// receiptsOf traduz a conta a receber para a lista de Receipts do contrato antigo: cada
-// quitação é um Receipt RECEIVED e cada parcela ainda não coberta, um PENDING (pelo que falta).
 func receiptsOf(d *ObligationDetail) []Receipt {
 	out := []Receipt{}
 	if d == nil {

@@ -1,4 +1,3 @@
--- AYD-011@context / SPEC-012: número humano (C1) e fornecedor habitual do Product (C8).
 --   number: sequência própria por tabela (quotes, vendas, purchases), backfill por created_at, id
 --   (inclui soft-deletados). Pode pular número (rollback); nunca se reutiliza.
 --   Views de resumo NÃO mudam (os handlers juntam a tabela base); vw_obligations só troca o

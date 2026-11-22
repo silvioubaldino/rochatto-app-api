@@ -1,7 +1,4 @@
-// Package tools reúne os módulos de ferramentas do Assistant connector (AYD-006 §4), um
-// arquivo por domínio do produto. Cada módulo expõe a sua lista; o registro central só
-// concatena. Ferramentas não têm regra de negócio nem acessam o banco: leem/escrevem pelo
-// Gateway e adaptam EN ↔ PT (§5) em funções do próprio módulo.
+// Package tools reúne os módulos de ferramentas do Assistant connector, um arquivo por domínio do produto.
 package tools
 
 import (
@@ -22,14 +19,12 @@ type (
 	Date = toolkit.Date
 )
 
-// get lê uma rota REST (GET) para o tipo T.
 func get[T any](ctx context.Context, gw toolkit.Gateway, path string, q url.Values) (T, error) {
 	var out T
 	err := gw.Do(ctx, "GET", path, q, nil, &out)
 	return out, err
 }
 
-// fold normaliza para busca: minúsculas e sem acentos.
 func fold(s string) string {
 	var b strings.Builder
 	for _, r := range norm.NFD.String(s) {
@@ -41,13 +36,11 @@ func fold(s string) string {
 	return b.String()
 }
 
-// nameMatches: busca por nome sem acento nem caixa; query vazia casa tudo.
 func nameMatches(query, name string) bool {
 	q := strings.TrimSpace(query)
 	return q == "" || strings.Contains(fold(name), fold(q))
 }
 
-// opt converte string vazia/nula em nil (campo omitido na saída).
 func opt(s *string) *string {
 	if s == nil || strings.TrimSpace(*s) == "" {
 		return nil
@@ -62,7 +55,6 @@ func optUUID(s *UUID) *UUID {
 	return s
 }
 
-// setIf acrescenta o parâmetro de query quando não vazio.
 func setIf(q url.Values, key, val string) {
 	if val != "" {
 		q.Set(key, val)
@@ -77,9 +69,6 @@ func joinEnum[T ~string](vals []T) string {
 	return strings.Join(parts, ",")
 }
 
-// --- escritas ---
-
-// send despacha uma escrita (POST/PUT/PATCH) pelo Gateway e decodifica a resposta 2xx em T.
 func send[T any](ctx context.Context, gw toolkit.Gateway, method, path string, body any) (T, error) {
 	var out T
 	if body == nil {
@@ -89,9 +78,6 @@ func send[T any](ctx context.Context, gw toolkit.Gateway, method, path string, b
 	return out, err
 }
 
-// afterWrite marca a falha de uma leitura POSTERIOR a uma escrita já gravada: devolve um erro
-// opaco (nem *APIError nem *ToolError), que o pipeline responde como INTERNAL com call_id.
-// A escrita não é desfeita e o recurso continua recuperável pelas ferramentas de leitura.
 func afterWrite(err error) error {
 	if err == nil {
 		return nil
@@ -108,7 +94,6 @@ func hasDecimals(v float64, places int) bool {
 	return math.Abs(v*scale-math.Round(v*scale)) > 1e-6
 }
 
-// checkMoney confere o número de casas (2) de um valor em BRL; o limite mínimo é do schema.
 func checkMoney(field string, v float64) error {
 	if hasDecimals(v, 2) {
 		return invalid("campo '%s' aceita no máximo 2 casas decimais", field)
@@ -123,7 +108,6 @@ func checkMoneyPtr(field string, v *float64) error {
 	return checkMoney(field, *v)
 }
 
-// checkQty confere o número de casas (3) de uma quantidade.
 func checkQty(field string, v float64) error {
 	if hasDecimals(v, 3) {
 		return invalid("campo '%s' aceita no máximo 3 casas decimais", field)
@@ -133,7 +117,6 @@ func checkQty(field string, v float64) error {
 
 func noWarnings() []string { return []string{} }
 
-// optStr converte string vazia em nil (campo omitido no corpo REST).
 func optStr(s string) *string {
 	if strings.TrimSpace(s) == "" {
 		return nil
@@ -148,7 +131,6 @@ func optUUIDStr(s UUID) *UUID {
 	return &s
 }
 
-// todaySP devolve a data de hoje no fuso do negócio (America/Sao_Paulo), "YYYY-MM-DD".
 func todaySP() string {
 	loc, err := time.LoadLocation("America/Sao_Paulo")
 	if err != nil {

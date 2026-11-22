@@ -24,12 +24,10 @@ func TestCheckPurchaseTransition(t *testing.T) {
 		{PurchaseReceived, PurchaseOpen, 1, ErrIllegalTransition},
 		{PurchaseReceived, PurchaseOrdered, 1, ErrIllegalTransition},
 		{PurchaseReceived, PurchaseReceived, 1, ErrIllegalTransition},
-		{PurchaseOpen, PurchaseReceived, 0, ErrIllegalTransition}, // 409 vence o 422
+		{PurchaseOpen, PurchaseReceived, 0, ErrIllegalTransition},
 	}
 	for _, c := range cases {
-		// Act
 		got := CheckPurchaseTransition(c.from, c.to, c.lines)
-		// Assert
 		if !errors.Is(got, c.want) {
 			t.Errorf("%s→%s (lines=%d) = %v, want %v", c.from, c.to, c.lines, got, c.want)
 		}
@@ -67,7 +65,7 @@ func TestCheckDeliveryChange(t *testing.T) {
 		{DeliveryToDeliver, DeliveryCanceled, true, ErrItemsInOrderedPurchase},
 		{DeliveryCanceled, DeliveryToDeliver, false, ErrSaleCanceled},
 		{DeliveryCanceled, DeliveryCanceled, false, ErrSaleCanceled},
-		{DeliveryToDeliver, DeliveryDelivered, true, nil}, // entregar não depende das Purchases
+		{DeliveryToDeliver, DeliveryDelivered, true, nil},
 	}
 	for _, c := range cases {
 		if got := CheckDeliveryChange(c.current, c.next, c.ordered); !errors.Is(got, c.want) {

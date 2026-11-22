@@ -1,5 +1,4 @@
-// Package toolkit é o núcleo para declarar ferramentas do Assistant connector (AYD-006
-// §Arquitetura de extensão): Meta + tipos Go + handler, com schemas derivados dos tipos.
+// Package toolkit declara ferramentas do Assistant connector com schemas derivados dos tipos.
 package toolkit
 
 import (
@@ -10,36 +9,30 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
-// Tipos nomeados que carregam restrições de schema (registradas em TypeSchemas).
 type (
-	UUID string // string, format uuid
-	Date string // "YYYY-MM-DD" (America/Sao_Paulo)
+	UUID string
+	Date string
 
-	// Limit e Offset: paginação (§3.4). Months: janela de get_monthly_sales.
 	Limit  int
 	Offset int
 	Months int
 
-	// Money (BRL, ≥ 0), PosMoney (> 0), Qty (> 0) e SignedQty (≠ 0 é imposto por NotZero).
-	// O número de casas (2 e 3) é conferido pelos handlers das escritas (CheckMoney/CheckQty).
 	Money     float64
 	PosMoney  float64
 	Qty       float64
 	SignedQty float64
 
-	// Enums de entrada das escritas (subconjuntos dos enums da API).
-	SettableQuoteStatus    string // OPEN | LOST (WON só por convert)
-	SettableDeliveryStatus string // TO_DELIVER | DELIVERED (CANCELED é cancel_sale)
-	StockAdjustmentReason  string // INITIAL | COUNT | OTHER
+	SettableQuoteStatus    string
+	SettableDeliveryStatus string
+	StockAdjustmentReason  string
 
-	// Enums canônicos da API (maiúsculas).
 	LeadSource            string
 	PartnerType           string
 	QuoteStatus           string
 	DeliveryStatus        string
 	PaymentStatus         string
 	ItemOrigin            string
-	ItemKind              string // PRODUCT | SERVICE (AYD-010)
+	ItemKind              string
 	ReceiptStatus         string
 	PaymentMethod         string
 	PurchaseKind          string
@@ -48,24 +41,23 @@ type (
 	AlertKind             string
 	MovementKind          string
 
-	SupplierKind        string // STONE | TRANSPORT | LABOR | TAX_AUTHORITY | OTHER
-	ObligationDirection string // PAYABLE | RECEIVABLE
-	ObligationStatus    string // OPEN | PARTIAL | SETTLED
-	OriginType          string // SALE | PURCHASE
-	CounterpartyType    string // SUPPLIER | PARTNER | CUSTOMER
-	InstallmentStatus   string // OPEN | PARTIAL | COVERED
-	MovementCategory    string // as 12 categorias de movimentação
-	ExpenseCategory     string // categorias aceitas por record_expense (despesa ou receita avulsa)
-	MovementDirection   string // IN (entrada) | OUT (saída)
+	SupplierKind        string
+	ObligationDirection string
+	ObligationStatus    string
+	OriginType          string
+	CounterpartyType    string
+	InstallmentStatus   string
+	MovementCategory    string
+	ExpenseCategory     string
+	MovementDirection   string
 
-	PurchaseChargeKind string // FREIGHT | UNLOADING | TAX | OTHER
-	SaleChargeKind     string // FREIGHT | OTHER (cobrado do cliente)
-	SaleCostKind       string // FREIGHT | LABOR | COMMISSION | OTHER (pago a terceiros pela venda)
-	AllocationMethod   string // BY_QUANTITY | BY_VALUE
-	PurchaseLineType   string // STOCK_ITEM | SALE_ITEM
+	PurchaseChargeKind string
+	SaleChargeKind     string
+	SaleCostKind       string
+	AllocationMethod   string
+	PurchaseLineType   string
 )
 
-// Valores de enum (fonte para os schemas e para os adaptadores).
 var Enums = map[reflect.Type][]string{
 	reflect.TypeFor[LeadSource]():            {"REFERRAL", "INSTAGRAM", "PARTNER", "OTHER"},
 	reflect.TypeFor[PartnerType]():           {"ARCHITECT", "ENGINEER", "BUILDER", "OTHER"},
@@ -106,7 +98,6 @@ var Enums = map[reflect.Type][]string{
 
 func ptr[T any](v T) *T { return &v }
 
-// TypeSchemas devolve os schemas dos tipos nomeados acima.
 func TypeSchemas() map[reflect.Type]*jsonschema.Schema {
 	m := map[reflect.Type]*jsonschema.Schema{
 		reflect.TypeFor[UUID](): {Type: "string", Format: "uuid"},
@@ -133,14 +124,11 @@ func TypeSchemas() map[reflect.Type]*jsonschema.Schema {
 	return m
 }
 
-// Page são os parâmetros de paginação de toda ferramenta search_/list_ (§3.4). Incorpore
-// em Input structs.
 type Page struct {
 	Limit  Limit  `json:"limit,omitempty"`
 	Offset Offset `json:"offset,omitempty"`
 }
 
-// Normalize aplica os padrões (limit 20, máx. 100; offset ≥ 0).
 func (p Page) Normalize() (limit, offset int) {
 	limit, offset = int(p.Limit), int(p.Offset)
 	if limit <= 0 {
@@ -155,7 +143,6 @@ func (p Page) Normalize() (limit, offset int) {
 	return limit, offset
 }
 
-// PageOut é a saída paginada de toda ferramenta search_/list_ (§3.4).
 type PageOut[T any] struct {
 	Items   []T  `json:"items"`
 	Total   int  `json:"total"`
@@ -163,7 +150,6 @@ type PageOut[T any] struct {
 	HasMore bool `json:"has_more"`
 }
 
-// Paginate fatia a lista completa (a rota REST ainda não pagina — transparente ao contrato).
 func Paginate[T any](all []T, p Page) PageOut[T] {
 	limit, offset := p.Normalize()
 	total := len(all)
@@ -180,15 +166,12 @@ func nullable(s *jsonschema.Schema) *jsonschema.Schema {
 	return &jsonschema.Schema{Description: s.Description, AnyOf: []*jsonschema.Schema{s, {Type: "null"}}}
 }
 
-// Nullable é um campo opcional de entrada em que null tem significado explícito (limpar o
-// valor — §3.2): Present distingue "omitido" de enviado; Null, "enviado como null".
 type Nullable[T any] struct {
 	Present bool
 	Null    bool
 	Value   T
 }
 
-// UnmarshalJSON implements json.Unmarshaler.
 func (n *Nullable[T]) UnmarshalJSON(b []byte) error {
 	n.Present = true
 	if bytes.Equal(bytes.TrimSpace(b), []byte("null")) {
@@ -198,8 +181,6 @@ func (n *Nullable[T]) UnmarshalJSON(b []byte) error {
 	return json.Unmarshal(b, &n.Value)
 }
 
-// Dedupable é incorporado nas entradas das ferramentas dedupe (§3.7). O pipeline lê o
-// argumento dos argumentos brutos; o campo existe para entrar no schema.
 type Dedupable struct {
 	AllowDuplicate bool `json:"allow_duplicate,omitempty" jsonschema:"true força a criação mesmo que o mesmo lançamento tenha acabado de ser feito (padrão false: repetições em 120 s são ignoradas)"`
 }

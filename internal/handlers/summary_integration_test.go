@@ -1,11 +1,5 @@
 package handlers
 
-// Testes de integração da Fase 0: vw_vendas_resumo e dashboard sem fan-out.
-// Mesmas condições de quotes_integration_test.go: rodam só com TEST_DATABASE_URL apontando
-// para um banco descartável com as migrations aplicadas (go run ./cmd/migrate up).
-//
-// O banco é compartilhado com os outros testes e não é limpo, então os totais globais do
-// dashboard são conferidos por diferença (antes × depois de criar as Sales do teste).
 import (
 	"encoding/json"
 	"math"
@@ -35,8 +29,6 @@ func mustExec(t *testing.T, db *gorm.DB, sql string, args ...any) {
 	}
 }
 
-// insertReceived registra um recebimento direto no banco (AYD-007): movimentação SALE_RECEIPT +
-// quitação da conta a receber da Sale (a conta nasce dos Items pelo trigger de sincronização).
 func insertReceived(t *testing.T, db *gorm.DB, saleID string, amount float64) {
 	t.Helper()
 	var movement string
@@ -48,7 +40,6 @@ func insertReceived(t *testing.T, db *gorm.DB, saleID string, amount float64) {
 		movement, amount, saleID)
 }
 
-// insertPlanned registra uma parcela planejada (plano, não dinheiro) na conta a receber da Sale.
 func insertPlanned(t *testing.T, db *gorm.DB, saleID string, amount float64) {
 	t.Helper()
 	mustExec(t, db, `INSERT INTO installments (obligation_id, due_date, amount)
@@ -95,7 +86,6 @@ func takeSnapshot(t *testing.T, api apiClient, day, month string) dashSnapshot {
 	return s
 }
 
-// Sale com 2 Items, 3 Receipts (2 recebidos) e Freight/Commission: o resumo não pode multiplicar.
 func TestIntegration_SaleSummaryNoFanOut(t *testing.T) {
 	api, db, cid := newSummaryEnv(t)
 
@@ -111,11 +101,11 @@ func TestIntegration_SaleSummaryNoFanOut(t *testing.T) {
 		t.Fatalf("GET venda = %d", code)
 	}
 	want := map[string]float64{
-		"total_venda":    5000, // 2×1000 + 1.5×2000
-		"total_custo":    3000, // 2×600 + 1.5×1200
-		"total_recebido": 2500, // só os recebidos
+		"total_venda":    5000,
+		"total_custo":    3000,
+		"total_recebido": 2500,
 		"a_receber":      2500,
-		"lucro":          1500, // 5000 − 3000 − 400 − 100 (RN-04)
+		"lucro":          1500,
 	}
 	for k, v := range want {
 		if got, _ := sale[k].(float64); !approx(got, v) {
@@ -126,7 +116,6 @@ func TestIntegration_SaleSummaryNoFanOut(t *testing.T) {
 		t.Errorf("quote_id ausente na resposta (deve vir da view)")
 	}
 
-	// A listagem lê a mesma view, inclusive o filtro "pendente" (total_venda > total_recebido).
 	rec := httptest.NewRecorder()
 	api.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/vendas?cliente_id="+cid+"&pendente=true", nil))
 	var list []map[string]any
@@ -155,15 +144,13 @@ func TestIntegration_DashboardNumbers(t *testing.T) {
 	db.Raw("SELECT DATE_TRUNC('month', CURRENT_DATE)::date::text").Scan(&month)
 	before := takeSnapshot(t, api, day, month)
 
-	// Product com id (nome no Item diverge do cadastro — agrupa por id) + Item legado sem id.
 	var productID string
-	productName := "Quartzito teste " + uuid.NewString() // nome distinto por execução
+	productName := "Quartzito teste " + uuid.NewString()
 	if err := db.Raw("INSERT INTO produtos (nome) VALUES (?) RETURNING id", productName).Scan(&productID).Error; err != nil {
 		t.Fatal(err)
 	}
 	legacyName := "Legado " + productID
 
-	// Sale 1: 2 Items, 2 Receipts recebidos + 1 pendente, Freight 400, Commission 100.
 	s1 := insertSale(t, db, cid, 400, 100)
 	mustExec(t, db, `INSERT INTO itens_venda (venda_id, produto_id, produto_nome, quantidade, preco_venda_unit, custo_unit)
 		VALUES (?, ?, 'Quartzito nome antigo', 2, 1000, 600)`, s1, productID)
@@ -172,14 +159,12 @@ func TestIntegration_DashboardNumbers(t *testing.T) {
 	insertReceived(t, db, s1, 1000)
 	insertReceived(t, db, s1, 1500)
 	insertPlanned(t, db, s1, 800)
-	// Sale 2: mesmo Product, outra quantidade/preço, sem Receipts.
 	s2 := insertSale(t, db, cid, 0, 0)
 	mustExec(t, db, `INSERT INTO itens_venda (venda_id, produto_id, produto_nome, quantidade, preco_venda_unit, custo_unit)
 		VALUES (?, ?, ?, 8, 500, 300)`, s2, productID, productName)
 
 	after := takeSnapshot(t, api, day, month)
 
-	// Sale 1: venda 5000, custo 3000, recebido 2500, lucro 1500. Sale 2: venda 4000, custo 2400, lucro 1600.
 	checks := []struct {
 		name      string
 		got, want float64
@@ -196,7 +181,6 @@ func TestIntegration_DashboardNumbers(t *testing.T) {
 		}
 	}
 
-	// Ranking: preço/custo médios ponderados pela quantidade, agrupado por produto_id.
 	code, rank := api.do("GET", "/relatorios/produtos?data_inicio="+day+"&data_fim="+day, nil)
 	if code != 200 {
 		t.Fatalf("relatorios/produtos = %d", code)
@@ -221,9 +205,9 @@ func TestIntegration_DashboardNumbers(t *testing.T) {
 		"total_vendas":         2,
 		"total_quantidade":     10,
 		"total_receita":        6000,
-		"preco_medio":          600, // (2×1000 + 8×500) / 10 — média simples daria 750
-		"custo_medio":          360, // (2×600 + 8×300) / 10
-		"margem_media_percent": 40,  // (6000 − 3600) / 6000
+		"preco_medio":          600,
+		"custo_medio":          360,
+		"margem_media_percent": 40,
 	}
 	for k, v := range wantRank {
 		if got, _ := byID[k].(float64); !approx(got, v) {
@@ -238,8 +222,6 @@ func TestIntegration_DashboardNumbers(t *testing.T) {
 	}
 }
 
-// RN-05: Sale entregue mas ainda devendo continua em "a receber"; pagamento a maior não abate
-// o saldo de outra Sale.
 func TestIntegration_DashboardAReceberIncludesDelivered(t *testing.T) {
 	api, db, cid := newSummaryEnv(t)
 	var day, month string

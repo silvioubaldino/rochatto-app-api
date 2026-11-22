@@ -1,8 +1,5 @@
 package handlers
 
-// SPEC-006/SPEC-008: GET /dashboard/notificacoes usado pelo Assistant connector — traz
-// `obligation_id` / `installment_id` (AYD-007; antes `pagamento_id`) e `only_unread=false` (inclui os lidos).
-// Roda só com TEST_DATABASE_URL.
 import "testing"
 
 func TestIntegration_NotificationsExposeObligationAndReadFilter(t *testing.T) {

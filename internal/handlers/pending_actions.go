@@ -1,11 +1,5 @@
 package handlers
 
-// Pendências do dia (Pending actions — AYD-011 C10 / SPEC-012): GET /pending-actions?horizon_days=7.
-// Sempre calculado na leitura (nada gravado — RNF-05), com a mesma base das listas: as contas vêm de
-// obligations.List (GET /obligations), a fila "a comprar" de pendingSaleItemRows
-// (GET /purchases/pending-sale-items), as compras e os orçamentos dos mesmos resumos das listas e o
-// Balance de fetchStockBalances (GET /stock/balance). As regras puras estão em internal/pendingactions.
-
 import (
 	"log"
 	"net/http"
@@ -31,10 +25,8 @@ func (h *PendingActionsHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /pending-actions", h.list)
 }
 
-// pendingFetchLimit: teto de contas lidas por grupo (o grupo mostra só 20, mas conta todas).
 const pendingFetchLimit = 5000
 
-// pendingCtx é o "agora" da consulta: hoje (calendário do negócio) e o fim da janela.
 type pendingCtx struct {
 	db      *gorm.DB
 	today   time.Time
@@ -59,7 +51,6 @@ func (h *PendingActionsHandler) list(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, pa.Assemble(c.today, horizon, groups))
 }
 
-// collect monta o grupo de cada kind (nil = sem pendências).
 func (c pendingCtx) collect() (map[pa.Kind]*pa.Group, error) {
 	builders := []struct {
 		kind  pa.Kind
@@ -94,9 +85,6 @@ func f64(v float64) *float64 { v = obligations.Round2(v); return &v }
 
 func intp(v int) *int { return &v }
 
-// --- contas ---
-
-// openObligations lê as contas abertas/parciais da direção (mesma base de GET /obligations).
 func (c pendingCtx) openObligations(f obligations.ListFilter) ([]obligations.Obligation, error) {
 	f.Statuses = []string{"OPEN", "PARTIAL"}
 	f.Limit = pendingFetchLimit
@@ -107,7 +95,6 @@ func (c pendingCtx) openObligations(f obligations.ListFilter) ([]obligations.Obl
 	return out.Items, nil
 }
 
-// originNumbers devolve o número humano das Sales e Purchases de origem das contas.
 func (c pendingCtx) originNumbers(obs []obligations.Obligation) (map[uuid.UUID]int, error) {
 	var sales, purchases []uuid.UUID
 	for _, o := range obs {
@@ -126,7 +113,6 @@ func (c pendingCtx) originNumbers(obs []obligations.Obligation) (map[uuid.UUID]i
 	return out, nil
 }
 
-// numbersOf acrescenta a out o número das linhas de table (vendas | purchases) com esses ids.
 func (c pendingCtx) numbersOf(table string, ids []uuid.UUID, out map[uuid.UUID]int) error {
 	if len(ids) == 0 {
 		return nil
@@ -146,7 +132,7 @@ func (c pendingCtx) numbersOf(table string, ids []uuid.UUID, out map[uuid.UUID]i
 
 func obligationTitle(o obligations.Obligation) string {
 	if o.Counterparty == nil || o.Counterparty.Name == "" {
-		return "A definir" // credor ainda não definido (como nos alertas de pagamento)
+		return "A definir"
 	}
 	return o.Counterparty.Name
 }
@@ -162,8 +148,6 @@ func obligationItem(o obligations.Obligation, numbers map[uuid.UUID]int, date *s
 	return it
 }
 
-// obligationsDue: contas da direção com parcela não coberta (ou due_date, sem parcelas) até hoje + h.
-// O valor do item é o aberto da próxima parcela (ou da conta, sem parcelas).
 func (c pendingCtx) obligationsDue(direction string) ([]pa.Item, error) {
 	end := c.windowEnd()
 	obs, err := c.openObligations(obligations.ListFilter{Direction: direction, DueTo: &end})
@@ -185,7 +169,6 @@ func (c pendingCtx) obligationsDue(direction string) ([]pa.Item, error) {
 	return items, nil
 }
 
-// receivablesWithoutPlan: conta a receber em aberto sem parcela a vencer nem due_date.
 func (c pendingCtx) receivablesWithoutPlan() ([]pa.Item, error) {
 	obs, err := c.openObligations(obligations.ListFilter{Direction: obligations.Receivable, NoPlan: true})
 	if err != nil {
@@ -204,7 +187,6 @@ func (c pendingCtx) receivablesWithoutPlan() ([]pa.Item, error) {
 	return items, nil
 }
 
-// costsWithoutPayee: conta a pagar com credor "a definir" e valor > 0 (ainda não quitada).
 func (c pendingCtx) costsWithoutPayee() ([]pa.Item, error) {
 	obs, err := c.openObligations(obligations.ListFilter{Direction: obligations.Payable, NoCounterparty: true})
 	if err != nil {
@@ -228,9 +210,6 @@ func (c pendingCtx) costsWithoutPayee() ([]pa.Item, error) {
 	return items, nil
 }
 
-// --- entregas e fila a comprar ---
-
-// deliveriesDue: Sale TO_DELIVER com prazo até hoje + h, ou sem prazo.
 func (c pendingCtx) deliveriesDue() ([]pa.Item, error) {
 	end := c.windowEnd()
 	var rows []struct {
@@ -261,7 +240,6 @@ func (c pendingCtx) deliveriesDue() ([]pa.Item, error) {
 	return items, nil
 }
 
-// itemsWithoutSupplier: Items sob encomenda sem fornecedor e sem Purchase, um item por Sale.
 func (c pendingCtx) itemsWithoutSupplier() ([]pa.Item, error) {
 	rows, err := pendingSaleItemRows(c.db)
 	if err != nil {
@@ -301,7 +279,6 @@ func (c pendingCtx) itemsWithoutSupplier() ([]pa.Item, error) {
 	return items, nil
 }
 
-// itemsToPurchase: a fila "a comprar" com fornecedor, um item por Supplier (valor = custo).
 func (c pendingCtx) itemsToPurchase() ([]pa.Item, error) {
 	rows, err := pendingSaleItemRows(c.db)
 	if err != nil {
@@ -343,8 +320,6 @@ func (c pendingCtx) itemsToPurchase() ([]pa.Item, error) {
 	return items, nil
 }
 
-// --- compras ---
-
 func purchaseItem(r purchaseResumoRow, overdue bool) pa.Item {
 	return pa.Item{
 		Entity: pa.Entity{Type: pa.EntityPurchase, ID: r.ID}, Number: intp(r.Number), Title: r.SupplierName,
@@ -352,7 +327,6 @@ func purchaseItem(r purchaseResumoRow, overdue bool) pa.Item {
 	}
 }
 
-// purchasesToOrder: Purchase OPEN com ao menos uma linha.
 func (c pendingCtx) purchasesToOrder() ([]pa.Item, error) {
 	var rows []purchaseResumoRow
 	if err := purchaseResumoQuery(c.db).
@@ -366,7 +340,6 @@ func (c pendingCtx) purchasesToOrder() ([]pa.Item, error) {
 	return items, nil
 }
 
-// purchasesToReceive: Purchase ORDERED com previsão até hoje + h, ou sem previsão.
 func (c pendingCtx) purchasesToReceive() ([]pa.Item, error) {
 	var rows []purchaseResumoRow
 	if err := purchaseResumoQuery(c.db).
@@ -380,8 +353,6 @@ func (c pendingCtx) purchasesToReceive() ([]pa.Item, error) {
 	}
 	return items, nil
 }
-
-// --- orçamentos e estoque ---
 
 // staleQuotes: Quote OPEN (não é venda rápida) com quote_date antes de hoje − 7 dias.
 func (c pendingCtx) staleQuotes() ([]pa.Item, error) {
@@ -402,7 +373,6 @@ func (c pendingCtx) staleQuotes() ([]pa.Item, error) {
 	return items, nil
 }
 
-// negativeStock: Product com Balance < 0 (quantity = Balance).
 func (c pendingCtx) negativeStock() ([]pa.Item, error) {
 	rows, err := fetchStockBalances(c.db, "", true)
 	if err != nil {

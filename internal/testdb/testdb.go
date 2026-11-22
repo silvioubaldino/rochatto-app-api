@@ -1,7 +1,4 @@
-// Package testdb cria um banco Postgres descartável, com todas as migrations aplicadas,
-// para testes de integração. Roda só com TEST_DATABASE_URL e permissão de CREATE DATABASE;
-// senão o teste é pulado. Cada teste tem o seu banco — não há interferência entre pacotes
-// que rodam em paralelo.
+// Package testdb cria um banco Postgres descartável, com todas as migrations aplicadas, para testes de integração.
 package testdb
 
 import (
@@ -22,7 +19,6 @@ import (
 
 var seq atomic.Int64
 
-// New devolve um *gorm.DB sobre um banco novo (migrations 001…N aplicadas).
 func New(t *testing.T) *gorm.DB {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")

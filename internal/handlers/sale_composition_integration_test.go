@@ -1,7 +1,5 @@
 package handlers
 
-// Testes de integração da composição da venda (AYD-009 / SPEC-010). Só rodam com TEST_DATABASE_URL.
-
 import (
 	"testing"
 )
@@ -29,7 +27,6 @@ func TestIntegration_QuoteChargesCarriedToSale(t *testing.T) {
 	}
 	chargeID := charges[0].(map[string]any)["id"].(string)
 
-	// PUT: ausente mantém; lista substitui (id mantém a linha; sem id cria; o que sumiu é excluído).
 	if code, res := e.api.do("PUT", "/quotes/"+q["id"].(string), map[string]any{"notes": "n"}); code != 200 || len(res["charges"].([]any)) != 1 {
 		t.Fatalf("PUT sem charges = %d %v", code, res)
 	}
@@ -46,7 +43,6 @@ func TestIntegration_QuoteChargesCarriedToSale(t *testing.T) {
 		t.Errorf("kind inválido = %d %v, want 400", code, res)
 	}
 
-	// Conversão copia as cobranças; a conta a receber já inclui o frete cobrado.
 	conv := e.post("/quotes/"+q["id"].(string)+"/convert", nil, 201)
 	_, sale := e.api.do("GET", "/vendas/"+conv["sale_id"].(string), nil)
 	e.wantNum("venda", sale, "total_venda", 4830)
@@ -64,7 +60,6 @@ func TestIntegration_QuoteChargesCarriedToSale(t *testing.T) {
 		t.Errorf("componentes = %v", ct)
 	}
 
-	// Venda rápida com charges.
 	qs := e.post("/quotes/quick-sale", body, 201)
 	_, sale2 := e.api.do("GET", "/vendas/"+qs["sale_id"].(string), nil)
 	e.wantNum("venda rápida", sale2, "total_venda", 4780)
@@ -72,7 +67,7 @@ func TestIntegration_QuoteChargesCarriedToSale(t *testing.T) {
 
 func TestIntegration_SaleChargesRoutes(t *testing.T) {
 	e := newFinanceEnv(t)
-	sale := e.simpleSale(2, 100, 60) // 200
+	sale := e.simpleSale(2, 100, 60)
 	base := "/vendas/" + sale + "/charges"
 
 	c := e.post(base, map[string]any{"kind": "FREIGHT", "amount": 50}, 201)
@@ -100,7 +95,6 @@ func TestIntegration_SaleChargesRoutes(t *testing.T) {
 		t.Errorf("GET = %d", code)
 	}
 
-	// Recebido 250 e depois a cobrança diminui: OVERSETTLED.
 	e.api.receive(sale, 250, "2026-11-01", "PIX")
 	code, res := e.api.do("PUT", base+"/"+id, map[string]any{"kind": "OTHER", "amount": 20})
 	if code != 200 || !hasWarning(res, "OVERSETTLED") {
@@ -113,7 +107,6 @@ func TestIntegration_SaleChargesRoutes(t *testing.T) {
 		t.Errorf("DELETE repetido = %d", code)
 	}
 
-	// Venda cancelada não aceita cobranças (409); inexistente 404.
 	if code, _ := e.api.do("PATCH", "/vendas/"+sale+"/delivery-status", map[string]any{"delivery_status": "CANCELED"}); code != 200 {
 		t.Fatal("cancelar")
 	}
@@ -129,14 +122,13 @@ func TestIntegration_SaleCostsRoutes(t *testing.T) {
 	e := newFinanceEnv(t)
 	partner, other := e.partner(), e.partner()
 	driver, installer := e.supplier(), e.supplier()
-	sale := e.simpleSale(2, 1000, 400) // 2000, custo 800
+	sale := e.simpleSale(2, 1000, 400)
 	e.api.do("PUT", "/vendas/"+sale, map[string]any{"vendedor_externo_id": partner})
 	base := "/vendas/" + sale + "/costs"
 
-	// Frete pago ao motorista; instalador; comissão sem credor informado → Partner indicador.
 	fr := e.post(base, map[string]any{"kind": "FREIGHT", "amount": 150, "payee_supplier_id": driver}, 201)
 	e.post(base, map[string]any{"kind": "LABOR", "amount": 300, "payee_supplier_id": installer, "description": "instalação"}, 201)
-	cm := e.post(base, map[string]any{"kind": "COMMISSION", "amount": 0}, 201) // 0: sem conta ainda
+	cm := e.post(base, map[string]any{"kind": "COMMISSION", "amount": 0}, 201)
 	if p := cm["payee"].(map[string]any); p["type"] != "PARTNER" || p["id"] != partner || cm["obligation_id"] != nil {
 		t.Errorf("comissão = %v", cm)
 	}
@@ -149,14 +141,13 @@ func TestIntegration_SaleCostsRoutes(t *testing.T) {
 	e.wantNum("venda", d, "costs_open", 450)
 	e.wantNum("venda", d, "costs_paid", 0)
 	e.wantNum("venda", d, "lucro", 2000-800-450)
-	if n := len(d["obligations"].([]any)); n != 3 { // a receber + motorista + instalador
+	if n := len(d["obligations"].([]any)); n != 3 {
 		t.Errorf("obligations = %d, want 3", n)
 	}
 	if n := len(d["composition"].(map[string]any)["costs"].([]any)); n != 3 {
 		t.Errorf("composition.costs = %d, want 3", n)
 	}
 
-	// Pagar o frete: costs_paid sobe e o lucro previsto não muda (o pago não entra duas vezes).
 	if code, res := e.api.do("POST", "/obligations/"+e.api.payableOf("SALE", sale, driver)+"/settle", map[string]any{
 		"movement": map[string]any{"occurred_on": "2026-11-01", "payment_method": "PIX"}}); code != 201 {
 		t.Fatalf("pagar = %d %v", code, res)
@@ -166,7 +157,6 @@ func TestIntegration_SaleCostsRoutes(t *testing.T) {
 	e.wantNum("pago", d, "costs_open", 300)
 	e.wantNum("pago", d, "lucro", 2000-800-450)
 
-	// Categoria padrão da quitação pelo tipo do custo (frete → FREIGHT).
 	var cat string
 	e.db.Raw(`SELECT m.category::text FROM financial_movements m JOIN settlements s ON s.movement_id = m.id
 		JOIN obligations o ON o.id = s.obligation_id WHERE o.sale_id = ? AND o.supplier_id = ?`, sale, driver).Scan(&cat)
@@ -174,7 +164,6 @@ func TestIntegration_SaleCostsRoutes(t *testing.T) {
 		t.Errorf("categoria padrão = %q, want FREIGHT", cat)
 	}
 
-	// Editar valor abaixo do quitado → OVERSETTLED; trocar o credor leva o custo para outra conta.
 	id := fr["id"].(string)
 	code, res := e.api.do("PUT", base+"/"+id, map[string]any{"kind": "FREIGHT", "amount": 100, "payee_supplier_id": driver})
 	if code != 200 || !hasWarning(res, "OVERSETTLED") {
@@ -185,7 +174,6 @@ func TestIntegration_SaleCostsRoutes(t *testing.T) {
 		t.Errorf("a definir = %d %v", code, res)
 	}
 
-	// Validações (400/404).
 	for name, body := range map[string]map[string]any{
 		"amount negativo":       {"kind": "FREIGHT", "amount": -1},
 		"kind inválido":         {"kind": "TAX", "amount": 1},
@@ -202,7 +190,6 @@ func TestIntegration_SaleCostsRoutes(t *testing.T) {
 		t.Errorf("credor inexistente = %d, want 404", code)
 	}
 
-	// Trocar o Partner indicador leva a comissão junto; DELETE → 204; venda cancelada aceita custos.
 	e.api.do("PUT", base+"/"+cm["id"].(string), map[string]any{"kind": "COMMISSION", "amount": 80})
 	e.api.do("PUT", "/vendas/"+sale, map[string]any{"vendedor_externo_id": other})
 	_, costs := e.api.list(base)

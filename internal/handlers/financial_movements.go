@@ -10,7 +10,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// FinancialMovementsHandler: dinheiro executado (AYD-007 §4).
 type FinancialMovementsHandler struct {
 	db *gorm.DB
 }
@@ -111,7 +110,6 @@ func (m movementRequest) toWrite() (obligations.MovementWrite, error) {
 	}, nil
 }
 
-// create: POST /financial-movements — avulso (despesa ou OTHER_INCOME).
 func (h *FinancialMovementsHandler) create(w http.ResponseWriter, r *http.Request) {
 	var req movementRequest
 	if !decodeJSON(w, r, &req) {
@@ -130,7 +128,6 @@ func (h *FinancialMovementsHandler) create(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusCreated, mv)
 }
 
-// update: PUT /financial-movements/{id} — CORREÇÃO; o corpo é o mesmo do POST.
 func (h *FinancialMovementsHandler) update(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseUUIDParam(w, "id", r.PathValue("id"))
 	if !ok {
@@ -153,7 +150,6 @@ func (h *FinancialMovementsHandler) update(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, mv)
 }
 
-// delete: DELETE /financial-movements/{id} — anula a movimentação e desfaz as quitações.
 func (h *FinancialMovementsHandler) delete(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseUUIDParam(w, "id", r.PathValue("id"))
 	if !ok {

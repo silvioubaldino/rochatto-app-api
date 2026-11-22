@@ -7,11 +7,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// Allowlist restringe o acesso aos e-mails do dono (RN-10: um usuário; RNF-02).
 // Um token Firebase válido não basta: o e-mail precisa estar na lista e verificado.
-//
-// Lista vazia = aberta (só aceitável em desenvolvimento — o bootstrap recusa subir em
-// produção sem lista).
 type Allowlist struct {
 	emails map[string]struct{}
 }
@@ -22,8 +18,6 @@ var (
 	errEmailNotAllowed = errors.New("e-mail não autorizado")
 )
 
-// ParseAllowlist lê uma lista separada por vírgulas (ex.: env ALLOWED_EMAILS).
-// Comparação case-insensitive; espaços e itens vazios são ignorados.
 func ParseAllowlist(raw string) Allowlist {
 	a := Allowlist{emails: map[string]struct{}{}}
 	for _, e := range strings.Split(raw, ",") {
@@ -34,14 +28,10 @@ func ParseAllowlist(raw string) Allowlist {
 	return a
 }
 
-// Empty indica que nenhum e-mail foi configurado (acesso aberto a qualquer token válido).
 func (a Allowlist) Empty() bool { return len(a.emails) == 0 }
 
-// Len devolve quantos e-mails estão na lista.
 func (a Allowlist) Len() int { return len(a.emails) }
 
-// Check valida as claims de um token Firebase já verificado (assinatura/aud/iss/exp).
-// Com lista vazia, aceita tudo.
 func (a Allowlist) Check(claims jwt.MapClaims) error {
 	if a.Empty() {
 		return nil
@@ -61,7 +51,6 @@ func (a Allowlist) Check(claims jwt.MapClaims) error {
 }
 
 // AllowsEmail diz se o e-mail está na allowlist (lista vazia = aberta, só em desenvolvimento).
-// Usado pelo /mcp para rechecar a Connection a cada chamada (AYD-006 §1).
 func (a Allowlist) AllowsEmail(email string) bool {
 	if a.Empty() {
 		return true
@@ -75,8 +64,7 @@ func normalizeEmail(s string) string { return strings.ToLower(strings.TrimSpace(
 // ErrAllowlistRequired: em produção a lista de e-mails é obrigatória.
 var ErrAllowlistRequired = errors.New("ALLOWED_EMAILS vazia em produção: defina o(s) e-mail(s) do dono")
 
-// LoadAllowlist monta a allowlist a partir de ALLOWED_EMAILS. Em ENV=production uma lista
-// vazia é erro (o servidor não deve subir aberto a qualquer conta Google).
+// Em ENV=production uma lista vazia é erro (o servidor não deve subir aberto a qualquer conta Google).
 func LoadAllowlist(env, raw string) (Allowlist, error) {
 	a := ParseAllowlist(raw)
 	if a.Empty() && env == "production" {

@@ -5,12 +5,8 @@ import (
 	"github.com/silvioubaldino/sales-backend/internal/mcp/tools"
 )
 
-// CatalogVersion é a catalog_version (SemVer, AYD-006 §3.9), publicada em serverInfo.version.
-// Mudar o catálogo muda esta versão (§3.9) e o golden.
 const CatalogVersion = "1.0.0"
 
-// Catalog concatena os módulos de ferramentas (regra 4 do AYD: o registro só concatena).
-// Uma feature nova declara a ferramenta no módulo do seu domínio; módulo novo entra aqui.
 func Catalog() []toolkit.Tool {
 	var all []toolkit.Tool
 	for _, module := range [][]toolkit.Tool{

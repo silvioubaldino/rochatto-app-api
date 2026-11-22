@@ -1,8 +1,5 @@
 package mcp_test
 
-// Teste de ponta a ponta do Assistant connector (AYD-006): DCR → authorize → consentimento
-// → token (PKCE) → /mcp com o access token → revogação / allowlist. Usa o SDK oficial como
-// cliente MCP. Roda só com TEST_DATABASE_URL.
 import (
 	"bytes"
 	"context"
@@ -66,7 +63,6 @@ func newStack(t *testing.T, allowlist string) *stack {
 	s.oauth.RegisterPublic(root)
 	oauthAPI := http.NewServeMux()
 	s.oauth.RegisterAPI(oauthAPI)
-	// Superfície /api/v1 com o "Firebase" simulado (uid/e-mail do dono).
 	root.Handle("/api/v1/", http.StripPrefix("/api/v1", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r = r.WithContext(auth.WithUser(r.Context(), "uid-dono", s.owner))
 		if strings.HasPrefix(r.URL.Path, "/oauth/") {
@@ -102,7 +98,6 @@ func (s *stack) do(method, path string, body io.Reader, hdr map[string]string) (
 	return resp, b
 }
 
-// connect percorre o fluxo OAuth completo e devolve o access e o refresh token.
 func (s *stack) connect(scope string) (access, refresh, connID string) {
 	s.t.Helper()
 	body, _ := json.Marshal(map[string]any{"redirect_uris": []string{oauth.DefaultRedirectURI}, "client_name": "Claude"})
@@ -167,7 +162,6 @@ func (s *stack) session(token string) (*sdk.ClientSession, error) {
 func TestE2E_ConnectionToolsListAndCall(t *testing.T) {
 	s := newStack(t, "dono@example.com")
 
-	// Sem token → 401 com WWW-Authenticate apontando o resource metadata.
 	resp, _ := s.do("POST", "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`),
 		map[string]string{"Content-Type": "application/json", "Accept": "application/json, text/event-stream"})
 	if resp.StatusCode != 401 || !strings.Contains(resp.Header.Get("WWW-Authenticate"), `resource_metadata="`+s.cfg.PublicBaseURL+`/.well-known/oauth-protected-resource/mcp"`) {
@@ -186,7 +180,7 @@ func TestE2E_ConnectionToolsListAndCall(t *testing.T) {
 	if init.ServerInfo.Name != "rochatto" || init.ServerInfo.Title != "Rochatto" || init.ServerInfo.Version != mcp.CatalogVersion || init.Instructions != mcp.Instructions {
 		t.Errorf("initialize = %+v", init)
 	}
-	if cs.ID() != "" { // stateless
+	if cs.ID() != "" {
 		t.Error("stateless: sem Mcp-Session-Id")
 	}
 
@@ -198,7 +192,6 @@ func TestE2E_ConnectionToolsListAndCall(t *testing.T) {
 		t.Errorf("tools/list = %d ferramentas (catálogo %d, versão %s), quero 41 e 1.0.0", len(list.Tools), len(mcp.Catalog()), init.ServerInfo.Version)
 	}
 
-	// Dado criado pela REST aparece pela ferramenta (mesmos handlers).
 	req, _ := http.NewRequest("POST", s.srv.URL+"/api/v1/clientes", strings.NewReader(`{"nome":"Cliente E2E"}`))
 	if r, err := http.DefaultClient.Do(req); err != nil || r.StatusCode != 201 {
 		t.Fatalf("seed cliente: %v", err)
@@ -215,13 +208,11 @@ func TestE2E_ConnectionToolsListAndCall(t *testing.T) {
 		t.Errorf("content deve trazer o mesmo JSON: %s", txt)
 	}
 
-	// Erro de regra: isError com code/message da API.
 	res, err = cs.CallTool(ctx, &sdk.CallToolParams{Name: "get_sale", Arguments: map[string]any{"sale_id": "00000000-0000-0000-0000-000000000000"}})
 	if err != nil || !res.IsError || res.StructuredContent.(map[string]any)["error"].(map[string]any)["code"] != "NOT_FOUND" {
 		t.Errorf("erro de ferramenta = %v %+v", err, res)
 	}
 
-	// Auditoria: uma linha por tools/call.
 	var n int64
 	s.db.Raw(`SELECT COUNT(*) FROM mcp_tool_calls`).Scan(&n)
 	if n != 2 {
@@ -238,7 +229,6 @@ func TestE2E_RevocationAndAllowlist(t *testing.T) {
 		cs.Close()
 	}
 
-	// Revogação pela tela Integrações → próxima chamada com o access token = 401.
 	resp, _ := s.do("DELETE", "/api/v1/oauth/connections/"+connID, nil, nil)
 	if resp.StatusCode != 204 {
 		t.Fatalf("DELETE connection = %d", resp.StatusCode)
@@ -252,7 +242,6 @@ func TestE2E_RevocationAndAllowlist(t *testing.T) {
 		t.Errorf("revogada = %d %q", resp.StatusCode, resp.Header.Get("WWW-Authenticate"))
 	}
 
-	// E-mail removido da allowlist: a Connection é revogada na primeira chamada seguinte.
 	access2, _, conn2 := s.connect("")
 	s.oauth = oauth.New(s.db, s.cfg, auth.ParseAllowlist("outro@example.com"))
 	h, _ := mcp.NewHandler(mcp.Options{Config: s.cfg, Verifier: s.oauth, Pipeline: mcp.PipelineOptions{Gateway: gateway.New(http.NewServeMux()), Deduper: mcp.NewDBDeduper(s.db, nil)}})
@@ -274,14 +263,14 @@ func TestE2E_RevocationAndAllowlist(t *testing.T) {
 
 func TestE2E_ScopeWriteOnlyConnectionHasNoReadTools(t *testing.T) {
 	s := newStack(t, "dono@example.com")
-	access, _, _ := s.connect("write") // scopes futuros menores: sem read, as 20 ferramentas de leitura somem
+	access, _, _ := s.connect("write")
 	cs, err := s.session(access)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer cs.Close()
 	list, err := cs.ListTools(context.Background(), nil)
-	if err != nil || len(list.Tools) != 19 { // só as 19 escritas
+	if err != nil || len(list.Tools) != 19 {
 		t.Fatalf("tools/list = %d (%v), quero as 19 de escrita", len(list.Tools), err)
 	}
 	for _, tool := range list.Tools {
@@ -289,14 +278,12 @@ func TestE2E_ScopeWriteOnlyConnectionHasNoReadTools(t *testing.T) {
 			t.Errorf("%s é de leitura e apareceu para uma Connection write", tool.Name)
 		}
 	}
-	// Chamada direta fora dos scopes → FORBIDDEN (não erro de protocolo).
 	res, err := cs.CallTool(context.Background(), &sdk.CallToolParams{Name: "search_customers", Arguments: map[string]any{}})
 	if err != nil || !res.IsError || res.StructuredContent.(map[string]any)["error"].(map[string]any)["code"] != "FORBIDDEN" {
 		t.Errorf("CallTool sem scope = %v %+v", err, res)
 	}
 }
 
-// devolve FORBIDDEN sem nenhuma chamada ao Gateway (nenhum Customer criado).
 func TestE2E_ReadOnlyConnectionHasNoWriteTools(t *testing.T) {
 	s := newStack(t, "dono@example.com")
 	access, _, _ := s.connect("read")

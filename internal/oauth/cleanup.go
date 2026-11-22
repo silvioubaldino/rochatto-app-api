@@ -8,9 +8,7 @@ import (
 
 const cleanupEvery = time.Hour
 
-// MaybeCleanup faz a limpeza oportunista das tabelas técnicas (AYD-006 §Modelo de domínio),
-// no máximo 1×/hora por instância: clientes sem Connection após 24 h, pedidos de
-// autorização vencidos, tokens expirados há > 7 dias e Connections nunca ativadas.
+// MaybeCleanup faz a limpeza oportunista das tabelas técnicas, no máximo 1×/hora por instância: clientes sem Connection após 24 h, pedidos de autorização vencidos, tokens expirados há > 7 dias e Connections nunca ativadas.
 func (s *Server) MaybeCleanup(ctx context.Context) {
 	now := s.now()
 	last := s.lastCleanup.Load()
@@ -24,7 +22,6 @@ func (s *Server) MaybeCleanup(ctx context.Context) {
 	}()
 }
 
-// Cleanup executa a limpeza imediatamente (exposta para testes).
 func (s *Server) Cleanup(ctx context.Context) {
 	now := s.now()
 	db := s.db.WithContext(ctx)

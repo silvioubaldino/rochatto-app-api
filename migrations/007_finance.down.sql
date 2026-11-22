@@ -5,7 +5,6 @@
 
 DROP VIEW IF EXISTS vw_vendas_resumo;
 
--- Função de alertas como em docs/ops/pg_cron_setup.sql da 006 (sem deleted_at / preservação de lida).
 CREATE OR REPLACE FUNCTION gerar_notificacoes_pagamentos()
 RETURNS void AS $$
 BEGIN
@@ -47,7 +46,6 @@ ALTER TABLE pagamentos_cliente
   DROP COLUMN deleted_at;
 DROP TYPE payment_method;
 
--- vw_vendas_resumo como na 006.
 CREATE VIEW vw_vendas_resumo AS
 SELECT
   v.*,

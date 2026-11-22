@@ -7,13 +7,10 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// StringArray mapeia TEXT[] do Postgres. Como driver.Valuer, o GORM não expande o slice
-// em lista de parâmetros; na leitura usa o decodificador do pgx.
 type StringArray []string
 
 var pgMap = pgtype.NewMap()
 
-// Scan implementa sql.Scanner (NULL → nil).
 func (a *StringArray) Scan(src any) error {
 	if src == nil {
 		*a = nil
@@ -22,7 +19,6 @@ func (a *StringArray) Scan(src any) error {
 	return pgMap.SQLScanner((*[]string)(a)).Scan(src)
 }
 
-// Value implementa driver.Valuer, devolvendo o literal de array do Postgres.
 func (a StringArray) Value() (driver.Value, error) {
 	if a == nil {
 		return nil, nil
@@ -41,5 +37,4 @@ func (a StringArray) Value() (driver.Value, error) {
 	return b.String(), nil
 }
 
-// GormDataType diz ao GORM que o campo é um tipo de coluna próprio (TEXT[]).
 func (StringArray) GormDataType() string { return "text[]" }

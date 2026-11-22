@@ -1,13 +1,3 @@
--- AYD-010@context / SPEC-011: serviços na Sale.
---   catálogo `services` + Item de tipo SERVICE em quote_items e itens_venda.
--- O Item de serviço não tem Product, origem, Supplier nem Purchase: não passa por Stock nem pela
--- fila de compra. O custo do serviço vive em sale_costs (LABOR, AYD-009), ligado ao Item por
--- sale_item_id — por isso custo_unit do Item de serviço é sempre 0 e o Profit não conta o custo
--- duas vezes. Items existentes viram kind = PRODUCT (default).
--- Views: vw_vendas_resumo, vw_obligation_components, vw_stock_balance, vw_purchase_line_costs e
--- vw_quotes_resumo NÃO mudam — somam itens_venda/quote_items inteiros (o serviço entra no
--- preço, no Profit e na conta a receber); Stock só lê origin = 'FROM_STOCK' e a fila só
--- origin = 'MADE_TO_ORDER', que um Item de serviço (origin NULL) nunca satisfaz.
 
 CREATE TYPE item_kind AS ENUM ('PRODUCT', 'SERVICE');
 

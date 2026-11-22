@@ -1,9 +1,5 @@
 package dbmigrate
 
-// Teste de integração da migração 007 (AYD-004@context): colunas novas do Receipt,
-// vw_vendas_resumo com receivable/freight_payable, função de alertas versionada, e o
-// ciclo down → up. Roda só com TEST_DATABASE_URL e precisa de CREATE DATABASE (banco
-// descartável próprio; senão é pulado).
 import (
 	"database/sql"
 	"fmt"
@@ -68,7 +64,6 @@ func TestIntegration_Migration007Finance(t *testing.T) {
 		return err == nil
 	}
 
-	// Arrange: Sale 006 com Receipts existentes (recebido e pendente vencido).
 	const (
 		cust = "00000000-0000-0000-0000-0000000000c1"
 		sale = "00000000-0000-0000-0000-000000000001"
@@ -81,12 +76,10 @@ func TestIntegration_Migration007Finance(t *testing.T) {
 	exec(`INSERT INTO pagamentos_cliente (id, venda_id, valor, status, data_pagamento) VALUES ($1, $2, 40, 'recebido', '2026-01-01')`, recv, sale)
 	exec(`INSERT INTO pagamentos_cliente (id, venda_id, valor, status, data_agendada) VALUES ($1, $2, 60, 'pendente', (now() AT TIME ZONE 'America/Sao_Paulo')::date - 1)`, pend, sale)
 
-	// Act: up.
 	if err := m.M.Migrate(7); err != nil {
 		t.Fatalf("migrate 7: %v", err)
 	}
 
-	// Assert: Receipts existentes ficam com payment_method e deleted_at nulos (sem conversão).
 	var method sql.NullString
 	var deleted sql.NullTime
 	if err := db.QueryRow(`SELECT payment_method::text, deleted_at FROM pagamentos_cliente WHERE id = $1`, recv).Scan(&method, &deleted); err != nil {
@@ -95,7 +88,6 @@ func TestIntegration_Migration007Finance(t *testing.T) {
 	if method.Valid || deleted.Valid {
 		t.Errorf("legado deveria ficar nulo: %v %v", method, deleted)
 	}
-	// View: colunas antigas preservadas + novas.
 	var total, recebido, lucro, receivable, freightPayable float64
 	var status string
 	if err := db.QueryRow(`SELECT total_venda, total_recebido, lucro, payment_status, receivable, freight_payable
@@ -105,7 +97,6 @@ func TestIntegration_Migration007Finance(t *testing.T) {
 	if total != 100 || recebido != 40 || lucro != 10 || status != "PARTIAL" || receivable != 60 || freightPayable != 20 {
 		t.Errorf("view = %v %v %v %s %v %v", total, recebido, lucro, status, receivable, freightPayable)
 	}
-	// Soft-delete tira o Receipt de total_recebido.
 	exec(`UPDATE pagamentos_cliente SET deleted_at = NOW() WHERE id = $1`, recv)
 	db.QueryRow(`SELECT total_recebido, payment_status FROM vw_vendas_resumo WHERE id = $1`, sale).Scan(&recebido, &status)
 	if recebido != 0 || status != "PENDING" {
@@ -113,7 +104,6 @@ func TestIntegration_Migration007Finance(t *testing.T) {
 	}
 	exec(`UPDATE pagamentos_cliente SET deleted_at = NULL WHERE id = $1`, recv)
 
-	// Função de alertas versionada: gera o vencido e mantém `lida` na segunda execução.
 	exec(`SELECT gerar_notificacoes_pagamentos()`)
 	var tipo string
 	if err := db.QueryRow(`SELECT tipo FROM notificacoes WHERE pagamento_id = $1`, pend).Scan(&tipo); err != nil || tipo != "pagamento_vencido" {
@@ -127,7 +117,6 @@ func TestIntegration_Migration007Finance(t *testing.T) {
 		t.Error("lida deveria ser preservada")
 	}
 
-	// Down: volta ao schema 006 (colunas/tipo/view nova somem; função antiga funciona).
 	if err := m.M.Migrate(6); err != nil {
 		t.Fatalf("down para 6: %v", err)
 	}
@@ -141,7 +130,6 @@ func TestIntegration_Migration007Finance(t *testing.T) {
 	}
 	exec(`SELECT gerar_notificacoes_pagamentos()`)
 
-	// Up de novo funciona.
 	if err := m.M.Migrate(7); err != nil {
 		t.Fatalf("up de novo: %v", err)
 	}

@@ -34,10 +34,9 @@ type fornecedorRequest struct {
 	Telefone    *string `json:"telefone"`
 	Cidade      *string `json:"cidade"`
 	Observacoes *string `json:"observacoes"`
-	Kind        *string `json:"kind"` // AYD-007: STONE (padrão) | TRANSPORT | LABOR | TAX_AUTHORITY | OTHER
+	Kind        *string `json:"kind"`
 }
 
-// resolveKind valida o tipo do fornecedor/prestador; sem valor, devolve fallback.
 func resolveKind(w http.ResponseWriter, kind *string, fallback string) (string, bool) {
 	if kind == nil || strings.TrimSpace(*kind) == "" {
 		return fallback, true
@@ -154,7 +153,7 @@ func (h *FornecedoresHandler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	kind, ok := resolveKind(w, req.Kind, f.Kind) // sem kind no PUT, mantém o atual
+	kind, ok := resolveKind(w, req.Kind, f.Kind)
 	if !ok {
 		return
 	}

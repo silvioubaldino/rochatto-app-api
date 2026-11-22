@@ -1,10 +1,5 @@
 package handlers
 
-// Busca global (AYD-011 C9 / SPEC-012): GET /search?q=&types=&limit=. Devolve dados — a web
-// formata. Casa nome (contém, sem acento nem caixa), telefone, número exato (Quote/Sale/Purchase)
-// e o nome do cliente/fornecedor das operações; exclui soft-deletados. As regras do termo estão
-// em internal/search.
-
 import (
 	"log"
 	"net/http"
@@ -63,7 +58,6 @@ func (r searchRow) toItem() searchItem {
 		Amount: round2Ptr(r.Amount), Status: r.Status, City: r.City, Kind: r.Kind}
 }
 
-// searchTerm traz o termo pronto para o SQL: padrões LIKE já normalizados e escapados.
 type searchTerm struct {
 	q        search.Query
 	contains string
@@ -77,7 +71,6 @@ func newSearchTerm(q search.Query) searchTerm {
 
 func foldCol(col string) string { return strings.Replace(foldSQL, "%s", col, 1) }
 
-// match: nome contém (+ telefone, + número exato) — condição e argumentos.
 func (t searchTerm) match(nameCol, phoneCol, numberCol string) (string, []any) {
 	conds := []string{foldCol(nameCol) + ` LIKE ? ESCAPE '\'`}
 	args := []any{t.contains}
@@ -96,7 +89,6 @@ func (t searchTerm) match(nameCol, phoneCol, numberCol string) (string, []any) {
 	return "(" + strings.Join(conds, " OR ") + ")", args
 }
 
-// rank: 0 número exato, 1 começa com o termo, 2 contém.
 func (t searchTerm) rank(nameCol, numberCol string) (string, []any) {
 	var args []any
 	sql := "CASE "
@@ -108,14 +100,13 @@ func (t searchTerm) rank(nameCol, numberCol string) (string, []any) {
 	return sql, append(args, t.prefix)
 }
 
-// searchSpec descreve a consulta de um tipo.
 type searchSpec struct {
-	selectFrom string // SELECT ... FROM ... (sem WHERE)
-	where      string // condição fixa (soft-delete)
-	name       string // coluna do nome casado
-	phone      string // coluna de telefone ("" = não casa)
-	number     string // coluna do número ("" = sem número)
-	recency    string // ORDER BY de desempate (mais recente primeiro)
+	selectFrom string
+	where      string
+	name       string
+	phone      string
+	number     string
+	recency    string
 }
 
 func (s searchSpec) run(db *gorm.DB, t searchTerm, limit int) ([]searchRow, error) {

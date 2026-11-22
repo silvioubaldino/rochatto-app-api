@@ -1,7 +1,5 @@
 package handlers
 
-// C10 (AYD-011): pendências do dia.
-
 import (
 	"testing"
 )
@@ -30,7 +28,6 @@ func (e fxEnv) pending(query string) pendingResult {
 	return r
 }
 
-// group confere count/overdue_count do kind e devolve os itens.
 func (r pendingResult) group(kind string, count, overdue int) []map[string]any {
 	r.t.Helper()
 	g, ok := r.groups[kind]
@@ -63,16 +60,13 @@ func TestJourney_PendingActions(t *testing.T) {
 		return e.must("POST", "/quotes/quick-sale", map[string]any{"customer_id": e.cid, "items": items, "closing": closing}, 201)
 	}
 
-	// S1: entrega atrasada, fornecedor definido, parcela vencida (400) + a vencer (600).
 	s1 := closeWith([]map[string]any{qItem("P1", 10, 100, 60, "")}, map[string]any{
 		"delivery_due_date": dayStr(-2),
 		"items":             []map[string]any{{"item_index": 0, "supplier_id": sup}},
 		"receivable_plan": map[string]any{"installments": []map[string]any{
 			{"due_date": dayStr(-3), "amount": 400}, {"due_date": dayStr(3), "amount": 600}}},
 	})
-	// S2: sem plano, sem prazo, sem fornecedor.
 	s2 := e.must("POST", "/quotes/quick-sale", map[string]any{"customer_id": e.cid, "items": []map[string]any{qItem("P2", 5, 100, 10, "")}}, 201)
-	// S3: prazo e parcela daqui a 30 dias; item de estoque sem saldo; custos (um sem credor, um com).
 	s3 := closeWith([]map[string]any{qItem("Estoque", 2, 100, 0, stockProd)}, map[string]any{
 		"delivery_due_date": dayStr(30),
 		"items":             []map[string]any{{"item_index": 0, "origin": "FROM_STOCK"}},
@@ -87,7 +81,6 @@ func TestJourney_PendingActions(t *testing.T) {
 		freight = o.(map[string]any)["id"].(string)
 	}
 	e.must("PATCH", "/obligations/"+freight, map[string]any{"due_date": dayStr(2)}, 200)
-	// S4: dois Items com fornecedor, atendidos por duas compras (P1 aberta; P2 pedida e atrasada).
 	s4 := closeWith([]map[string]any{qItem("A", 1, 100, 10, ""), qItem("B", 1, 100, 10, "")}, map[string]any{
 		"items": []map[string]any{{"item_index": 0, "supplier_id": sup}, {"item_index": 1, "supplier_id": sup2}}})
 	_, s4sale := e.api.do("GET", "/vendas/"+s4["sale_id"].(string), nil)
@@ -104,10 +97,8 @@ func TestJourney_PendingActions(t *testing.T) {
 	p2 := e.must("POST", "/purchases", map[string]any{"kind": "MADE_TO_ORDER", "supplier_id": sup2, "sale_item_ids": []string{itemOf("B")}}, 201)
 	e.must("PUT", "/purchases/"+p2["id"].(string), map[string]any{"expected_date": dayStr(-1)}, 200)
 	e.must("PATCH", "/purchases/"+p2["id"].(string)+"/status", map[string]any{"status": "ORDERED"}, 200)
-	// S5 cancelada: não aparece em lugar nenhum.
 	s5 := closeWith([]map[string]any{qItem("P5", 1, 100, 10, "")}, map[string]any{"delivery_due_date": dayStr(-5)})
 	e.must("PATCH", "/vendas/"+s5["sale_id"].(string)+"/delivery-status", map[string]any{"delivery_status": "CANCELED"}, 200)
-	// Orçamentos: parado, recente e venda rápida antiga (esta não conta).
 	stale := e.must("POST", "/quotes", map[string]any{"customer_id": e.cid, "quote_date": dayStr(-10), "items": []map[string]any{qItem("Q", 1, 50, 5, "")}}, 201)
 	e.must("POST", "/quotes", map[string]any{"customer_id": e.cid, "quote_date": dayStr(-7), "items": []map[string]any{qItem("Q", 1, 50, 5, "")}}, 201)
 	e.db.Exec(`UPDATE quotes SET quote_date = ? WHERE id = ?`, dayStr(-20), s2["quote_id"])
@@ -126,12 +117,10 @@ func TestJourney_PendingActions(t *testing.T) {
 			t.Fatalf("ordem = %v, want %v", r.order, wantOrder)
 		}
 	}
-	// Vencidos: parcela, entrega e item a comprar da S1 + compra pedida (P2).
 	if num(r.raw, "total_overdue") != 4 {
 		t.Errorf("total_overdue = %v, want 4", r.raw["total_overdue"])
 	}
 
-	// RECEIVABLE_DUE: a parcela vencida da S1 (a 2ª não entra no valor; S3 está fora da janela).
 	it := r.group("RECEIVABLE_DUE", 1, 1)[0]
 	if entityType(it) != "OBLIGATION" || num(it, "number") != num(s1, "sale_number") || it["title"] != "Alejandra" ||
 		it["date"] != dayStr(-3) || it["overdue"] != true || num(it, "amount") != 400 {
@@ -140,12 +129,10 @@ func TestJourney_PendingActions(t *testing.T) {
 	if g := r.groups["RECEIVABLE_DUE"]; num(g, "amount") != 400 {
 		t.Errorf("RECEIVABLE_DUE.amount = %v", g["amount"])
 	}
-	// PAYABLE_DUE: o frete da S3 com prazo em 2 dias.
 	it = r.group("PAYABLE_DUE", 1, 0)[0]
 	if entityID(it) != freight || it["date"] != dayStr(2) || num(it, "amount") != 50 || num(it, "number") != num(s3, "sale_number") {
 		t.Errorf("PAYABLE_DUE = %v", it)
 	}
-	// DELIVERY_DUE: S1 atrasada primeiro, depois as sem prazo (S2, S4); S3 e a cancelada fora.
 	items := r.group("DELIVERY_DUE", 3, 1)
 	if entityType(items[0]) != "SALE" || entityID(items[0]) != s1["sale_id"] || items[0]["overdue"] != true || items[0]["date"] != dayStr(-2) || num(items[0], "amount") != 1000 {
 		t.Errorf("DELIVERY_DUE[0] = %v", items[0])
@@ -155,17 +142,14 @@ func TestJourney_PendingActions(t *testing.T) {
 			t.Errorf("DELIVERY_DUE sem prazo = %v", it)
 		}
 	}
-	// ITEMS_WITHOUT_SUPPLIER: um item por Sale (S2, 1 Item).
 	it = r.group("ITEMS_WITHOUT_SUPPLIER", 1, 0)[0]
 	if entityType(it) != "SALE" || entityID(it) != s2["sale_id"] || num(it, "quantity") != 1 || num(it, "number") != num(s2, "sale_number") {
 		t.Errorf("ITEMS_WITHOUT_SUPPLIER = %v", it)
 	}
-	// ITEMS_TO_PURCHASE: um item por Supplier (S1: 10 × 60 de custo, prazo atrasado).
 	it = r.group("ITEMS_TO_PURCHASE", 1, 1)[0]
 	if entityType(it) != "SUPPLIER" || entityID(it) != sup || num(it, "amount") != 600 || num(it, "quantity") != 1 || it["date"] != dayStr(-2) {
 		t.Errorf("ITEMS_TO_PURCHASE = %v", it)
 	}
-	// Compras.
 	it = r.group("PURCHASE_TO_ORDER", 1, 0)[0]
 	if entityType(it) != "PURCHASE" || entityID(it) != p1["id"] || num(it, "number") != num(p1, "number") {
 		t.Errorf("PURCHASE_TO_ORDER = %v", it)
@@ -174,28 +158,23 @@ func TestJourney_PendingActions(t *testing.T) {
 	if entityID(it) != p2["id"] || it["date"] != dayStr(-1) || it["overdue"] != true {
 		t.Errorf("PURCHASE_TO_RECEIVE = %v", it)
 	}
-	// Conta a receber sem plano: S2 e S4 (a S5 cancelada não conta); aberto = total.
 	items = r.group("RECEIVABLE_WITHOUT_PLAN", 2, 0)
 	if len(items) != 2 || items[0]["date"] != nil || num(items[0], "amount")+num(items[1], "amount") != 700 {
 		t.Errorf("RECEIVABLE_WITHOUT_PLAN = %v", items)
 	}
-	// Custo sem credor: o LABOR da S3.
 	it = r.group("COST_WITHOUT_PAYEE", 1, 0)[0]
 	if it["title"] != "A definir" || num(it, "amount") != 100 || num(it, "number") != num(s3, "sale_number") {
 		t.Errorf("COST_WITHOUT_PAYEE = %v", it)
 	}
-	// Orçamento parado.
 	it = r.group("QUOTE_STALE", 1, 0)[0]
 	if entityType(it) != "QUOTE" || entityID(it) != stale["id"] || it["date"] != dayStr(-10) || num(it, "number") != num(stale, "number") || num(it, "amount") != 50 {
 		t.Errorf("QUOTE_STALE = %v", it)
 	}
-	// Estoque negativo.
 	it = r.group("NEGATIVE_STOCK", 1, 0)[0]
 	if entityType(it) != "PRODUCT" || entityID(it) != stockProd || num(it, "quantity") != -2 {
 		t.Errorf("NEGATIVE_STOCK = %v", it)
 	}
 
-	// Janela: horizonte 60 traz a S3 (parcela e entrega em 30 dias); 0 deixa de fora o frete (+2).
 	wide := e.pending("horizon_days=60")
 	wide.group("RECEIVABLE_DUE", 2, 1)
 	wide.group("DELIVERY_DUE", 4, 1)
@@ -203,15 +182,13 @@ func TestJourney_PendingActions(t *testing.T) {
 	narrow.group("PAYABLE_DUE", 0, 0)
 	narrow.group("RECEIVABLE_DUE", 1, 1)
 
-	// Resolver some: receber a parcela vencida da S1 tira o grupo; vira próxima parcela (+3) fora de 0 dias.
 	e.api.receive(s1["sale_id"].(string), 400, dayStr(0), "PIX")
 	after := e.pending("horizon_days=0")
 	after.group("RECEIVABLE_DUE", 0, 0)
-	if e.pending("").groups["RECEIVABLE_DUE"]["count"] != float64(1) { // a 2ª parcela (+3) entra no horizonte de 7
+	if e.pending("").groups["RECEIVABLE_DUE"]["count"] != float64(1) {
 		t.Errorf("a próxima parcela deveria aparecer no horizonte 7")
 	}
 
-	// Parâmetro inválido.
 	for _, q := range []string{"horizon_days=-1", "horizon_days=61", "horizon_days=x"} {
 		if code, res := e.api.do("GET", "/pending-actions?"+q, nil); code != 400 || res["error"] == nil {
 			t.Errorf("GET ?%s = %d %v, want 400", q, code, res)

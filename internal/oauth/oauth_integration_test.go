@@ -1,7 +1,5 @@
 package oauth
 
-// Testes de integração do servidor OAuth (AYD-006 §2) contra um Postgres real. Rodam só
-// com TEST_DATABASE_URL (cada teste cria o seu banco descartável — ver internal/testdb).
 import (
 	"bytes"
 	"crypto/sha256"
@@ -44,14 +42,11 @@ func newHarness(t *testing.T) *harness {
 	cfg := Config{Enabled: true, PublicBaseURL: tBase, WebAppURL: tWeb, AllowedRedirectURIs: []string{DefaultRedirectURI}}
 	h.s = New(db, cfg, auth.ParseAllowlist(tOwner))
 	h.s.now = func() time.Time { return h.clock }
-	// A limpeza oportunista (goroutine) fica desligada: os testes chamam Cleanup() explicitamente
-	// e o relógio simulado não é thread-safe.
 	h.s.lastCleanup.Store(1 << 60)
 	h.root = http.NewServeMux()
 	h.s.RegisterPublic(h.root)
 	apiMux := http.NewServeMux()
 	h.s.RegisterAPI(apiMux)
-	// Faz o papel do middleware Firebase + allowlist (já testado em internal/auth).
 	h.api = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		apiMux.ServeHTTP(w, r.WithContext(auth.WithUser(r.Context(), "uid-dono", tOwner)))
 	})
@@ -117,7 +112,6 @@ func authorizeURL(clientID string, extra map[string]string) string {
 	return "/oauth/authorize?" + q.Encode()
 }
 
-// authorizeRequest faz o GET /oauth/authorize e devolve o request_id do redirect ao web.
 func (h *harness) authorizeRequest(clientID string) string {
 	h.t.Helper()
 	rec := h.serve(h.root, httptest.NewRequest("GET", authorizeURL(clientID, nil), nil))
@@ -134,7 +128,6 @@ func (h *harness) decide(reqID, action, body string) *httptest.ResponseRecorder 
 	return h.serve(h.api, req)
 }
 
-// approve devolve o code do redirect_to.
 func (h *harness) approve(reqID string) string {
 	h.t.Helper()
 	rec := h.decide(reqID, "approve", "{}")
@@ -243,7 +236,6 @@ func TestIntegration_FullConnectionFlow(t *testing.T) {
 	cid := m["client_id"].(string)
 
 	reqID := h.authorizeRequest(cid)
-	// Consentimento: mostra client_name e redirect_host para o dono conferir.
 	rec := h.serve(h.api, httptest.NewRequest("GET", "/oauth/authorization-requests/"+reqID, nil))
 	c := h.jsonBody(rec)
 	if rec.Code != 200 || c["client_name"] != "Claude" || c["redirect_host"] != "claude.ai" ||
@@ -251,7 +243,7 @@ func TestIntegration_FullConnectionFlow(t *testing.T) {
 		t.Fatalf("consent GET = %d %v", rec.Code, c)
 	}
 
-	code2 := h.approve(reqID) // corpo `{}` (o web envia assim)
+	code2 := h.approve(reqID)
 	if rec := h.decide(reqID, "approve", ""); rec.Code != 409 {
 		t.Errorf("2ª aprovação = %d, quero 409 (já decidido)", rec.Code)
 	}
@@ -278,7 +270,6 @@ func TestIntegration_FullConnectionFlow(t *testing.T) {
 		t.Fatalf("principal = %+v err=%v", p, err)
 	}
 
-	// Tokens e code só existem como hash no banco.
 	var n int64
 	h.db.Raw(`SELECT COUNT(*) FROM oauth_tokens WHERE token_hash IN (?, ?)`, tok["access_token"], tok["refresh_token"]).Scan(&n)
 	h.db.Raw(`SELECT COUNT(*) FROM oauth_authorization_requests WHERE code_hash = ?`, code2).Scan(&n)
@@ -329,9 +320,8 @@ func TestIntegration_ClientCapAndOrphanCleanup(t *testing.T) {
 	if code != 400 || m["error"] != "invalid_client_metadata" || !strings.Contains(m["error_description"].(string), "limite de clientes") {
 		t.Fatalf("51º registro = %d %v", code, m)
 	}
-	// Um cliente COM Connection sobrevive à limpeza de 24 h; os órfãos somem.
 	h.db.Exec(`UPDATE oauth_clients SET created_at = ?`, h.clock.Add(-25*time.Hour))
-	tk := h.connect() // o cliente novo (+órfãos antigos apagados pelo próprio register)
+	tk := h.connect()
 	var n int64
 	h.db.Raw(`SELECT COUNT(*) FROM oauth_clients`).Scan(&n)
 	if n != 1 {
@@ -364,7 +354,6 @@ func TestIntegration_AuthorizeValidation(t *testing.T) {
 		}
 	}
 
-	// Camada 2: 302 para redirect_uri com error + state.
 	cases := []struct {
 		name, wantErr string
 		extra         map[string]string
@@ -388,7 +377,6 @@ func TestIntegration_AuthorizeValidation(t *testing.T) {
 		}
 	}
 
-	// Scope ausente = read write; resource ausente é aceito.
 	rec := get(authorizeURL(cid, map[string]string{"scope": "", "resource": ""}))
 	if rec.Code != 302 || !strings.HasPrefix(rec.Header().Get("Location"), tWeb+"/conectar?request_id=") {
 		t.Fatalf("scope/resource ausentes = %d %q", rec.Code, rec.Header().Get("Location"))
@@ -404,7 +392,6 @@ func TestIntegration_ConsentLifecycle(t *testing.T) {
 	h := newHarness(t)
 	cid := h.clientID()
 
-	// Negar → redirect com access_denied e state; sem Connection.
 	id := h.authorizeRequest(cid)
 	rec := h.decide(id, "deny", "{}")
 	loc, _ := url.Parse(h.jsonBody(rec)["redirect_to"].(string))
@@ -417,7 +404,6 @@ func TestIntegration_ConsentLifecycle(t *testing.T) {
 		t.Error("negar não deve criar Connection")
 	}
 
-	// Inexistente, id malformado e expirado (10 min) → 404.
 	for _, p := range []string{"/oauth/authorization-requests/00000000-0000-0000-0000-000000000000", "/oauth/authorization-requests/xyz"} {
 		if rec := h.serve(h.api, httptest.NewRequest("GET", p, nil)); rec.Code != 404 {
 			t.Errorf("GET %s = %d", p, rec.Code)
@@ -441,7 +427,6 @@ func TestIntegration_TokenExchange(t *testing.T) {
 	cid := h.clientID()
 	newCode := func() string { return h.approve(h.authorizeRequest(cid)) }
 
-	// PKCE inválido → invalid_grant e nenhum token emitido.
 	code := newCode()
 	if e := h.errCode(h.exchange(cid, code, tVerif+"x"), 400); e != "invalid_grant" {
 		t.Errorf("PKCE inválido = %s", e)
@@ -451,13 +436,11 @@ func TestIntegration_TokenExchange(t *testing.T) {
 	if n != 0 {
 		t.Errorf("tokens emitidos com PKCE inválido: %d", n)
 	}
-	// O mesmo code ainda vale com o verifier correto (PKCE falho não queima o code).
 	if rec := h.exchange(cid, code, tVerif); rec.Code != 200 {
 		t.Fatalf("troca válida = %d %s", rec.Code, rec.Body.String())
 	}
 
-	// Reuso do code → invalid_grant E revoga a Connection emitida por ele.
-	access := h.jsonBody(h.exchange(cid, newCode(), tVerif))["access_token"].(string) // 2º code usado 1×
+	access := h.jsonBody(h.exchange(cid, newCode(), tVerif))["access_token"].(string)
 	_ = access
 	reused := newCode()
 	first := h.jsonBody(h.exchange(cid, reused, tVerif))
@@ -476,7 +459,6 @@ func TestIntegration_TokenExchange(t *testing.T) {
 		t.Errorf("revoked_reason = %q", reason)
 	}
 
-	// Demais erros.
 	code = newCode()
 	bad := func(name string, v url.Values, status int, want string) {
 		t.Helper()
@@ -504,7 +486,6 @@ func TestIntegration_RefreshRotationAndReuseDetection(t *testing.T) {
 	h := newHarness(t)
 	tk := h.connect()
 
-	// R1 → R2 (par novo a cada uso).
 	rec := h.refresh(tk, nil)
 	if rec.Code != 200 {
 		t.Fatalf("refresh = %d %s", rec.Code, rec.Body.String())
@@ -515,7 +496,6 @@ func TestIntegration_RefreshRotationAndReuseDetection(t *testing.T) {
 		t.Fatalf("par não rotacionou: %v", m)
 	}
 
-	// Corrida: R1 de novo dentro de 30 s → invalid_grant SEM revogar nada.
 	h.advance(20 * time.Second)
 	if e := h.errCode(h.refresh(tk, nil), 400); e != "invalid_grant" {
 		t.Errorf("R1 na janela de 30 s = %s", e)
@@ -523,13 +503,12 @@ func TestIntegration_RefreshRotationAndReuseDetection(t *testing.T) {
 	if !h.valid(a2) {
 		t.Fatal("a corrida não pode revogar a Connection")
 	}
-	rec = h.refresh(tokens{client: tk.client, refresh: r2}, nil) // R2 segue válido
+	rec = h.refresh(tokens{client: tk.client, refresh: r2}, nil)
 	if rec.Code != 200 {
 		t.Fatalf("R2 deveria funcionar: %d %s", rec.Code, rec.Body.String())
 	}
 	r3, a3 := h.jsonBody(rec)["refresh_token"].(string), h.jsonBody(rec)["access_token"].(string)
 
-	// Reuso depois de 30 s → invalid_grant E revoga a Connection inteira (R3 e acessos).
 	h.advance(31 * time.Second)
 	if e := h.errCode(h.refresh(tk, nil), 400); e != "invalid_grant" {
 		t.Errorf("R1 após 30 s = %s", e)
@@ -567,7 +546,6 @@ func TestIntegration_RefreshErrorsExpiryAndScopes(t *testing.T) {
 		t.Errorf("scope inválido = %s", e)
 	}
 
-	// scope só REDUZ: pedir só `read` emite par só-leitura, e o par seguinte não re-amplia.
 	rec := h.refresh(tk, url.Values{"scope": {"read"}})
 	m := h.jsonBody(rec)
 	if rec.Code != 200 || m["scope"] != "read" {
@@ -581,12 +559,11 @@ func TestIntegration_RefreshErrorsExpiryAndScopes(t *testing.T) {
 	if e := h.errCode(h.refresh(tk2, url.Values{"scope": {"read write"}}), 400); e != "invalid_scope" {
 		t.Errorf("re-ampliar scope = %s", e)
 	}
-	rec = h.refresh(tk2, nil) // sem scope: herda a redução
+	rec = h.refresh(tk2, nil)
 	if rec.Code != 200 || h.jsonBody(rec)["scope"] != "read" {
 		t.Errorf("herança da redução: %d %v", rec.Code, h.jsonBody(rec))
 	}
 
-	// Janela deslizante de 30 dias sem uso.
 	tk3 := h.connect()
 	h.advance(29 * 24 * time.Hour)
 	rec = h.refresh(tk3, nil)
@@ -594,7 +571,7 @@ func TestIntegration_RefreshErrorsExpiryAndScopes(t *testing.T) {
 		t.Fatalf("refresh aos 29 dias = %d", rec.Code)
 	}
 	tk3 = tokens{tk3.client, "", h.jsonBody(rec)["refresh_token"].(string)}
-	h.advance(29 * 24 * time.Hour) // 58 dias do início, mas só 29 desde o último uso
+	h.advance(29 * 24 * time.Hour)
 	rec = h.refresh(tk3, nil)
 	if rec.Code != 200 {
 		t.Fatalf("janela deslizante: refresh = %d %s", rec.Code, rec.Body.String())
@@ -634,11 +611,9 @@ func TestIntegration_RevokeEndpoint(t *testing.T) {
 			t.Fatalf("revoke = %d %s (sempre 200 {})", rec.Code, rec.Body.String())
 		}
 	}
-	// Desconhecido → 200.
 	tk := h.connect()
 	revoke("desconhecido", "access_token", tk.client)
 
-	// Access token revoga só ele; o refresh segue.
 	revoke(tk.access, "access_token", tk.client)
 	if h.valid(tk.access) {
 		t.Error("access revogado ainda vale")
@@ -650,12 +625,10 @@ func TestIntegration_RevokeEndpoint(t *testing.T) {
 	newAccess := h.jsonBody(rec)["access_token"].(string)
 	newRefresh := h.jsonBody(rec)["refresh_token"].(string)
 
-	// Cliente errado não revoga.
 	revoke(newRefresh, "refresh_token", h.clientID())
 	if !h.valid(newAccess) {
 		t.Error("revogação por outro cliente não pode valer")
 	}
-	// Refresh token revoga a Connection inteira.
 	revoke(newRefresh, "refresh_token", tk.client)
 	if h.valid(newAccess) {
 		t.Error("revogar o refresh deve revogar a Connection (todos os tokens)")
@@ -691,7 +664,7 @@ func TestIntegration_ConnectionsAPI(t *testing.T) {
 	older := h.connect()
 	h.advance(time.Minute)
 	newer := h.connect()
-	h.valid(older.access) // usa a mais antiga → last_used_at dela é o mais recente
+	h.valid(older.access)
 	got := list()
 	if len(got) != 2 {
 		t.Fatalf("connections = %v", got)
@@ -702,7 +675,6 @@ func TestIntegration_ConnectionsAPI(t *testing.T) {
 		t.Errorf("formato/ordem: %v", got)
 	}
 
-	// last_used_at é atualizado no máximo 1×/min.
 	var before, after time.Time
 	h.db.Raw(`SELECT last_used_at FROM oauth_connections WHERE id = ?`, first["id"]).Scan(&before)
 	h.advance(30 * time.Second)
@@ -718,7 +690,6 @@ func TestIntegration_ConnectionsAPI(t *testing.T) {
 		t.Error("last_used_at deveria atualizar após 1 min")
 	}
 
-	// DELETE → 204; a próxima chamada com o access token é 401; segunda vez → 404.
 	del := func(id string) int {
 		return h.serve(h.api, httptest.NewRequest("DELETE", "/oauth/connections/"+id, nil)).Code
 	}
@@ -748,7 +719,6 @@ func TestIntegration_AllowlistRecheckRevokesConnection(t *testing.T) {
 	if !h.valid(tk.access) {
 		t.Fatal("dono deveria valer")
 	}
-	// O e-mail saiu de ALLOWED_EMAILS: o token deixa de valer E a Connection é revogada.
 	removed := New(h.db, h.s.cfg, auth.ParseAllowlist("outro@example.com"))
 	removed.now = h.s.now
 	if _, err := removed.VerifyAccessToken(t.Context(), tk.access); err != ErrInvalidToken {
@@ -767,7 +737,6 @@ func TestIntegration_AllowlistRecheckRevokesConnection(t *testing.T) {
 func TestIntegration_ResourceBinding(t *testing.T) {
 	h := newHarness(t)
 	tk := h.connect()
-	// Token vinculado a OUTRO resource não vale neste (mesmo banco, issuer diferente).
 	other := New(h.db, Config{Enabled: true, PublicBaseURL: "https://outra.test", WebAppURL: tWeb, AllowedRedirectURIs: h.s.cfg.AllowedRedirectURIs}, h.s.allow)
 	other.now = h.s.now
 	if _, err := other.VerifyAccessToken(t.Context(), tk.access); err != ErrInvalidToken {

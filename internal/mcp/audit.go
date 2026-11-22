@@ -10,40 +10,34 @@ import (
 	"gorm.io/gorm"
 )
 
-// AuditRetention é a retenção da auditoria (AYD-006 §7).
 const AuditRetention = 90 * 24 * time.Hour
 
-// AuditEntry é o registro de uma chamada tools/call (§7). Result só é preenchido para
-// ferramentas dedupe (SPEC-007: alimenta a deduplicação) — nunca para as demais.
+// Result só é preenchido para ferramentas dedupe — nunca para as demais.
 type AuditEntry struct {
 	CallID        uuid.UUID
 	ConnectionID  uuid.UUID
 	Tool          string
-	Arguments     []byte // JSON
+	Arguments     []byte
 	ArgumentsHash string
-	Outcome       string // OK | ERROR
+	Outcome       string
 	ErrorCode     string
-	Result        []byte // JSON; só dedupe
+	Result        []byte
 	DurationMS    int64
 	CreatedAt     time.Time
 }
 
-// Auditor grava a auditoria. Falhas não derrubam a chamada.
 type Auditor interface {
 	Record(ctx context.Context, e AuditEntry)
 }
 
-// DBAuditor grava em mcp_tool_calls e faz a retenção oportunista (1×/hora por instância).
 type DBAuditor struct {
 	db          *gorm.DB
 	now         func() time.Time
 	lastCleanup atomic.Int64
 }
 
-// NewDBAuditor cria o auditor em Postgres.
 func NewDBAuditor(db *gorm.DB) *DBAuditor { return &DBAuditor{db: db, now: time.Now} }
 
-// Record implements Auditor.
 func (a *DBAuditor) Record(ctx context.Context, e AuditEntry) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()

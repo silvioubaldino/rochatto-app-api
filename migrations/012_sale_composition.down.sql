@@ -77,7 +77,6 @@ FROM purchase_charges c
 JOIN purchases p ON p.id = c.purchase_id AND p.deleted_at IS NULL
 WHERE c.deleted_at IS NULL;
 
-
 DROP TABLE sale_costs;
 DROP TABLE sale_charges;
 DROP TABLE quote_charges;
@@ -153,7 +152,6 @@ LEFT JOIN (
   ) p
 ) py ON py.sale_id = v.id
 WHERE v.deleted_at IS NULL;
-
 
 CREATE VIEW vw_quotes_resumo AS
 SELECT

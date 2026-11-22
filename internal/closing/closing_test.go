@@ -150,7 +150,6 @@ func TestResolveItems_Errors(t *testing.T) {
 		_, ferr := ResolveItems(c.specs, items, c.mode)
 		t.Run(c.name, func(t *testing.T) { wantField(t, ferr, http.StatusBadRequest, c.field) })
 	}
-	// O índice de erro acompanha a posição do spec.
 	_, ferr := ResolveItems([]ItemSpec{{QuoteItemID: &items[0].ID}, {QuoteItemID: &items[2].ID, SupplierID: &sup}}, items, ByQuoteItemID)
 	wantField(t, ferr, http.StatusBadRequest, "closing.items[1].supplier_id")
 }

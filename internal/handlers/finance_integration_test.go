@@ -1,10 +1,5 @@
 package handlers
 
-// Testes de integração do AYD-004/AYD-007 (Financeiro): quitação do recebimento, saldos e filtros
-// da Sale, GET /finance/summary (cash, despesas, resultado) e geração de alertas (parcelas e prazos).
-// Mesmas condições dos outros *_integration_test: só rodam com TEST_DATABASE_URL (banco
-// descartável com as migrations aplicadas; dados não são limpos — saldos globais são
-// conferidos por diferença e o painel usa um período único por execução).
 import (
 	"fmt"
 	"math"
@@ -29,7 +24,6 @@ func (e fxEnv) wantNum(label string, m map[string]any, key string, want float64)
 	}
 }
 
-// simpleSale: Sale com 1 Item (qty × price, custo cost) — receita qty*price.
 func (e fxEnv) simpleSale(qty, price, cost float64) string {
 	e.t.Helper()
 	id, _ := e.sale(qItem("Pedra", qty, price, cost, ""))
@@ -38,8 +32,6 @@ func (e fxEnv) simpleSale(qty, price, cost float64) string {
 
 func dayStr(offset int) string { return todayDate().AddDate(0, 0, offset).Format("2006-01-02") }
 
-// RF-11 / AYD-007: receber é quitar a conta a receber; a forma de pagamento é validada; desfazer
-// a quitação mantém a movimentação (dinheiro que de fato entrou) sem alocação.
 func TestIntegration_ReceiveSettlesReceivableAccount(t *testing.T) {
 	e := newFinanceEnv(t)
 	sale := e.simpleSale(1, 1000, 500)
@@ -64,7 +56,6 @@ func TestIntegration_ReceiveSettlesReceivableAccount(t *testing.T) {
 		t.Error("detalhe da venda ainda traz pagamentos (Receipt)")
 	}
 
-	// Desfazer a quitação: a conta reabre, a movimentação continua e fica sem alocação.
 	settlementID := mv["settlements"].([]any)[0].(map[string]any)["id"].(string)
 	if code, _ := e.api.do("DELETE", "/settlements/"+settlementID, nil); code != 204 {
 		t.Fatalf("DELETE settlement = %d", code)
@@ -87,7 +78,6 @@ func TestIntegration_ReceiveSettlesReceivableAccount(t *testing.T) {
 		t.Errorf("movimentação sem alocação não listada: %v", m)
 	}
 
-	// Rotas legadas de Receipt não existem mais.
 	for _, c := range [][2]string{{"GET", "/vendas/" + sale + "/pagamentos"}, {"POST", "/vendas/" + sale + "/pagamentos"},
 		{"PUT", "/vendas/" + sale + "/pagamentos/" + settlementID}, {"DELETE", "/vendas/" + sale + "/pagamentos/" + settlementID},
 		{"POST", "/vendas/" + sale + "/pagamentos/" + settlementID + "/confirmar"}} {
@@ -97,8 +87,6 @@ func TestIntegration_ReceiveSettlesReceivableAccount(t *testing.T) {
 	}
 }
 
-// AYD-007 §5: RECEIVABLE de Sale CANCELED bloqueia a quitação (409); a leitura segue e as
-// quitações já feitas continuam visíveis.
 func TestIntegration_ReceiveBlockedOnCanceledSale(t *testing.T) {
 	e := newFinanceEnv(t)
 	sale := e.simpleSale(1, 1000, 500)
@@ -122,16 +110,13 @@ func TestIntegration_ReceiveBlockedOnCanceledSale(t *testing.T) {
 	}
 }
 
-// RN-05: receivable (nunca negativo); custos da venda e o que já foi pago vêm das contas (AYD-007/009);
-// filtros de /vendas.
 func TestIntegration_SaleBalancesAndFilters(t *testing.T) {
 	e := newFinanceEnv(t)
-	sale := e.simpleSale(2, 100, 60) // 200
+	sale := e.simpleSale(2, 100, 60)
 	_, d := e.api.do("GET", "/vendas/"+sale, nil)
 	e.wantNum("novo", d, "receivable", 200)
 	e.wantNum("novo", d, "costs_total", 0)
 
-	// Custos da venda (AYD-009): frete 50 e comissão 10, sem credor ("a definir"): uma conta a pagar.
 	for _, c := range []map[string]any{{"kind": "FREIGHT", "amount": 50}, {"kind": "COMMISSION", "amount": 10}} {
 		if code, res := e.api.do("POST", "/vendas/"+sale+"/costs", c); code != 201 {
 			t.Fatalf("POST costs = %d %v", code, res)
@@ -145,14 +130,12 @@ func TestIntegration_SaleBalancesAndFilters(t *testing.T) {
 		t.Error("freight_payable saiu da Sale (AYD-009)")
 	}
 
-	// Os campos legados do PUT foram removidos.
 	for _, body := range []map[string]any{{"frete_valor": 50}, {"comissao_valor": 10}, {"frete_pago": 20}, {"comissao_paga": true}} {
 		if code, res := e.api.do("PUT", "/vendas/"+sale, body); code != 400 {
 			t.Errorf("PUT %v = %d %v, want 400", body, code, res)
 		}
 	}
 
-	// Frete pago em parte: quitação da conta com categoria FREIGHT.
 	payable := e.api.payableOf("SALE", sale, "")
 	pay := func(amount float64, category string) {
 		t.Helper()
@@ -166,7 +149,6 @@ func TestIntegration_SaleBalancesAndFilters(t *testing.T) {
 	e.wantNum("frete parcial", d, "costs_paid", 20)
 	e.wantNum("frete parcial", d, "costs_open", 40)
 
-	// Recebido parcial e a maior (Σ não passa do devido: receivable = max(total − recebido, 0)).
 	e.api.receive(sale, 80, "2026-11-01", "PIX")
 	_, d = e.api.do("GET", "/vendas/"+sale, nil)
 	e.wantNum("parcial", d, "receivable", 120)
@@ -190,7 +172,6 @@ func TestIntegration_SaleBalancesAndFilters(t *testing.T) {
 		t.Error("filtro por cliente")
 	}
 
-	// from/to inclusivos por data_venda; data inválida → 400.
 	e.db.Exec("UPDATE vendas SET data_venda = '2090-06-15' WHERE id = ?", sale)
 	for q, want := range map[string]bool{
 		"from=2090-06-15&to=2090-06-15": true,
@@ -230,12 +211,9 @@ func (e fxEnv) balances() finBalances {
 	return finBalances{num(b, "receivable"), num(b, "payable")}
 }
 
-// GET /finance/summary (AYD-007 §6): números numa fixture pequena — inclui Sale cancelada
-// (sai de tudo menos do dinheiro que de fato se moveu) e uma movimentação desfeita.
 func TestIntegration_FinanceSummary(t *testing.T) {
 	e := newFinanceEnv(t)
 
-	// Período único por execução (dados não são limpos entre execuções).
 	year := 2100 + rand.Intn(7000)
 	from, to := fmt.Sprintf("%d-05-01", year), fmt.Sprintf("%d-05-31", year)
 	inP := fmt.Sprintf("%d-05-10", year)
@@ -243,20 +221,18 @@ func TestIntegration_FinanceSummary(t *testing.T) {
 
 	before := e.balances()
 
-	// Sale A (ativa): 2×100 (custo 60), frete 10, comissão 5 (Partner).
 	partner := e.partner()
 	saleA := e.simpleSale(2, 100, 60)
 	mustExec(t, e.db, `UPDATE vendas SET data_venda = ?, vendedor_externo_id = ? WHERE id = ?`, inP, partner, saleA)
 	setLegacyCosts(t, e.db, saleA, 10, 5)
 	e.api.receive(saleA, 80, inP, "PIX")
-	e.api.receive(saleA, 20, inP, "") // sem forma de pagamento
+	e.api.receive(saleA, 20, inP, "")
 	_, undone := e.api.receive(saleA, 30, inP, "CARD")
 	if code, _ := e.api.do("DELETE", "/financial-movements/"+undone["movement"].(map[string]any)["id"].(string), nil); code != 204 {
 		t.Fatal("DELETE da movimentação")
 	}
-	e.api.receive(saleA, 10, outP, "PIX") // fora do período (conta em sales.received, não em cash)
+	e.api.receive(saleA, 10, outP, "PIX")
 
-	// Frete pago em parte (4 de 10), comissão paga (5) — saídas do período.
 	if code, res := e.api.do("POST", "/obligations/"+e.api.payableOf("SALE", saleA, "")+"/settle", map[string]any{"amount": 4,
 		"movement": map[string]any{"occurred_on": inP, "payment_method": "PIX"}}); code != 201 {
 		t.Fatalf("pagar frete = %d %v", code, res)
@@ -266,7 +242,6 @@ func TestIntegration_FinanceSummary(t *testing.T) {
 		t.Fatalf("pagar comissão = %d %v", code, res)
 	}
 
-	// Sale B (cancelada) no período: nada dela entra em sales/balances.
 	saleB := e.simpleSale(1, 500, 100)
 	mustExec(t, e.db, `UPDATE vendas SET data_venda = ? WHERE id = ?`, inP, saleB)
 	setLegacyCosts(t, e.db, saleB, 7, 3)
@@ -275,11 +250,9 @@ func TestIntegration_FinanceSummary(t *testing.T) {
 		t.Fatal("cancelar Sale B")
 	}
 
-	// Sale C fora do período: não entra em sales.
 	saleC := e.simpleSale(1, 999, 1)
 	mustExec(t, e.db, `UPDATE vendas SET data_venda = ? WHERE id = ?`, outP, saleC)
 
-	// Purchase de reposição pendente: 2×50 = 100 a pagar; paga 70 no período, outras 5 fora.
 	sup := e.supplier()
 	pid := e.product()
 	var purchase string
@@ -296,7 +269,6 @@ func TestIntegration_FinanceSummary(t *testing.T) {
 		}
 	}
 
-	// Despesas: combustível no período (sem quitação); outra fora; e uma receita avulsa.
 	for _, m := range []map[string]any{
 		{"occurred_on": inP, "amount": -317.87, "category": "VEHICLE", "payment_method": "PIX"},
 		{"occurred_on": inP, "amount": -40, "category": "VEHICLE"},
@@ -309,13 +281,11 @@ func TestIntegration_FinanceSummary(t *testing.T) {
 		}
 	}
 
-	// Act
 	code, res := e.api.do("GET", "/finance/summary?from="+from+"&to="+to, nil)
 	if code != 200 {
 		t.Fatalf("summary = %d %v", code, res)
 	}
 
-	// Assert
 	if p := res["period"].(map[string]any); p["from"] != from || p["to"] != to {
 		t.Errorf("period = %v", p)
 	}
@@ -326,10 +296,9 @@ func TestIntegration_FinanceSummary(t *testing.T) {
 	e.wantNum("sales", sales, "freight", 10)
 	e.wantNum("sales", sales, "commission", 5)
 	e.wantNum("sales", sales, "profit", 65)
-	e.wantNum("sales", sales, "received", 110) // 80 + 20 + 10 (qualquer data; a movimentação desfeita não conta)
+	e.wantNum("sales", sales, "received", 110)
 	e.wantNum("sales", sales, "receivable", 90)
 
-	// cash: entradas 80 + 20 + 50 (Sale B cancelada: o dinheiro entrou) + 2100; saídas 4 + 5 + 70 + 317,87 + 40 + 100.
 	cash := res["cash"].(map[string]any)
 	e.wantNum("cash", cash, "inflow", 2250)
 	e.wantNum("cash", cash, "outflow", 536.87)
@@ -353,7 +322,6 @@ func TestIntegration_FinanceSummary(t *testing.T) {
 		t.Errorf("cash.by_category = %v", cats)
 	}
 
-	// expenses: só movimentações SEM quitação de categoria de despesa (LABOR avulso incluso).
 	exp := res["expenses"].(map[string]any)
 	e.wantNum("expenses", exp, "total", 457.87)
 	ecats := map[string]float64{}
@@ -368,12 +336,10 @@ func TestIntegration_FinanceSummary(t *testing.T) {
 	e.wantNum("result", result, "expenses", 457.87)
 	e.wantNum("result", result, "net_result", -392.87)
 
-	// balances ignoram o período: conferidos por diferença (A: 90 a receber; C: 999 sem recebimento).
 	after := e.balances()
 	if d := after.receivable - before.receivable; !near(d, 90+999) {
 		t.Errorf("Δ receivable = %v, want 1089", d)
 	}
-	// a pagar: frete 6 (10 − 4) + compra 25 (100 − 70 − 5); a comissão da A foi paga; B cancelada não conta.
 	if d := after.payable - before.payable; !near(d, 6+25) {
 		t.Errorf("Δ payable = %v, want 31", d)
 	}
@@ -390,7 +356,6 @@ func TestIntegration_FinanceSummaryPeriodValidation(t *testing.T) {
 			t.Errorf("%s = %d %v, want 400", q, code, res)
 		}
 	}
-	// Default: 1º dia do mês corrente até hoje; arrays e objetos sempre presentes.
 	code, res := e.api.do("GET", "/finance/summary", nil)
 	if code != 200 {
 		t.Fatalf("default = %d", code)
@@ -406,14 +371,11 @@ func TestIntegration_FinanceSummaryPeriodValidation(t *testing.T) {
 	if _, ok := res["expenses"].(map[string]any)["by_category"].([]any); !ok {
 		t.Errorf("expenses.by_category deveria ser array: %v", res["expenses"])
 	}
-	// from == to é válido.
 	if code, _ := e.api.do("GET", "/finance/summary?from=2026-05-01&to=2026-05-01", nil); code != 200 {
 		t.Errorf("from == to = %d, want 200", code)
 	}
 }
 
-// RF-19 / AYD-007 §6: alertas de parcelas não cobertas e de prazos de conta (RECEIVABLE e
-// PAYABLE), gerados na leitura, preservando `lida`.
 func TestIntegration_NotificationsGeneration(t *testing.T) {
 	e := newFinanceEnv(t)
 	sale := e.simpleSale(1, 1000, 500)
@@ -458,7 +420,6 @@ func TestIntegration_NotificationsGeneration(t *testing.T) {
 		return false, ""
 	}
 
-	// GET gera: vencido (parcela de 2 dias atrás), com dias_restantes negativo; a parcela de +40 não.
 	ok, nid := listed()
 	if n := read(); !ok || n.Tipo != "pagamento_vencido" || n.Dias == nil || *n.Dias != -2 || n.Lida {
 		t.Fatalf("alerta vencido = %+v listado=%v", n, ok)
@@ -483,14 +444,12 @@ func TestIntegration_NotificationsGeneration(t *testing.T) {
 		t.Errorf("gerar = %d, want 204", code)
 	}
 
-	// Só dias_restantes mudou (simula a passagem do dia): lida preservada, dias atualizado.
 	mustExec(t, e.db, `UPDATE notificacoes SET dias_restantes = 99 WHERE installment_id = ?`, instID)
 	listed()
 	if n := read(); !n.Lida || n.Dias == nil || *n.Dias != -2 {
 		t.Errorf("dias_restantes sozinho não reabre: %+v", n)
 	}
 
-	// Tipo muda (reagendada para daqui a 3 dias → vencendo): reabre.
 	mustExec(t, e.db, `UPDATE installments SET due_date = ? WHERE id = ?`, dayStr(3), instID)
 	if found, _ := listed(); !found {
 		t.Error("alerta reaberto deveria ser listado")
@@ -499,7 +458,6 @@ func TestIntegration_NotificationsGeneration(t *testing.T) {
 		t.Errorf("após reagendar: %+v", n)
 	}
 
-	// data_ref muda com o mesmo tipo (3 → 4 dias): reabre também.
 	e.api.do("POST", "/dashboard/notificacoes/"+nid+"/lida", nil)
 	mustExec(t, e.db, `UPDATE installments SET due_date = ? WHERE id = ?`, dayStr(4), instID)
 	listed()
@@ -507,14 +465,12 @@ func TestIntegration_NotificationsGeneration(t *testing.T) {
 		t.Errorf("data_ref mudou, deveria reabrir: %+v", n)
 	}
 
-	// Fora da janela (+10 dias) → alerta removido.
 	mustExec(t, e.db, `UPDATE installments SET due_date = ? WHERE id = ?`, dayStr(10), instID)
 	listed()
 	if n := read(); n.N != 0 {
 		t.Errorf("fora da janela deveria remover o alerta: %+v", n)
 	}
 
-	// Volta à janela e depois é coberta pela quitação → alerta some.
 	mustExec(t, e.db, `UPDATE installments SET due_date = ? WHERE id = ?`, dayStr(1), instID)
 	listed()
 	if n := read(); n.N != 1 {
@@ -526,7 +482,6 @@ func TestIntegration_NotificationsGeneration(t *testing.T) {
 		t.Errorf("parcela coberta remove o alerta: %+v", n)
 	}
 
-	// Conta sem parcelas alerta pelo prazo; Sale cancelada remove.
 	sale2 := e.simpleSale(1, 500, 100)
 	acc2 := e.api.receivable(sale2)
 	if code, _ := e.api.do("PATCH", "/obligations/"+acc2, map[string]any{"due_date": dayStr(0)}); code != 200 {
@@ -547,7 +502,6 @@ func TestIntegration_NotificationsGeneration(t *testing.T) {
 	}
 }
 
-// AYD-007 §6: contas a pagar geram conta_pagar_vencendo / conta_pagar_vencida.
 func TestIntegration_PayableNotifications(t *testing.T) {
 	e := newFinanceEnv(t)
 	sup := e.supplier()

@@ -1,8 +1,5 @@
 package handlers
 
-// Testes de integração do AYD-011 / SPEC-012 (jornada do dono). Cada teste usa um banco
-// descartável (testdb) — pulam sem TEST_DATABASE_URL.
-
 import (
 	"net/http"
 	"testing"
@@ -86,7 +83,6 @@ func contains(list []string, v string) bool {
 	return false
 }
 
-// C1 + C2 + C3: número humano, Quote ↔ Sale, cabeçalho editável e resumo dos Items.
 func TestJourney_NumbersQuoteSaleLinkAndHeader(t *testing.T) {
 	e := newJourneyEnv(t)
 	q1 := e.must("POST", "/quotes", map[string]any{"customer_id": e.cid, "items": []map[string]any{
@@ -102,7 +98,6 @@ func TestJourney_NumbersQuoteSaleLinkAndHeader(t *testing.T) {
 		t.Errorf("resumo = %v %v", q1["items_count"], q1["first_item_name"])
 	}
 
-	// Venda rápida consome 1 número de Quote e 1 de Sale.
 	qs := e.must("POST", "/quotes/quick-sale", map[string]any{"customer_id": e.cid, "items": []map[string]any{qItem("Rápida", 1, 10, 5, "")}}, 201)
 	if num(qs, "sale_number") != 1 {
 		t.Errorf("sale_number da rápida = %v, want 1", qs["sale_number"])
@@ -119,20 +114,17 @@ func TestJourney_NumbersQuoteSaleLinkAndHeader(t *testing.T) {
 	if num(sale, "number") != 2 || num(sale, "items_count") != 2 || sale["first_item_name"] != "Granito Preto" {
 		t.Errorf("venda = %v %v %v", sale["number"], sale["items_count"], sale["first_item_name"])
 	}
-	// Obligation label usa o número.
 	recv := e.api.obligation(e.api.receivable(conv["sale_id"].(string)))
 	if lbl := recv["origin"].(map[string]any)["label"]; lbl != "Venda nº 2 · Alejandra" {
 		t.Errorf("label = %v", lbl)
 	}
 
-	// Compra: número e label.
 	sup := e.supplier()
 	p := e.must("POST", "/purchases", map[string]any{"supplier_id": sup, "kind": "MADE_TO_ORDER"}, 201)
 	if num(p, "number") != 1 {
 		t.Errorf("purchase number = %v", p["number"])
 	}
 
-	// C2: cabeçalho editável só OPEN.
 	other := e.customer("Outro Cliente")
 	upd := e.must("PUT", "/quotes/"+q2["id"].(string), map[string]any{"customer_id": other, "quote_date": "2026-01-15"}, 200)
 	if upd["customer_id"] != other || upd["quote_date"] != "2026-01-15" || upd["customer_name"] != "Outro Cliente" {
@@ -145,12 +137,11 @@ func TestJourney_NumbersQuoteSaleLinkAndHeader(t *testing.T) {
 	e.must("PUT", "/quotes/"+q2["id"].(string), map[string]any{"customer_id": "00000000-0000-0000-0000-000000000001"}, 400)
 	e.must("PUT", "/quotes/"+q2["id"].(string), map[string]any{"quote_date": "15/01/2026"}, 400)
 	e.db.Exec("UPDATE clientes SET deleted_at = NOW() WHERE id = ?", other)
-	e.must("PUT", "/quotes/"+q1["id"].(string), map[string]any{"customer_id": other}, 409) // WON
+	e.must("PUT", "/quotes/"+q1["id"].(string), map[string]any{"customer_id": other}, 409)
 	q3 := e.must("POST", "/quotes", map[string]any{"customer_id": e.cid, "items": []map[string]any{qItem("X", 1, 1, 1, "")}}, 201)
-	e.must("PUT", "/quotes/"+q3["id"].(string), map[string]any{"customer_id": other}, 400) // excluído
+	e.must("PUT", "/quotes/"+q3["id"].(string), map[string]any{"customer_id": other}, 400)
 }
 
-// C4: filtros de lista.
 func TestJourney_ListFilters(t *testing.T) {
 	e := newJourneyEnv(t)
 	ref := e.namedPartner("Arq. Beatriz")
@@ -187,7 +178,6 @@ func TestJourney_ListFilters(t *testing.T) {
 	e.must("GET", "/vendas?referrer_id=x", nil, 400)
 }
 
-// C7 + C8: saldo no Item de estoque e fornecedor habitual.
 func TestJourney_StockBalanceAndDefaultSupplier(t *testing.T) {
 	e := newJourneyEnv(t)
 	prod := e.product()
@@ -208,14 +198,12 @@ func TestJourney_StockBalanceAndDefaultSupplier(t *testing.T) {
 		}
 	}
 
-	// C8
 	sup, sup2 := e.supplier(), e.supplier()
 	p := e.must("POST", "/produtos", map[string]any{"nome": uniq("P"), "default_supplier_id": sup}, 201)
 	if p["default_supplier_id"] != sup || p["default_supplier_name"] == nil {
 		t.Fatalf("create = %v", p)
 	}
 	id := p["id"].(string)
-	// PUT sem o campo mantém.
 	kept := e.must("PUT", "/produtos/"+id, map[string]any{"nome": "Renomeado"}, 200)
 	if kept["default_supplier_id"] != sup || kept["nome"] != "Renomeado" {
 		t.Errorf("ausente deveria manter: %v", kept)
@@ -230,7 +218,6 @@ func TestJourney_StockBalanceAndDefaultSupplier(t *testing.T) {
 	}
 	e.must("PUT", "/produtos/"+id, map[string]any{"nome": "R", "default_supplier_id": "00000000-0000-0000-0000-000000000001"}, 400)
 	e.must("POST", "/produtos", map[string]any{"nome": uniq("P"), "default_supplier_id": "00000000-0000-0000-0000-000000000001"}, 400)
-	// Fornecedor excluído: 400 ao definir; manter o já gravado é permitido.
 	e.must("PUT", "/produtos/"+id, map[string]any{"nome": "R", "default_supplier_id": sup}, 200)
 	e.db.Exec("UPDATE fornecedores SET deleted_at = NOW() WHERE id = ?", sup)
 	e.must("PUT", "/produtos/"+id, map[string]any{"nome": "R2", "default_supplier_id": sup}, 200)
@@ -239,7 +226,6 @@ func TestJourney_StockBalanceAndDefaultSupplier(t *testing.T) {
 	e.must("PUT", "/produtos/"+other["id"].(string), map[string]any{"nome": "R", "default_supplier_id": sup}, 400)
 }
 
-// registerJourneyHandlers registra os handlers novos do AYD-011 (acrescentados por contrato).
 func registerJourneyHandlers(db *gorm.DB, mux *http.ServeMux) {
 	NewSearchHandler(db).Register(mux)
 	NewPendingActionsHandler(db).Register(mux)

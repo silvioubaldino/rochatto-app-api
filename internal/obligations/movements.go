@@ -21,7 +21,6 @@ type movementRow struct {
 	CorrectedAt      *time.Time `gorm:"column:corrected_at"`
 }
 
-// movementSelect: movimentação + alocação + counterparty_name (o próprio, ou o das contas quitadas).
 const movementSelect = `SELECT m.id, m.occurred_on, m.amount, m.category::text AS category,
 	m.payment_method::text AS payment_method,
 	COALESCE(m.counterparty_name, (
@@ -65,7 +64,6 @@ func toMovements(db *gorm.DB, rows []movementRow) ([]Movement, error) {
 	return out, nil
 }
 
-// GetMovement devolve a movimentação com as quitações.
 func GetMovement(db *gorm.DB, id uuid.UUID) (*Movement, error) {
 	var rows []movementRow
 	if err := db.Raw(movementSelect+` WHERE m.id = ? AND m.deleted_at IS NULL`, id).Scan(&rows).Error; err != nil {
@@ -81,11 +79,10 @@ func GetMovement(db *gorm.DB, id uuid.UUID) (*Movement, error) {
 	return &ms[0], nil
 }
 
-// MovementFilter são os filtros de GET /financial-movements (já validados).
 type MovementFilter struct {
 	From, To         *time.Time
 	Category         string
-	Direction        string // IN | OUT
+	Direction        string
 	CounterpartyType string
 	CounterpartyID   *uuid.UUID
 	UnallocatedOnly  bool
@@ -132,7 +129,6 @@ func (f MovementFilter) where() (string, []any) {
 	return strings.Join(conds, " AND "), args
 }
 
-// ListMovements lista as movimentações (mais recentes primeiro) com os totais do filtro.
 func ListMovements(db *gorm.DB, f MovementFilter) (*MovementList, error) {
 	where, args := f.where()
 	if f.Limit <= 0 {
@@ -167,7 +163,6 @@ func ListMovements(db *gorm.DB, f MovementFilter) (*MovementList, error) {
 	}, nil
 }
 
-// MovementWrite é o corpo de POST/PUT /financial-movements.
 type MovementWrite struct {
 	OccurredOn       *time.Time
 	Amount           float64
@@ -190,7 +185,6 @@ func (w MovementWrite) validate() error {
 	return nil
 }
 
-// CreateMovement lança uma movimentação avulsa (despesa ou OTHER_INCOME; sem quitação).
 func CreateMovement(db *gorm.DB, w MovementWrite) (*Movement, error) {
 	if err := w.validate(); err != nil {
 		return nil, err
@@ -208,8 +202,6 @@ func CreateMovement(db *gorm.DB, w MovementWrite) (*Movement, error) {
 	return GetMovement(db, uid)
 }
 
-// UpdateMovement é a CORREÇÃO (carimba corrected_at). 409 se as quitações passariam do novo
-// valor ou se o sinal inverteria com quitações existentes.
 func UpdateMovement(db *gorm.DB, id uuid.UUID, w MovementWrite) (*Movement, error) {
 	if err := w.validate(); err != nil {
 		return nil, err
@@ -246,7 +238,6 @@ func UpdateMovement(db *gorm.DB, id uuid.UUID, w MovementWrite) (*Movement, erro
 	return GetMovement(db, id)
 }
 
-// DeleteMovement anula a movimentação e desfaz as suas quitações (soft-delete de ambos).
 func DeleteMovement(db *gorm.DB, id uuid.UUID) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		res := tx.Exec(`UPDATE financial_movements SET deleted_at = NOW() WHERE id = ? AND deleted_at IS NULL`, id)

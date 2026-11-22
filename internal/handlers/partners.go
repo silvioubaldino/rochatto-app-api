@@ -12,8 +12,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// --- PartnerType (AYD-003) ---
-
 var validPartnerTypes = map[string]bool{
 	"ARCHITECT": true,
 	"ENGINEER":  true,
@@ -21,10 +19,6 @@ var validPartnerTypes = map[string]bool{
 	"OTHER":     true,
 }
 
-// --- Handler ---
-
-// PartnersHandler expõe /partners (AYD-003), substituindo /vendedores-externos. A
-// persistência continua na tabela legada vendedores_externos (ver models.Partner).
 type PartnersHandler struct {
 	db *gorm.DB
 }
@@ -48,8 +42,6 @@ type partnerRequest struct {
 	Notes *string `json:"notes"`
 }
 
-// validatePartnerRequest normaliza (trim; texto vazio → null) e valida o payload.
-// Devolve a mensagem de erro ("" quando válido).
 func validatePartnerRequest(req *partnerRequest) string {
 	name, msg := normalizeName("name", req.Name)
 	if msg != "" {
@@ -179,7 +171,6 @@ func (h *PartnersHandler) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Soft-delete: Customers, Quotes e Sales que referenciam o Partner mantêm o vínculo.
 	res := h.db.WithContext(r.Context()).Delete(&models.Partner{}, "id = ?", id)
 	if res.Error != nil {
 		log.Printf("ERROR SoftDeletePartner: %v", res.Error)

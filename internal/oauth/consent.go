@@ -36,8 +36,6 @@ func clientDisplayName(n *string) string {
 	return *n
 }
 
-// getAuthorizationRequest: GET /api/v1/oauth/authorization-requests/{id} (AYD-006 §2.4).
-// 404 para inexistente, expirado ou já decidido.
 func (s *Server) getAuthorizationRequest(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
@@ -71,8 +69,6 @@ func (s *Server) denyAuthorizationRequest(w http.ResponseWriter, r *http.Request
 	s.decide(w, r, false)
 }
 
-// decide aprova/nega o pedido. O corpo é ignorado (o web envia `{}` ou nada). Aprovar cria
-// a Connection (owner do token Firebase) e um code de uso único de 5 min.
 func (s *Server) decide(w http.ResponseWriter, r *http.Request, approve bool) {
 	_, _ = io.Copy(io.Discard, http.MaxBytesReader(w, r.Body, maxFormBytes))
 	id, err := uuid.Parse(r.PathValue("id"))

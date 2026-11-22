@@ -1,7 +1,5 @@
--- Extensões
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- ENUMS
 CREATE TYPE status_venda AS ENUM (
   'A_ENTREGAR',
   'A_ENTREGAR_DATA',
@@ -12,7 +10,6 @@ CREATE TYPE status_venda AS ENUM (
 
 CREATE TYPE status_pagamento AS ENUM ('pendente', 'recebido');
 
--- CLIENTES
 CREATE TABLE clientes (
   id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   nome        TEXT        NOT NULL,
@@ -25,7 +22,6 @@ CREATE TABLE clientes (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- PRODUTOS (CATÁLOGO)
 CREATE TABLE produtos (
   id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   nome             TEXT        NOT NULL,
@@ -37,7 +33,6 @@ CREATE TABLE produtos (
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- FORNECEDORES
 CREATE TABLE fornecedores (
   id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   nome        TEXT        NOT NULL,
@@ -48,7 +43,6 @@ CREATE TABLE fornecedores (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- VENDEDORES EXTERNOS
 CREATE TABLE vendedores_externos (
   id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   nome        TEXT        NOT NULL,
@@ -58,7 +52,6 @@ CREATE TABLE vendedores_externos (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- VENDAS
 CREATE TABLE vendas (
   id                    UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
   cliente_id            UUID         NOT NULL REFERENCES clientes(id),
@@ -75,7 +68,6 @@ CREATE TABLE vendas (
   created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
--- ITENS DE VENDA
 CREATE TABLE itens_venda (
   id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   venda_id         UUID        NOT NULL REFERENCES vendas(id) ON DELETE CASCADE,
@@ -90,7 +82,6 @@ CREATE TABLE itens_venda (
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- PAGAMENTOS DO CLIENTE
 CREATE TABLE pagamentos_cliente (
   id             UUID             PRIMARY KEY DEFAULT gen_random_uuid(),
   venda_id       UUID             NOT NULL REFERENCES vendas(id) ON DELETE CASCADE,
@@ -102,7 +93,6 @@ CREATE TABLE pagamentos_cliente (
   created_at     TIMESTAMPTZ      NOT NULL DEFAULT NOW()
 );
 
--- ESTOQUE
 CREATE TABLE estoque (
   id                 UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
   produto_id         UUID          REFERENCES produtos(id),
@@ -115,7 +105,6 @@ CREATE TABLE estoque (
   created_at         TIMESTAMPTZ   NOT NULL DEFAULT NOW()
 );
 
--- VIEW DE RESUMO (campos calculados — nunca persistidos)
 CREATE VIEW vw_vendas_resumo AS
 SELECT
   v.*,
@@ -133,7 +122,6 @@ LEFT JOIN pagamentos_cliente p ON p.venda_id = v.id
 WHERE v.deleted_at IS NULL
 GROUP BY v.id;
 
--- ÍNDICES
 CREATE INDEX idx_vendas_cliente_id   ON vendas(cliente_id);
 CREATE INDEX idx_vendas_status       ON vendas(status);
 CREATE INDEX idx_vendas_data_venda   ON vendas(data_venda);

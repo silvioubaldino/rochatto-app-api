@@ -1,9 +1,5 @@
 package handlers
 
-// Testes de integração do AYD-003 (Partner, lead source do Customer, categoria de
-// Product) contra um Postgres real. Rodam só com TEST_DATABASE_URL apontando para um banco
-// descartável com as migrations 001–005 aplicadas (os testes criam dados com nomes únicos e
-// não limpam o banco).
 import (
 	"bytes"
 	"encoding/json"
@@ -37,7 +33,6 @@ func newRegistriesEnv(t *testing.T) (apiClient, *gorm.DB) {
 	return apiClient{t, mux}, db
 }
 
-// list faz um GET que devolve um array JSON.
 func (c apiClient) list(path string) (int, []map[string]any) {
 	c.t.Helper()
 	rec := httptest.NewRecorder()
@@ -61,7 +56,6 @@ func TestIntegration_Partners(t *testing.T) {
 	api, db := newRegistriesEnv(t)
 	name := uniq("Ana Arquiteta")
 
-	// Criação (happy path) — contrato em inglês.
 	code, p := api.do("POST", "/partners", map[string]any{"name": name, "phone": "11 9999", "type": "ARCHITECT", "notes": "obs"})
 	if code != 201 || p["name"] != name || p["type"] != "ARCHITECT" || p["phone"] != "11 9999" || p["notes"] != "obs" || p["created_at"] == nil {
 		t.Fatalf("create = %d %v", code, p)
@@ -71,7 +65,6 @@ func TestIntegration_Partners(t *testing.T) {
 	}
 	id := p["id"].(string)
 
-	// Validações → 400.
 	for _, body := range []map[string]any{
 		{"type": "OTHER"},
 		{"name": " ", "type": "OTHER"},
@@ -86,7 +79,6 @@ func TestIntegration_Partners(t *testing.T) {
 		t.Errorf("PUT sem type = %d, want 400", code)
 	}
 
-	// Filtros q e type.
 	_, rows := api.list("/partners?type=ARCHITECT&q=" + name[len(name)-8:])
 	if len(rows) != 1 || rows[0]["id"] != id {
 		t.Errorf("filtro type+q = %v", rows)
@@ -98,7 +90,6 @@ func TestIntegration_Partners(t *testing.T) {
 		t.Errorf("type inválido no filtro = %d, want 400", code)
 	}
 
-	// Get / update.
 	if code, g := api.do("GET", "/partners/"+id, nil); code != 200 || g["name"] != name {
 		t.Errorf("get = %d %v", code, g)
 	}
@@ -117,14 +108,12 @@ func TestIntegration_Partners(t *testing.T) {
 		t.Errorf("put inexistente = %d, want 404", code)
 	}
 
-	// Referência existente continua válida (quotes.referrer_id → mesmo registro).
 	var cid string
 	db.Raw("INSERT INTO clientes(nome) VALUES ('Cliente AYD3') RETURNING id").Scan(&cid)
 	if code, q := api.do("POST", "/quotes", map[string]any{"customer_id": cid, "referrer_id": id}); code != 201 || q["referrer_name"] != name {
 		t.Errorf("quote com partner = %d %v", code, q)
 	}
 
-	// Soft-delete.
 	if code, _ := api.do("DELETE", "/partners/"+id, nil); code != 204 {
 		t.Errorf("delete = %d, want 204", code)
 	}
@@ -160,7 +149,6 @@ func TestIntegration_CustomerLeadSource(t *testing.T) {
 	goneID := gone["id"].(string)
 	api.do("DELETE", "/partners/"+goneID, nil)
 
-	// Happy path: PARTNER + referrer_id → referrer_name na resposta.
 	cname := uniq("Cliente Indicado")
 	code, c := api.do("POST", "/clientes", map[string]any{"nome": cname, "lead_source": "PARTNER", "referrer_id": pid})
 	if code != 201 || c["lead_source"] != "PARTNER" || c["referrer_id"] != pid || c["referrer_name"] != pname || c["nome"] != cname {
@@ -168,7 +156,6 @@ func TestIntegration_CustomerLeadSource(t *testing.T) {
 	}
 	cid := c["id"].(string)
 
-	// Sem lead source (Customers antigos) e com lead source sem Partner.
 	if code, c2 := api.do("POST", "/clientes", map[string]any{"nome": uniq("Sem origem")}); code != 201 || c2["lead_source"] != nil || c2["referrer_id"] != nil || c2["referrer_name"] != nil {
 		t.Errorf("sem lead_source = %d %v", code, c2)
 	}
@@ -176,7 +163,6 @@ func TestIntegration_CustomerLeadSource(t *testing.T) {
 		t.Errorf("INSTAGRAM = %d, want 201", code)
 	}
 
-	// Erros do AYD-003 → 400.
 	cases := map[string]map[string]any{
 		"PARTNER sem referrer_id":         {"nome": "X", "lead_source": "PARTNER"},
 		"referrer_id com INSTAGRAM":       {"nome": "X", "lead_source": "INSTAGRAM", "referrer_id": pid},
@@ -194,7 +180,6 @@ func TestIntegration_CustomerLeadSource(t *testing.T) {
 		t.Errorf("PUT PARTNER sem referrer = %d, want 400", code)
 	}
 
-	// Filtros.
 	_, rows := api.list("/clientes?lead_source=PARTNER&referrer_id=" + pid)
 	if len(rows) != 1 || rows[0]["id"] != cid || rows[0]["referrer_name"] != pname {
 		t.Errorf("filtro lead_source+referrer_id = %v", rows)
@@ -212,8 +197,6 @@ func TestIntegration_CustomerLeadSource(t *testing.T) {
 		t.Errorf("search = %v", rows)
 	}
 
-	// Partner excluído depois: o Customer mantém o vínculo e o nome; PUT mantendo o mesmo
-	// referrer_id continua válido.
 	api.do("DELETE", "/partners/"+pid, nil)
 	if code, g := api.do("GET", "/clientes/"+cid, nil); code != 200 || g["referrer_name"] != pname {
 		t.Errorf("get com partner excluído = %d %v", code, g)
@@ -222,13 +205,11 @@ func TestIntegration_CustomerLeadSource(t *testing.T) {
 		t.Errorf("PUT mantendo partner excluído = %d %v", code, u)
 	}
 
-	// Trocar para outra origem limpa o Partner.
 	code, u := api.do("PUT", "/clientes/"+cid, map[string]any{"nome": cname, "lead_source": "REFERRAL"})
 	if code != 200 || u["lead_source"] != "REFERRAL" || u["referrer_id"] != nil || u["referrer_name"] != nil {
 		t.Errorf("PUT REFERRAL = %d %v", code, u)
 	}
 
-	// O CHECK do banco garante a regra nas duas direções.
 	if err := db.Exec("INSERT INTO clientes(nome, referrer_id) VALUES ('x', ?)", pid).Error; err == nil {
 		t.Errorf("CHECK deveria rejeitar referrer_id com lead_source NULL")
 	}
@@ -253,7 +234,6 @@ func TestIntegration_ProductCategories(t *testing.T) {
 	}
 	aID, bID := a["id"].(string), b["id"].(string)
 
-	// Duplicado case-insensitive → 409; vazio → 400.
 	if code, res := api.do("POST", "/product-categories", map[string]any{"name": "ZZ GRANITO " + suffix}); code != 409 || res["error"] == nil {
 		t.Errorf("duplicado = %d %v, want 409", code, res)
 	}
@@ -273,7 +253,6 @@ func TestIntegration_ProductCategories(t *testing.T) {
 		t.Errorf("ordem = %v, want [%s %s]", mine, nameA, nameB)
 	}
 
-	// PUT: renomear (inclusive só a caixa), duplicado → 409, inexistente → 404.
 	if code, u := api.do("PUT", "/product-categories/"+aID, map[string]any{"name": "ZZ Granito " + suffix}); code != 200 || u["name"] != "ZZ Granito "+suffix {
 		t.Errorf("rename caixa = %d %v", code, u)
 	}
@@ -287,7 +266,6 @@ func TestIntegration_ProductCategories(t *testing.T) {
 		t.Errorf("put nome vazio = %d, want 400", code)
 	}
 
-	// Soft-delete: some da lista, libera o nome, 404 ao repetir.
 	if code, _ := api.do("DELETE", "/product-categories/"+bID, nil); code != 204 {
 		t.Errorf("delete = %d, want 204", code)
 	}
@@ -316,7 +294,6 @@ func TestIntegration_ProductCategoryOnProdutos(t *testing.T) {
 	_, other := api.do("POST", "/product-categories", map[string]any{"name": uniq("Outra")})
 	otherID := other["id"].(string)
 
-	// Happy path: category_id + category_name; unidade segue texto livre.
 	pname := uniq("Taj Mahal")
 	code, p := api.do("POST", "/produtos", map[string]any{"nome": pname, "unidade": "m²", "category_id": catID})
 	if code != 201 || p["category_id"] != catID || p["category_name"] != catName || p["unidade"] != "m²" {
@@ -327,12 +304,10 @@ func TestIntegration_ProductCategoryOnProdutos(t *testing.T) {
 		t.Errorf("sem categoria = %d %v", code, p2)
 	}
 
-	// category_id inexistente → 400.
 	if code, _ := api.do("POST", "/produtos", map[string]any{"nome": "X", "category_id": uuid.NewString()}); code != 400 {
 		t.Errorf("categoria inexistente = %d, want 400", code)
 	}
 
-	// Filtro category_id.
 	_, rows := api.list("/produtos?category_id=" + catID)
 	if len(rows) != 1 || rows[0]["id"] != pid || rows[0]["category_name"] != catName {
 		t.Errorf("filtro category_id = %v", rows)

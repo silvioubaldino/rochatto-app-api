@@ -1,5 +1,3 @@
--- 009 — Assistant connector (AYD-006@context): servidor OAuth 2.1 + auditoria do /mcp.
--- Tabelas TÉCNICAS (não são entidades de negócio): exclusão física permitida (RN-08 não se aplica).
 
 CREATE TABLE oauth_clients (
   client_id     TEXT PRIMARY KEY,
@@ -47,7 +45,7 @@ CREATE TABLE oauth_tokens (
   kind          TEXT NOT NULL CHECK (kind IN ('ACCESS', 'REFRESH')),
   token_hash    TEXT NOT NULL UNIQUE,
   -- Detalhe de implementação: NULL = scopes da Connection; preenchido quando o refresh
-  -- REDUZ os scopes (AYD-006 §2.5) — o par seguinte herda a redução.
+  -- REDUZ os scopes — o par seguinte herda a redução.
   scopes        TEXT[],
   expires_at    TIMESTAMPTZ NOT NULL,
   rotated_at    TIMESTAMPTZ,
@@ -65,7 +63,7 @@ CREATE TABLE mcp_tool_calls (
   arguments_hash TEXT NOT NULL,
   outcome        TEXT NOT NULL CHECK (outcome IN ('OK', 'ERROR')),
   error_code     TEXT,
-  result         JSONB,           -- só ferramentas dedupe (AYD-006 §7)
+  result         JSONB,
   duration_ms    INTEGER NOT NULL DEFAULT 0,
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );

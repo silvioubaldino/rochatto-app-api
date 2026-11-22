@@ -1,7 +1,5 @@
 package handlers
 
-// C5 (AYD-011): fechamento da venda na conversão e na venda rápida.
-
 import (
 	"testing"
 )
@@ -10,7 +8,6 @@ func (e fxEnv) serviceItem(name string, qty, price, cost float64) map[string]any
 	return map[string]any{"product_name": name, "quantity": qty, "unit_price": price, "unit_cost": cost, "kind": "SERVICE"}
 }
 
-// quoteOf cria um Quote OPEN e devolve (id, ids dos Items na ordem).
 func (e fxEnv) quoteOf(items ...map[string]any) (string, []string) {
 	e.t.Helper()
 	q := e.must("POST", "/quotes", map[string]any{"customer_id": e.cid, "items": items}, 201)
@@ -47,7 +44,6 @@ func TestJourney_ClosingOnConvert(t *testing.T) {
 	sup, installer, partner := e.supplier(), e.supplier(), e.namedPartner("Arq. Closing")
 	e.must("POST", "/stock/adjustments", map[string]any{"product_id": stockProd, "quantity": 5, "unit_cost": 40, "reason": "INITIAL", "adjusted_at": "2026-01-01"}, 201)
 
-	// Itens: encomenda (1000), estoque 8 > saldo 5 (400), serviço (300) = 1700.
 	qid, ids := e.quoteOf(
 		qItem("Encomenda", 10, 100, 60, prod),
 		qItem("Do estoque", 8, 50, 10, stockProd),
@@ -90,7 +86,6 @@ func TestJourney_ClosingOnConvert(t *testing.T) {
 	if num(est, "custo_unit") != 40 || num(est, "stock_balance") != -3 {
 		t.Errorf("FROM_STOCK: custo=%v saldo=%v, want 40 / -3", est["custo_unit"], est["stock_balance"])
 	}
-	// Custos: LABOR do serviço com o credor do closing + os 2 do closing.
 	costs := sale["composition"].(map[string]any)["costs"].([]any)
 	if len(costs) != 3 {
 		t.Fatalf("custos = %v", costs)
@@ -105,7 +100,6 @@ func TestJourney_ClosingOnConvert(t *testing.T) {
 	if payees["LABOR"] != "SUPPLIER" || payees["FREIGHT"] != "SUPPLIER" || payees["COMMISSION"] != "PARTNER" {
 		t.Errorf("credores = %v", payees)
 	}
-	// Conta a receber: plano e entrada (SALE_RECEIPT) cobrindo a 1ª parcela.
 	recv := e.api.obligation(e.api.receivable(saleID))
 	e.wantNum("receber", recv, "amount", 1700)
 	e.wantNum("receber", recv, "settled", 300)
@@ -142,7 +136,6 @@ func TestJourney_ClosingOnQuickSaleByIndex(t *testing.T) {
 	if sale["payment_status"] != "PAID" || len(res["warnings"].([]any)) != 0 {
 		t.Errorf("payment_status=%v warnings=%v", sale["payment_status"], res["warnings"])
 	}
-	// FROM_STOCK sem saldo por índice: aviso com item_index.
 	res = e.must("POST", "/quotes/quick-sale", map[string]any{
 		"customer_id": e.cid,
 		"items":       []map[string]any{qItem("Fora", 1, 10, 1, ""), qItem("Estoque", 1, 10, 1, prod)},
@@ -154,7 +147,6 @@ func TestJourney_ClosingOnQuickSaleByIndex(t *testing.T) {
 	}
 }
 
-// Sem closing (ou {}) a conversão é a de sempre; Items sob encomenda sem Supplier.
 func TestJourney_ClosingAbsentIsPlainConversion(t *testing.T) {
 	e := newJourneyEnv(t)
 	for _, body := range []any{nil, map[string]any{}, map[string]any{"closing": map[string]any{}}} {
@@ -171,7 +163,6 @@ func TestJourney_ClosingAbsentIsPlainConversion(t *testing.T) {
 	}
 }
 
-// Qualquer erro: nada é gravado e o campo é apontado.
 func TestJourney_ClosingErrorsAreAtomic(t *testing.T) {
 	e := newJourneyEnv(t)
 	prod, sup := e.product(), e.supplier()
@@ -227,7 +218,6 @@ func TestJourney_ClosingErrorsAreAtomic(t *testing.T) {
 	}
 	for _, c := range cases {
 		qid, ids := e.quoteOf(qItem("P", 10, 100, 10, prod), qItem("Sem produto", 1, 100, 10, ""), e.serviceItem("Serv", 1, 300, 100))
-		// preço = 1400
 		code, res := e.api.do("POST", "/quotes/"+qid+"/convert", map[string]any{"closing": c.closing(ids)})
 		if code != c.status || res["field"] != c.field {
 			t.Errorf("%s: %d %v, want %d %s", c.name, code, res, c.status, c.field)
@@ -243,7 +233,6 @@ func TestJourney_ClosingErrorsAreAtomic(t *testing.T) {
 	if got := e.count(`SELECT COUNT(*) FROM financial_movements`); got != movBefore {
 		t.Errorf("movimentações = %d, want %d", got, movBefore)
 	}
-	// Venda rápida: erro desfaz o Quote também.
 	quotesBefore := e.count(`SELECT COUNT(*) FROM quotes`)
 	code, res := e.api.do("POST", "/quotes/quick-sale", map[string]any{
 		"customer_id": e.cid, "items": []map[string]any{qItem("R", 1, 100, 10, "")},
@@ -260,7 +249,6 @@ func TestJourney_ClosingErrorsAreAtomic(t *testing.T) {
 	if got := e.count(`SELECT COUNT(*) FROM quotes`); got != quotesBefore {
 		t.Errorf("quotes = %d, want %d", got, quotesBefore)
 	}
-	// Quote inexistente / já convertido seguem 404 / 409.
 	e.must("POST", "/quotes/"+ghost+"/convert", map[string]any{"closing": map[string]any{}}, 404)
 	qid, _ := e.quoteOf(qItem("Z", 1, 1, 1, ""))
 	e.must("POST", "/quotes/"+qid+"/convert", nil, 201)

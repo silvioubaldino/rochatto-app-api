@@ -2,9 +2,6 @@ package handlers
 
 import "fmt"
 
-// Helpers dos testes de integração para contas, quitações e movimentações (AYD-007).
-
-// obligationsOf lista as contas de uma origem (SALE|PURCHASE).
 func (c apiClient) obligationsOf(originType, originID string, extra ...string) []any {
 	c.t.Helper()
 	q := "/obligations?origin_type=" + originType + "&origin_id=" + originID
@@ -19,7 +16,6 @@ func (c apiClient) obligationsOf(originType, originID string, extra ...string) [
 	return items
 }
 
-// receivable devolve o id da conta a receber da Sale.
 func (c apiClient) receivable(saleID string) string {
 	c.t.Helper()
 	items := c.obligationsOf("SALE", saleID, "direction=RECEIVABLE")
@@ -29,7 +25,6 @@ func (c apiClient) receivable(saleID string) string {
 	return items[0].(map[string]any)["id"].(string)
 }
 
-// receive recebe `amount` do cliente na Sale (quitação da conta a receber).
 func (c apiClient) receive(saleID string, amount float64, day, method string) (int, map[string]any) {
 	c.t.Helper()
 	return c.do("POST", "/obligations/"+c.receivable(saleID)+"/settle", map[string]any{
@@ -37,7 +32,6 @@ func (c apiClient) receive(saleID string, amount float64, day, method string) (i
 	})
 }
 
-// plan define parcelas (plano) de uma conta: [{due_date, amount}].
 func (c apiClient) plan(obligationID string, rows ...[2]any) (int, map[string]any) {
 	c.t.Helper()
 	ins := make([]map[string]any, 0, len(rows))
@@ -47,7 +41,6 @@ func (c apiClient) plan(obligationID string, rows ...[2]any) (int, map[string]an
 	return c.do("PUT", "/obligations/"+obligationID+"/installments", map[string]any{"installments": ins})
 }
 
-// payableOf devolve a conta a pagar da origem para o credor (supplier/partner id; "" = sem credor).
 func (c apiClient) payableOf(originType, originID, counterpartyID string) string {
 	c.t.Helper()
 	for _, it := range c.obligationsOf(originType, originID, "direction=PAYABLE") {
@@ -63,7 +56,6 @@ func (c apiClient) payableOf(originType, originID, counterpartyID string) string
 
 func str(v any) string { return fmt.Sprint(v) }
 
-// partner cria um Partner e devolve o id.
 func (e fxEnv) partner() string {
 	e.t.Helper()
 	var id string

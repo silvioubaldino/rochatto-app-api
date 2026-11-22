@@ -67,7 +67,7 @@ func TestValidQuoteStatuses(t *testing.T) {
 		{"LOST", true},
 		{"FOO", false},
 		{"", false},
-		{"open", false}, // enum é case-sensitive (AYD-001)
+		{"open", false},
 	}
 
 	for _, tc := range cases {

@@ -1,7 +1,5 @@
 package handlers
 
-// C9 (AYD-011): busca global.
-
 import (
 	"net/url"
 	"testing"
@@ -65,7 +63,6 @@ func TestJourney_GlobalSearch(t *testing.T) {
 	r := e.search("q=" + url.QueryEscape("MARIA"))
 	want := []string{"CUSTOMER", "QUOTE", "SALE", "PURCHASE", "PRODUCT", "SERVICE", "SUPPLIER", "PARTNER"}
 	got := r.types()
-	// PRODUCT e SERVICE têm "Mármore" mas não "maria": ficam fora.
 	if len(got) != 6 || got[0] != "CUSTOMER" || got[1] != "QUOTE" || got[2] != "SALE" || got[3] != "PURCHASE" || got[4] != "SUPPLIER" || got[5] != "PARTNER" {
 		t.Fatalf("tipos = %v (de %v)", got, want)
 	}
@@ -92,7 +89,6 @@ func TestJourney_GlobalSearch(t *testing.T) {
 		t.Errorf("partner = %v", k)
 	}
 
-	// Produto/serviço: kind = unidade.
 	r = e.search("q=marmore&types=SERVICE,PRODUCT")
 	if g := r.types(); len(g) != 2 || g[0] != "SERVICE" || g[1] != "PRODUCT" {
 		t.Errorf("ordem de types = %v", g)
@@ -104,8 +100,7 @@ func TestJourney_GlobalSearch(t *testing.T) {
 		t.Errorf("service = %v", it)
 	}
 
-	// Número exato (QUOTE/SALE/PURCHASE) e "#n"; telefone (com e sem máscara).
-	for _, q := range []string{"%231", "%2301"} { // "#1" e "#01" (q tem ao menos 2 caracteres)
+	for _, q := range []string{"%231", "%2301"} {
 		r = e.search("q=" + q + "&types=QUOTE,SALE,PURCHASE")
 		if g := r.types(); len(g) != 3 {
 			t.Errorf("q=%s tipos = %v", q, g)
@@ -145,7 +140,6 @@ func TestJourney_SearchRankingLimitAndValidation(t *testing.T) {
 	if r = e.search("q=ana&types=CUSTOMER&limit=1"); len(r.items("CUSTOMER")) != 1 {
 		t.Errorf("limit=1 = %v", r.groups)
 	}
-	// Curinga do LIKE é literal.
 	if r = e.search("q=" + url.QueryEscape("100%")); len(r.items("CUSTOMER")) != 1 {
 		t.Errorf("q=100%% = %v", r.groups)
 	}

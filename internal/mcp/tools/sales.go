@@ -8,7 +8,6 @@ import (
 	"github.com/silvioubaldino/sales-backend/internal/mcp/toolkit"
 )
 
-// SalesTools: Sales, leitura e escrita (AYD-006 §4.1 — módulo Sales).
 func SalesTools() []toolkit.Tool {
 	return []toolkit.Tool{listSales, getSale, updateSale, updateSaleItem, setSaleDeliveryStatus, cancelSale, setSaleCosts, addSaleCharge}
 }
@@ -81,8 +80,6 @@ var getSale = toolkit.Define(toolkit.Meta{
 	return GetSaleOut{Sale: out}, nil
 })
 
-// --- update_sale (W · I): atualização parcial (GET + PUT completo) ---
-
 type UpdateSaleIn struct {
 	SaleID               UUID                           `json:"sale_id" jsonschema:"id da venda (obtenha com list_sales)"`
 	ExpectedDeliveryDate toolkit.Nullable[toolkit.Date] `json:"expected_delivery_date,omitzero" jsonschema:"prazo de entrega YYYY-MM-DD; null limpa"`
@@ -119,8 +116,6 @@ var updateSale = toolkit.Define(toolkit.Meta{
 	return UpdateSaleOut{Sale: updated.toEN(), Warnings: noWarnings()}, nil
 })
 
-// toLegacySalePut aplica só os campos enviados sobre a representação atual da Sale e monta o
-// corpo do PUT legado (substituição completa — AYD-006 §4.3). Função pura (testável sem banco).
 func toLegacySalePut(cur legacySale, in UpdateSaleIn) map[string]any {
 	body := map[string]any{
 		"vendedor_externo_id":   cur.VendedorExternoID,
@@ -143,8 +138,6 @@ func toLegacySalePut(cur legacySale, in UpdateSaleIn) map[string]any {
 	}
 	return body
 }
-
-// --- set_sale_costs (W · I) e add_sale_charge (W · dd): composição da venda (AYD-009) ---
 
 type SaleCostIn struct {
 	Kind            toolkit.SaleCostKind `json:"kind" jsonschema:"FREIGHT (frete pago a motorista/transportadora), LABOR (instalador/mão de obra), COMMISSION (comissão) ou OTHER"`
@@ -310,8 +303,6 @@ func dedupStrings(in []string) []string {
 	return out
 }
 
-// --- update_sale_item (W · I): atualização parcial (GET + PUT completo) ---
-
 type UpdateSaleItemIn struct {
 	SaleID     UUID                   `json:"sale_id" jsonschema:"id da venda (obtenha com list_sales)"`
 	ItemID     UUID                   `json:"item_id" jsonschema:"id do item da venda (obtenha com get_sale)"`
@@ -369,7 +360,6 @@ var updateSaleItem = toolkit.Define(toolkit.Meta{
 		return UpdateSaleItemOut{}, toolkit.NewToolError(toolkit.CodeNotFound, "item não encontrado")
 	}
 	if item.Kind == "SERVICE" {
-		// Item de serviço não tem origem nem fornecedor; o custo é um custo da venda (AYD-010).
 		if in.Origin != "" || (in.SupplierID.Present && !in.SupplierID.Null) {
 			return UpdateSaleItemOut{}, invalid("item de serviço não aceita origin nem supplier_id")
 		}
@@ -379,7 +369,6 @@ var updateSaleItem = toolkit.Define(toolkit.Meta{
 	}
 	body := toLegacyItemPut(*item, in)
 	if in.SupplierID.Present && !in.SupplierID.Null {
-		// O nome do fornecedor é texto no item: acompanha o novo id (falha aqui deixa a API validar o id).
 		if sup, err := get[legacySupplier](ctx, gw, "/fornecedores/"+pathID(string(in.SupplierID.Value)), nil); err == nil {
 			body["fornecedor_nome"] = sup.Nome
 		}
@@ -397,16 +386,14 @@ var updateSaleItem = toolkit.Define(toolkit.Meta{
 	return UpdateSaleItemOut{Item: r.toEN(), Warnings: r.Warnings}, nil
 })
 
-// toLegacyItemPut aplica os campos enviados sobre o Item atual e monta o PUT legado completo.
-// custo_unit: enviado se informado; se a origem mudar e não vier custo, é omitido para a API
-// aplicar a regra RN-16 (FROM_STOCK usa o custo da última entrada); senão mantém o atual.
+// custo_unit: enviado se informado; se a origem mudar e não vier custo, é omitido para a API aplicar a regra RN-16 (FROM_STOCK usa o custo da última entrada); senão mantém o atual.
 func toLegacyItemPut(cur legacySaleItem, in UpdateSaleItemIn) map[string]any {
 	body := map[string]any{
 		"produto_id": cur.ProdutoID, "produto_nome": cur.ProdutoNome, "fornecedor_id": cur.FornecedorID,
 		"fornecedor_nome": cur.FornecedorNome, "quantidade": cur.Quantidade, "preco_venda_unit": cur.PrecoVendaUnit,
 		"custo_unit": cur.CustoUnit, "origin": cur.Origin, "service_id": cur.ServiceID,
 	}
-	body["origin"] = nil // Item de serviço não tem origem
+	body["origin"] = nil
 	if cur.Origin != nil {
 		body["origin"] = *cur.Origin
 	}
@@ -437,8 +424,6 @@ func toLegacyItemPut(cur legacySaleItem, in UpdateSaleItemIn) map[string]any {
 	}
 	return body
 }
-
-// --- set_sale_delivery_status (W · I) e cancel_sale (D · I) ---
 
 type SetSaleDeliveryStatusIn struct {
 	SaleID         UUID                           `json:"sale_id" jsonschema:"id da venda (obtenha com list_sales)"`

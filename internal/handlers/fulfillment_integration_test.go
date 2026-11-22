@@ -1,9 +1,5 @@
 package handlers
 
-// Testes de integração do AYD-002 (atendimento da Sale: origem do Item, Purchase, Stock,
-// status da Sale) contra um Postgres real. Mesmas condições dos outros *_integration_test:
-// só rodam com TEST_DATABASE_URL (banco descartável com as migrations aplicadas; os dados
-// criados não são limpos — totais globais são conferidos por diferença).
 import (
 	"net/http"
 	"testing"
@@ -52,7 +48,6 @@ func (e fxEnv) product() string {
 	return id
 }
 
-// sale cria uma Sale por venda rápida com os Items dados e devolve (saleID, itemIDs).
 func (e fxEnv) sale(items ...map[string]any) (string, []string) {
 	e.t.Helper()
 	code, res := e.api.do("POST", "/quotes/quick-sale", map[string]any{"customer_id": e.cid, "items": items})
@@ -76,7 +71,6 @@ func qItem(name string, qty, price, cost float64, productID string) map[string]a
 	return m
 }
 
-// putItem faz PUT do Item com o payload legado + campos novos.
 func (e fxEnv) putItem(saleID, itemID string, body map[string]any) (int, map[string]any) {
 	e.t.Helper()
 	return e.api.do("PUT", "/vendas/"+saleID+"/itens/"+itemID, body)
@@ -106,8 +100,6 @@ func hasWarning(res map[string]any, w string) bool {
 	return false
 }
 
-// RN-16: FROM_STOCK preenche o custo com a última entrada; sem saldo avisa e deixa o
-// Balance negativo; cancelar a Sale tira o Outflow.
 func TestIntegration_FromStockCostWarningAndBalance(t *testing.T) {
 	e := newFulfillmentEnv(t)
 	pid := e.product()
@@ -115,7 +107,7 @@ func TestIntegration_FromStockCostWarningAndBalance(t *testing.T) {
 	for _, adj := range []map[string]any{
 		{"product_id": pid, "quantity": 5, "unit_cost": 40, "reason": "INITIAL", "adjusted_at": "2026-01-01"},
 		{"product_id": pid, "quantity": 2, "unit_cost": 45, "reason": "COUNT", "adjusted_at": "2026-02-01"},
-		{"product_id": pid, "quantity": -1, "unit_cost": 99, "reason": "OTHER", "adjusted_at": "2026-03-01"}, // OTHER não define custo
+		{"product_id": pid, "quantity": -1, "unit_cost": 99, "reason": "OTHER", "adjusted_at": "2026-03-01"},
 	} {
 		if code, res := e.api.do("POST", "/stock/adjustments", adj); code != 201 {
 			t.Fatalf("POST adjustment = %d %v", code, res)
@@ -128,7 +120,6 @@ func TestIntegration_FromStockCostWarningAndBalance(t *testing.T) {
 
 	saleID, items := e.sale(qItem("Pedra", 10, 100, 99, pid))
 
-	// PUT origin FROM_STOCK sem custo_unit → custo 45 e aviso (6 − 10 < 0).
 	code, res := e.putItem(saleID, items[0], map[string]any{
 		"produto_id": pid, "produto_nome": "Pedra", "quantidade": 10, "preco_venda_unit": 100, "origin": "FROM_STOCK"})
 	if code != 200 || num(res, "custo_unit") != 45 || res["origin"] != "FROM_STOCK" || !hasWarning(res, "INSUFFICIENT_STOCK") {
@@ -152,7 +143,6 @@ func TestIntegration_FromStockCostWarningAndBalance(t *testing.T) {
 		t.Error("only_negative não trouxe o Product negativo")
 	}
 
-	// Extrato: quantity com sinal (OUTFLOW negativo, reference_id = Sale; ajustes com o próprio sinal).
 	var outflow, otherAdj map[string]any
 	for _, m := range b["movements"].([]any) {
 		mv := m.(map[string]any)
@@ -173,26 +163,22 @@ func TestIntegration_FromStockCostWarningAndBalance(t *testing.T) {
 		t.Errorf("extrato (ordem desc por data) = %v", mv)
 	}
 
-	// custo_unit explícito é respeitado; com saldo suficiente não há aviso.
 	code, res = e.putItem(saleID, items[0], map[string]any{
 		"produto_id": pid, "produto_nome": "Pedra", "quantidade": 1, "preco_venda_unit": 100, "custo_unit": 50, "origin": "FROM_STOCK"})
 	if code != 200 || num(res, "custo_unit") != 50 || len(res["warnings"].([]any)) != 0 {
 		t.Errorf("PUT custo explícito = %d %v", code, res)
 	}
 
-	// FROM_STOCK sem produto_id → 400.
 	if code, _ := e.api.do("POST", "/vendas/"+saleID+"/itens", map[string]any{
 		"produto_nome": "X", "quantidade": 1, "preco_venda_unit": 1, "origin": "FROM_STOCK"}); code != 400 {
 		t.Errorf("FROM_STOCK sem produto = %d, want 400", code)
 	}
-	// POST FROM_STOCK sem custo → última entrada.
 	code, res = e.api.do("POST", "/vendas/"+saleID+"/itens", map[string]any{
 		"produto_id": pid, "produto_nome": "Pedra", "quantidade": 8, "preco_venda_unit": 100, "origin": "FROM_STOCK"})
 	if code != 201 || num(res, "custo_unit") != 45 || !hasWarning(res, "INSUFFICIENT_STOCK") {
 		t.Errorf("POST FROM_STOCK = %d %v", code, res)
 	}
 
-	// Cancelar a Sale tira o Outflow do Balance.
 	if code, _ := e.api.do("PATCH", "/vendas/"+saleID+"/delivery-status", map[string]any{"delivery_status": "CANCELED"}); code != 200 {
 		t.Fatalf("cancel = %d", code)
 	}
@@ -201,13 +187,11 @@ func TestIntegration_FromStockCostWarningAndBalance(t *testing.T) {
 	}
 }
 
-// Inflow só de reposição RECEIVED; custo da última entrada passa a ser o da Purchase recebida.
 func TestIntegration_ReplenishmentInflow(t *testing.T) {
 	e := newFulfillmentEnv(t)
 	pid, sid := e.product(), e.supplier()
 	e.api.do("POST", "/stock/adjustments", map[string]any{"product_id": pid, "quantity": 3, "unit_cost": 40, "reason": "INITIAL", "adjusted_at": "2026-01-01"})
 
-	// MADE_TO_ORDER não aceita linhas; STOCK_REPLENISHMENT não aceita Items de Sale.
 	if code, _ := e.api.do("POST", "/purchases", map[string]any{"kind": "MADE_TO_ORDER", "supplier_id": sid,
 		"items": []map[string]any{{"product_id": pid, "quantity": 1, "unit_cost": 1}}}); code != 400 {
 		t.Errorf("MTO com items = %d, want 400", code)
@@ -219,7 +203,6 @@ func TestIntegration_ReplenishmentInflow(t *testing.T) {
 	}
 	id := p["id"].(string)
 
-	// Linha extra, editar e remover (só OPEN).
 	code, line := e.api.do("POST", "/purchases/"+id+"/items", map[string]any{"product_id": pid, "quantity": 2, "unit_cost": 70})
 	if code != 201 || line["product_name"] == nil {
 		t.Fatalf("POST linha = %d %v", code, line)
@@ -231,7 +214,6 @@ func TestIntegration_ReplenishmentInflow(t *testing.T) {
 		t.Errorf("DELETE linha = %d", code)
 	}
 
-	// OPEN / ORDERED não geram Inflow.
 	e.api.do("PATCH", "/purchases/"+id+"/status", map[string]any{"status": "ORDERED"})
 	if b := e.balance(pid); num(b, "inflow_qty") != 0 || num(b, "balance") != 3 {
 		t.Errorf("ORDERED gerou inflow: %v", b)
@@ -266,7 +248,6 @@ func TestIntegration_ReplenishmentInflow(t *testing.T) {
 	}
 }
 
-// RF-31: fila agrupada por Supplier; anexar Items com as travas de 409.
 func TestIntegration_PendingQueueAndAttach(t *testing.T) {
 	e := newFulfillmentEnv(t)
 	supA, supB, pid := e.supplier(), e.supplier(), e.product()
@@ -290,7 +271,7 @@ func TestIntegration_PendingQueueAndAttach(t *testing.T) {
 		t.Fatalf("cancel = %d", code)
 	}
 
-	queue := func() map[string][]string { // supplier_id ("" = sem Supplier) → item ids
+	queue := func() map[string][]string {
 		t.Helper()
 		code, groups := e.api.list("/purchases/pending-sale-items")
 		if code != 200 {
@@ -335,7 +316,6 @@ func TestIntegration_PendingQueueAndAttach(t *testing.T) {
 		}
 	}
 
-	// Gera a Purchase do Supplier A com A1.
 	code, p := e.api.do("POST", "/purchases", map[string]any{"kind": "MADE_TO_ORDER", "supplier_id": supA, "sale_item_ids": []string{it[0]}})
 	if code != 201 || num(p, "total_cost") != 60 || num(p, "payable") != 60 || len(p["sale_items"].([]any)) != 1 || p["supplier_name"] == nil {
 		t.Fatalf("POST purchase = %d %v", code, p)
@@ -349,7 +329,6 @@ func TestIntegration_PendingQueueAndAttach(t *testing.T) {
 		t.Error("Item comprado continua na fila")
 	}
 
-	// 409: outro Supplier, FROM_STOCK, Sale cancelada, já em outra Purchase.
 	attach := func(purchaseID, itemID string) int {
 		code, _ := e.api.do("POST", "/purchases/"+purchaseID+"/sale-items", map[string]any{"sale_item_ids": []string{itemID}})
 		return code
@@ -374,7 +353,6 @@ func TestIntegration_PendingQueueAndAttach(t *testing.T) {
 		t.Errorf("linha de reposição em MTO = %d, want 409", code)
 	}
 
-	// Item em Purchase OPEN: mudar quantidade/custo/Supplier/origem → 409; mudar preço → 200; DELETE → 409.
 	locked := []map[string]any{
 		{"produto_nome": "A1", "quantidade": 3, "preco_venda_unit": 100, "custo_unit": 60, "fornecedor_id": supA},
 		{"produto_nome": "A1", "quantidade": 1, "preco_venda_unit": 100, "custo_unit": 61, "fornecedor_id": supA},
@@ -400,7 +378,6 @@ func TestIntegration_PendingQueueAndAttach(t *testing.T) {
 		}
 	}
 
-	// Desanexar devolve à fila.
 	if code, _ := e.api.do("DELETE", "/purchases/"+pidA+"/sale-items/"+it[0], nil); code != 204 {
 		t.Errorf("detach = %d", code)
 	}
@@ -411,7 +388,6 @@ func TestIntegration_PendingQueueAndAttach(t *testing.T) {
 		t.Errorf("detach de novo = %d, want 404", code)
 	}
 
-	// Excluir Purchase OPEN libera os Items.
 	attach(pidA, it[0])
 	if code, _ := e.api.do("DELETE", "/purchases/"+pidA, nil); code != 204 {
 		t.Errorf("DELETE purchase OPEN = %d", code)
@@ -435,7 +411,6 @@ func TestIntegration_PendingQueueAndAttach(t *testing.T) {
 	}
 }
 
-// Transições de status (incl. 422 vazia), carimbos, pagamento e travas pós-pedido.
 func TestIntegration_PurchaseStatusPaymentAndCancel(t *testing.T) {
 	e := newFulfillmentEnv(t)
 	sup := e.supplier()
@@ -462,7 +437,6 @@ func TestIntegration_PurchaseStatusPaymentAndCancel(t *testing.T) {
 		t.Errorf("status inválido = %d, want 400", code)
 	}
 
-	// Purchase com P1; P2 fica em outra Purchase OPEN.
 	_, p := e.api.do("POST", "/purchases", map[string]any{"kind": "MADE_TO_ORDER", "supplier_id": sup, "sale_item_ids": []string{it[0]}})
 	id := p["id"].(string)
 	_, pOpen := e.api.do("POST", "/purchases", map[string]any{"kind": "MADE_TO_ORDER", "supplier_id": sup, "sale_item_ids": []string{it[1]}})
@@ -491,7 +465,6 @@ func TestIntegration_PurchaseStatusPaymentAndCancel(t *testing.T) {
 		t.Errorf("cancelar com Item em Purchase ORDERED = %d, want 409", code)
 	}
 
-	// Pagamento (AYD-007): quitar a conta do Supplier da compra; Σ a pagar no painel acompanha (RN-06).
 	resumo := func() float64 {
 		t.Helper()
 		_, r := e.api.do("GET", "/dashboard/resumo", nil)
@@ -515,7 +488,6 @@ func TestIntegration_PurchaseStatusPaymentAndCancel(t *testing.T) {
 	if d := resumo() - before; !approx(d, -200) {
 		t.Errorf("a pagar delta após quitar = %v, want -200", d)
 	}
-	// Desfazer a quitação reabre a conta; pagar a menos deixa PENDING com saldo.
 	settlementID := mv["settlements"].([]any)[0].(map[string]any)["id"].(string)
 	if code, _ := e.api.do("DELETE", "/settlements/"+settlementID, nil); code != 204 {
 		t.Errorf("DELETE settlement = %d, want 204", code)
@@ -537,7 +509,6 @@ func TestIntegration_PurchaseStatusPaymentAndCancel(t *testing.T) {
 	}
 	e.api.do("POST", "/obligations/"+supObl+"/settle", map[string]any{"movement": map[string]any{"occurred_on": day, "payment_method": "PIX"}})
 
-	// Pedida → recebida; continua impedindo o cancelamento.
 	code, st = e.api.do("PATCH", "/purchases/"+id+"/status", map[string]any{"status": "RECEIVED"})
 	if code != 200 || st["received_at"] != day || st["ordered_at"] != day {
 		t.Errorf("ORDERED→RECEIVED = %d %v", code, st)
@@ -546,7 +517,6 @@ func TestIntegration_PurchaseStatusPaymentAndCancel(t *testing.T) {
 		t.Errorf("cancelar com Item em Purchase RECEIVED = %d, want 409", code)
 	}
 
-	// Lista com filtros.
 	code, list := e.api.list("/purchases?supplier_id=" + sup + "&status=RECEIVED&payment_status=PAID&kind=MADE_TO_ORDER&from=" + day + "&to=" + day)
 	if code != 200 || len(list) != 1 || list[0]["id"] != id {
 		t.Errorf("GET /purchases filtrado = %d %v", code, list)
@@ -555,7 +525,6 @@ func TestIntegration_PurchaseStatusPaymentAndCancel(t *testing.T) {
 		t.Errorf("filtro inválido = %d, want 400", code)
 	}
 
-	// Outra Sale: Item em Purchase OPEN é liberado ao cancelar.
 	sale2, it2 := e.sale(qItem("Q1", 1, 500, 300, ""))
 	e.putItem(sale2, it2[0], map[string]any{"produto_nome": "Q1", "quantidade": 1, "preco_venda_unit": 500, "custo_unit": 300, "fornecedor_id": sup})
 	pOpenID := pOpen["id"].(string)
@@ -575,7 +544,6 @@ func TestIntegration_PurchaseStatusPaymentAndCancel(t *testing.T) {
 	if stillLinked != 0 {
 		t.Error("Item da Sale cancelada continua na Purchase")
 	}
-	// CANCELED é terminal.
 	if code, _ := e.api.do("PATCH", "/vendas/"+sale2+"/delivery-status", map[string]any{"delivery_status": "TO_DELIVER"}); code != 409 {
 		t.Errorf("reabrir cancelada = %d, want 409", code)
 	}
@@ -584,7 +552,6 @@ func TestIntegration_PurchaseStatusPaymentAndCancel(t *testing.T) {
 	}
 }
 
-// Delivery status manual, payment_status derivado dos Receipts e filtros da listagem.
 func TestIntegration_SaleStatuses(t *testing.T) {
 	e := newFulfillmentEnv(t)
 	saleID, _ := e.sale(qItem("R1", 1, 1000, 500, ""))
@@ -646,7 +613,6 @@ func TestIntegration_SaleStatuses(t *testing.T) {
 		t.Errorf("filtro inválido = %d, want 400", code)
 	}
 
-	// PUT não aceita status; POST /vendas não existe mais.
 	if code, _ := e.api.do("PUT", "/vendas/"+saleID, map[string]any{"status": "ENTREGUE"}); code != 400 {
 		t.Errorf("PUT com status = %d, want 400", code)
 	}
@@ -658,7 +624,6 @@ func TestIntegration_SaleStatuses(t *testing.T) {
 	}
 }
 
-// Sales canceladas saem de todos os totais do painel/dashboard e dos relatórios.
 func TestIntegration_DashboardExcludesCanceled(t *testing.T) {
 	e := newFulfillmentEnv(t)
 	var day, month string
@@ -713,7 +678,6 @@ func TestIntegration_DashboardExcludesCanceled(t *testing.T) {
 			t.Errorf("%s: %v, want %v", c.name, c.got, c.want)
 		}
 	}
-	// "a receber" da listagem (pendente=true) também exclui a cancelada.
 	_, list := e.api.list("/vendas?cliente_id=" + e.cid + "&pendente=true")
 	for _, s := range list {
 		if s["id"] == saleID {

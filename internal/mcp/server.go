@@ -1,6 +1,4 @@
-// Package mcp monta o servidor MCP do Assistant connector (AYD-006 §1, ADR-002@context):
-// transporte Streamable HTTP stateless sobre o SDK oficial, autenticação Bearer com
-// recheck da allowlist, o pipeline único de chamadas e o catálogo versionado de ferramentas.
+// Package mcp monta o servidor MCP do Assistant connector.
 package mcp
 
 import (
@@ -16,24 +14,20 @@ import (
 	"github.com/silvioubaldino/sales-backend/internal/oauth"
 )
 
-// Options configura o handler do /mcp.
 type Options struct {
 	Config   oauth.Config
 	Verifier TokenVerifier
 	Pipeline PipelineOptions
-	// Tools é o catálogo; nil usa Catalog().
-	Tools []toolkit.Tool
+	Tools    []toolkit.Tool
 }
 
-// TokenVerifier valida o access token (implementado por *oauth.Server).
 type TokenVerifier interface {
 	VerifyAccessToken(ctx context.Context, token string) (*oauth.Principal, error)
 }
 
 const principalKey = "principal"
 
-// NewHandler devolve o http.Handler do endpoint /mcp. Ordem das verificações HTTP:
-// Origin (403) → método (405 para GET/DELETE) → Bearer (401) → JSON-RPC (SDK).
+// Ordem das verificações HTTP: Origin (403) → método (405 para GET/DELETE) → Bearer (401) → JSON-RPC (SDK).
 func NewHandler(o Options) (http.Handler, error) {
 	catalog := o.Tools
 	if catalog == nil {
@@ -48,7 +42,6 @@ func NewHandler(o Options) (http.Handler, error) {
 		&sdk.Implementation{Name: "rochatto", Title: "Rochatto", Version: CatalogVersion},
 		&sdk.ServerOptions{
 			Instructions: Instructions,
-			// tools: { listChanged: false } — o catálogo não muda em tempo de execução.
 			Capabilities: &sdk.ServerCapabilities{Tools: &sdk.ToolCapabilities{ListChanged: false}},
 		},
 	)
@@ -64,7 +57,6 @@ func NewHandler(o Options) (http.Handler, error) {
 			return pipe.Call(ctx, t, pr, req.Params.Arguments), nil
 		})
 	}
-	// tools/list devolve só as ferramentas que os scopes da Connection permitem (§3.8).
 	srv.AddReceivingMiddleware(func(next sdk.MethodHandler) sdk.MethodHandler {
 		return func(ctx context.Context, method string, req sdk.Request) (sdk.Result, error) {
 			res, err := next(ctx, method, req)
@@ -133,7 +125,6 @@ type handler struct {
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Origin: proteção contra DNS rebinding. Sem Origin (servidor-a-servidor) segue.
 	if origin := r.Header.Get("Origin"); origin != "" && !h.allowedOrigins[origin] {
 		writeJSONError(w, http.StatusForbidden, "origin não permitida")
 		return
@@ -162,10 +153,9 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Scopes: pr.Scopes, Expiration: pr.ExpiresAt, UserID: pr.ConnectionID.String(),
 		Extra: map[string]any{principalKey: pr},
 	}
-	// O SDK guarda o TokenInfo no contexto e o repassa aos handlers (RequestExtra).
 	auth.RequireBearerToken(func(context.Context, string, *http.Request) (*auth.TokenInfo, error) {
 		return info, nil
-	}, &auth.RequireBearerTokenOptions{AllowMissingExpiration: true})(h.stream).ServeHTTP(w, r) // validade já checada pelo verificador
+	}, &auth.RequireBearerTokenOptions{AllowMissingExpiration: true})(h.stream).ServeHTTP(w, r)
 }
 
 func bearerToken(r *http.Request) (string, bool) {
@@ -176,7 +166,6 @@ func bearerToken(r *http.Request) (string, bool) {
 	return f[1], true
 }
 
-// unauthorized responde 401 com WWW-Authenticate (dispara o login no Claude — §1).
 func (h *handler) unauthorized(w http.ResponseWriter, invalid bool) {
 	v := `Bearer resource_metadata="` + h.cfg.PublicBaseURL + `/.well-known/oauth-protected-resource/mcp", scope="read write"`
 	if invalid {

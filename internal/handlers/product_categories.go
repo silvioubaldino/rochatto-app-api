@@ -12,8 +12,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// ProductCategoriesHandler expõe /product-categories (AYD-003): categorias de Product
-// cadastráveis pelo dono, nome único ignorando caixa entre as não excluídas.
 type ProductCategoriesHandler struct {
 	db *gorm.DB
 }
@@ -45,9 +43,6 @@ func (h *ProductCategoriesHandler) list(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, categories)
 }
 
-// nameTaken checa duplicidade (case-insensitive) entre categorias não excluídas,
-// ignorando a própria categoria (exceptID) num rename. O índice único parcial
-// ux_product_categories_name continua sendo a garantia final (corrida → 23505 → 409).
 func (h *ProductCategoriesHandler) nameTaken(ctx context.Context, name string, exceptID *uuid.UUID) (bool, error) {
 	q := h.db.WithContext(ctx).Model(&models.ProductCategory{}).Where("lower(name) = lower(?)", name)
 	if exceptID != nil {
@@ -154,7 +149,6 @@ func (h *ProductCategoriesHandler) delete(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Soft-delete: Products mantêm o category_id e continuam exibindo category_name.
 	res := h.db.WithContext(r.Context()).Delete(&models.ProductCategory{}, "id = ?", id)
 	if res.Error != nil {
 		log.Printf("ERROR SoftDeleteProductCategory: %v", res.Error)

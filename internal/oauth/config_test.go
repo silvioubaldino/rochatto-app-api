@@ -113,7 +113,6 @@ func TestNormalizeScopes(t *testing.T) {
 }
 
 func TestPKCE(t *testing.T) {
-	// Vetor do RFC 7636 apêndice B.
 	const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
 	const challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
 	if !pkceOK(verifier, challenge) || pkceOK(verifier+"x", challenge) {
@@ -126,7 +125,7 @@ func TestPKCE(t *testing.T) {
 
 func TestTokensAreOpaqueAndHashed(t *testing.T) {
 	a, b := randomToken(), randomToken()
-	if a == b || len(a) != 43 { // 32 bytes em base64url sem padding
+	if a == b || len(a) != 43 {
 		t.Errorf("token = %q", a)
 	}
 	h := hashToken(a)

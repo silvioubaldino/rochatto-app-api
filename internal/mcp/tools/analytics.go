@@ -8,12 +8,9 @@ import (
 	"github.com/silvioubaldino/sales-backend/internal/mcp/toolkit"
 )
 
-// AnalyticsTools: indicadores (AYD-006 §4.1 — módulo Analytics).
 func AnalyticsTools() []toolkit.Tool {
 	return []toolkit.Tool{getDashboardKPIs, getTopProducts, getTopServices, getMonthlySales}
 }
-
-// --- get_dashboard_kpis (resposta de /dashboard/kpis — AYD-005, já EN) ---
 
 type KPISales struct {
 	Count         int     `json:"count"`
@@ -58,8 +55,6 @@ var getDashboardKPIs = toolkit.Define(toolkit.Meta{
 }, func(ctx context.Context, gw toolkit.Gateway, in PeriodIn) (DashboardKPIs, error) {
 	return get[DashboardKPIs](ctx, gw, "/dashboard/kpis", in.query())
 })
-
-// --- get_top_products ---
 
 type TopProduct struct {
 	ProductID            *UUID   `json:"product_id,omitempty"`
@@ -114,8 +109,6 @@ var getTopProducts = toolkit.Define(toolkit.Meta{
 	return out, nil
 })
 
-// --- get_monthly_sales ---
-
 type GetMonthlySalesIn struct {
 	Months *toolkit.Months `json:"months,omitempty"`
 }
@@ -166,8 +159,6 @@ var getMonthlySales = toolkit.Define(toolkit.Meta{
 	}
 	return out, nil
 })
-
-// --- get_top_services (AYD-010) ---
 
 type TopService struct {
 	ServiceID            *UUID   `json:"service_id,omitempty"`

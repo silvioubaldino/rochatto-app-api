@@ -9,7 +9,6 @@ import (
 	"github.com/silvioubaldino/sales-backend/internal/mcp/toolkit"
 )
 
-// CRMTools: Customers, Partners e Quotes, leitura e escrita (AYD-006 §4.1 — módulo Catalog/CRM e CRM).
 func CRMTools() []toolkit.Tool {
 	return []toolkit.Tool{
 		searchCustomers, getCustomer, createCustomer, searchPartners, listQuotes, getQuote,
@@ -18,8 +17,6 @@ func CRMTools() []toolkit.Tool {
 }
 
 func pathID(id string) string { return url.PathEscape(strings.TrimSpace(id)) }
-
-// --- search_customers ---
 
 type SearchCustomersIn struct {
 	Query      string             `json:"query,omitempty" jsonschema:"trecho do nome do cliente (sem diferenciar acentos nem maiúsculas)"`
@@ -53,8 +50,6 @@ var searchCustomers = toolkit.Define(toolkit.Meta{
 	}
 	return toolkit.Paginate(all, in.Page), nil
 })
-
-// --- get_customer ---
 
 type GetCustomerIn struct {
 	CustomerID UUID `json:"customer_id" jsonschema:"id do cliente (obtenha com search_customers)"`
@@ -92,8 +87,6 @@ var getCustomer = toolkit.Define(toolkit.Meta{
 	return out, nil
 })
 
-// --- search_partners ---
-
 type SearchPartnersIn struct {
 	Query string              `json:"query,omitempty" jsonschema:"trecho do nome do parceiro"`
 	Type  toolkit.PartnerType `json:"type,omitempty" jsonschema:"tipo do parceiro"`
@@ -124,8 +117,6 @@ var searchPartners = toolkit.Define(toolkit.Meta{
 	}
 	return toolkit.Paginate(all, in.Page), nil
 })
-
-// --- list_quotes ---
 
 type ListQuotesIn struct {
 	Status     toolkit.QuoteStatus `json:"status,omitempty" jsonschema:"status do orçamento"`
@@ -161,8 +152,6 @@ var listQuotes = toolkit.Define(toolkit.Meta{
 	return toolkit.Paginate(rows, in.Page), nil
 })
 
-// --- get_quote ---
-
 type GetQuoteIn struct {
 	QuoteID UUID `json:"quote_id" jsonschema:"id do orçamento (obtenha com list_quotes)"`
 }
@@ -193,8 +182,6 @@ var getQuote = toolkit.Define(toolkit.Meta{
 	}
 	return GetQuoteOut{Quote: q}, nil
 })
-
-// --- create_customer (W · dd) ---
 
 type CreateCustomerIn struct {
 	Name       string             `json:"name" jsonschema:"nome do cliente (1 a 200 caracteres)"`
@@ -235,8 +222,6 @@ var createCustomer = toolkit.Define(toolkit.Meta{
 	}
 	return CreateCustomerOut{Customer: c.toEN(), Warnings: noWarnings()}, nil
 })
-
-// --- create_quote (W · dd) e create_quick_sale (W · dd): mesma entrada (§4.3) ---
 
 type QuoteItemIn struct {
 	Kind        toolkit.ItemKind `json:"kind,omitempty" jsonschema:"PRODUCT (pedra; padrão) ou SERVICE (serviço, ex.: instalação, consultoria)"`
@@ -336,8 +321,6 @@ func (q QuoteDetail) normalized() QuoteDetail {
 	return q
 }
 
-// --- set_quote_status (W · I) ---
-
 type SetQuoteStatusIn struct {
 	QuoteID    UUID                        `json:"quote_id" jsonschema:"id do orçamento (obtenha com list_quotes)"`
 	Status     toolkit.SettableQuoteStatus `json:"status" jsonschema:"novo status: LOST (perdido) ou OPEN (reabrir)"`
@@ -372,8 +355,6 @@ var setQuoteStatus = toolkit.Define(toolkit.Meta{
 	return SetQuoteStatusOut{QuoteID: r.ID, Status: r.Status, LostReason: opt(r.LostReason), Warnings: noWarnings()}, nil
 })
 
-// --- convert_quote_to_sale (D) e create_quick_sale (W · dd) ---
-
 type ConvertQuoteToSaleIn struct {
 	QuoteID UUID `json:"quote_id" jsonschema:"id do orçamento OPEN (obtenha com list_quotes)"`
 }
@@ -396,7 +377,6 @@ type ConvertQuoteToSaleOut struct {
 	Warnings []string   `json:"warnings"`
 }
 
-// readCreatedSale lê a Sale criada para devolver o detalhe (a escrita já foi gravada).
 func readCreatedSale(ctx context.Context, gw toolkit.Gateway, r convertResult) (SaleCreatedOut, error) {
 	d, err := get[legacySaleDetail](ctx, gw, "/vendas/"+pathID(string(r.SaleID)), nil)
 	if err != nil {

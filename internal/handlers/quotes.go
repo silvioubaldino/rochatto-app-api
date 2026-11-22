@@ -21,15 +21,11 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// --- Valid quote_status values (AYD-001) ---
-
 var validQuoteStatuses = map[string]bool{
 	"OPEN": true,
 	"WON":  true,
 	"LOST": true,
 }
-
-// --- Handler ---
 
 type QuotesHandler struct {
 	db *gorm.DB
@@ -56,20 +52,16 @@ func (h *QuotesHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /quotes/quick-sale", h.quickSale)
 }
 
-// --- Request types ---
-
 type quoteItemRequest struct {
 	ProductID   *uuid.UUID `json:"product_id"`
 	ProductName string     `json:"product_name"`
 	Quantity    float64    `json:"quantity"`
 	UnitPrice   float64    `json:"unit_price"`
 	UnitCost    float64    `json:"unit_cost"`
-	// AYD-010: tipo do Item (default PRODUCT) e serviço do catálogo (só SERVICE; opcional).
-	Kind      *string    `json:"kind"`
-	ServiceID *uuid.UUID `json:"service_id"`
+	Kind        *string    `json:"kind"`
+	ServiceID   *uuid.UUID `json:"service_id"`
 }
 
-// quoteChargeRequest: cobrança adicional ao cliente (AYD-009). id só vale no PUT (mantém a linha).
 type quoteChargeRequest struct {
 	ID          *uuid.UUID `json:"id"`
 	Kind        string     `json:"kind"`
@@ -92,18 +84,16 @@ type quoteCreateRequest struct {
 	Notes      *string              `json:"notes"`
 	Items      []quoteItemRequest   `json:"items"`
 	Charges    []quoteChargeRequest `json:"charges"`
-	// AYD-011 C5: só vale em POST /quotes/quick-sale (fechamento da venda).
+	// Só vale em POST /quotes/quick-sale (fechamento da venda).
 	Closing *closing.Request `json:"closing"`
 }
 
 type quoteUpdateRequest struct {
-	ReferrerID *uuid.UUID `json:"referrer_id"`
-	Notes      *string    `json:"notes"`
-	// AYD-011 C2: cabeçalho editável enquanto OPEN; ausente = não muda.
-	CustomerID *uuid.UUID `json:"customer_id"`
-	QuoteDate  *string    `json:"quote_date"`
-	// Charges: ausente/null = não mexe; lista (mesmo vazia) = substitui o conjunto (id mantém a linha).
-	Charges *[]quoteChargeRequest `json:"charges"`
+	ReferrerID *uuid.UUID            `json:"referrer_id"`
+	Notes      *string               `json:"notes"`
+	CustomerID *uuid.UUID            `json:"customer_id"`
+	QuoteDate  *string               `json:"quote_date"`
+	Charges    *[]quoteChargeRequest `json:"charges"`
 }
 
 type quoteStatusRequest struct {
@@ -111,25 +101,22 @@ type quoteStatusRequest struct {
 	LostReason *string `json:"lost_reason"`
 }
 
-// --- Response types ---
-
 type quoteListResponse struct {
-	ID           uuid.UUID  `json:"id"`
-	Number       int        `json:"number"` // número humano (AYD-011 C1)
-	CustomerID   uuid.UUID  `json:"customer_id"`
-	CustomerName string     `json:"customer_name"`
-	ReferrerID   *uuid.UUID `json:"referrer_id"`
-	ReferrerName *string    `json:"referrer_name"`
-	Status       string     `json:"status"`
-	LostReason   *string    `json:"lost_reason"`
-	QuoteDate    string     `json:"quote_date"`
-	Notes        *string    `json:"notes"`
-	QuickSale    bool       `json:"quick_sale"`
-	TotalQuote   float64    `json:"total_quote"` // Items + cobranças (preço ao cliente)
-	ItemsTotal   float64    `json:"items_total"`
-	ChargesTotal float64    `json:"charges_total"`
-	CreatedAt    time.Time  `json:"created_at"`
-	// AYD-011 C2/C3: Sale criada por este Quote (WON) e resumo dos Items para a lista.
+	ID            uuid.UUID  `json:"id"`
+	Number        int        `json:"number"`
+	CustomerID    uuid.UUID  `json:"customer_id"`
+	CustomerName  string     `json:"customer_name"`
+	ReferrerID    *uuid.UUID `json:"referrer_id"`
+	ReferrerName  *string    `json:"referrer_name"`
+	Status        string     `json:"status"`
+	LostReason    *string    `json:"lost_reason"`
+	QuoteDate     string     `json:"quote_date"`
+	Notes         *string    `json:"notes"`
+	QuickSale     bool       `json:"quick_sale"`
+	TotalQuote    float64    `json:"total_quote"`
+	ItemsTotal    float64    `json:"items_total"`
+	ChargesTotal  float64    `json:"charges_total"`
+	CreatedAt     time.Time  `json:"created_at"`
 	SaleID        *uuid.UUID `json:"sale_id"`
 	SaleNumber    *int       `json:"sale_number"`
 	ItemsCount    int        `json:"items_count"`
@@ -162,14 +149,11 @@ type convertResponse struct {
 	Warnings   []closingWarning `json:"warnings"`
 }
 
-// saleNumber lê o número humano da Sale (AYD-011 C1).
 func saleNumber(db *gorm.DB, saleID uuid.UUID) (int, error) {
 	var n int
 	err := db.Raw(`SELECT number FROM vendas WHERE id = ?`, saleID).Scan(&n).Error
 	return n, err
 }
-
-// --- Internal row type for scanning vw_quotes_resumo ---
 
 type quoteResumoRow struct {
 	ID           uuid.UUID  `gorm:"column:id"`
@@ -233,10 +217,7 @@ func quoteItemToResponse(item models.QuoteItem) quoteItemResponse {
 	}
 }
 
-// --- Helper methods ---
-
-// quoteResumoQuery lê vw_quotes_resumo com cliente, indicador, número humano (C1), a Sale criada (C2)
-// e o resumo dos Items (C3 — subconsultas escalares, sem fan-out).
+// quoteResumoQuery lê vw_quotes_resumo com cliente, indicador, número humano (C1), a Sale criada (C2) e o resumo dos Items (C3 — subconsultas escalares, sem fan-out).
 func quoteResumoQuery(db *gorm.DB) *gorm.DB {
 	return db.Table("vw_quotes_resumo qr").
 		Select(`qr.*, qn.number AS number, c.nome AS customer_name, ve.nome AS referrer_name,
@@ -321,8 +302,6 @@ func validateQuoteCharges(charges []quoteChargeRequest) error {
 	return nil
 }
 
-// replaceQuoteCharges grava o conjunto de cobranças do Quote: id existente é atualizado, sem id é
-// criado e o que ficou de fora é excluído (soft-delete).
 func replaceQuoteCharges(tx *gorm.DB, quoteID uuid.UUID, charges []quoteChargeRequest) error {
 	var existing []models.QuoteCharge
 	if err := tx.Where("quote_id = ?", quoteID).Find(&existing).Error; err != nil {
@@ -365,7 +344,6 @@ func replaceQuoteCharges(tx *gorm.DB, quoteID uuid.UUID, charges []quoteChargeRe
 }
 
 func validateQuoteItemFields(req quoteItemRequest) string {
-	// Item de serviço do catálogo pode vir sem nome: assume o nome do serviço (AYD-010).
 	if strings.TrimSpace(req.ProductName) == "" && req.ServiceID == nil {
 		return "campo 'product_name' é obrigatório"
 	}
@@ -388,9 +366,6 @@ func validateQuoteItemFields(req quoteItemRequest) string {
 	return ""
 }
 
-// resolveQuoteItem devolve o tipo e o nome do Item (o do catálogo, se o serviço veio sem nome) e
-// confere o service_id (404). current é o service_id já gravado (mantê-lo é permitido se o
-// serviço foi excluído depois).
 func resolveQuoteItem(db *gorm.DB, req quoteItemRequest, current *uuid.UUID) (string, string, error) {
 	kind, _ := saleitem.Resolve(req.Kind)
 	name := strings.TrimSpace(req.ProductName)
@@ -404,9 +379,6 @@ func resolveQuoteItem(db *gorm.DB, req quoteItemRequest, current *uuid.UUID) (st
 	return kind, name, nil
 }
 
-// fetchQuoteForWrite loads the quote and ensures it is OPEN, writing the
-// appropriate error response otherwise. Returns ok=false if a response was
-// already written.
 func (h *QuotesHandler) fetchQuoteForWrite(w http.ResponseWriter, ctx context.Context, id uuid.UUID) (*models.Quote, bool) {
 	var quote models.Quote
 	if err := h.db.WithContext(ctx).First(&quote, "id = ?", id).Error; err != nil {
@@ -424,10 +396,6 @@ func (h *QuotesHandler) fetchQuoteForWrite(w http.ResponseWriter, ctx context.Co
 	}
 	return &quote, true
 }
-
-// ============================================================
-// Quotes CRUD
-// ============================================================
 
 func (h *QuotesHandler) list(w http.ResponseWriter, r *http.Request) {
 	query := quoteResumoQuery(h.db.WithContext(r.Context()))
@@ -460,7 +428,6 @@ func (h *QuotesHandler) list(w http.ResponseWriter, r *http.Request) {
 		}
 		query = query.Where("qr.customer_id = ?", customerID)
 	}
-	// AYD-011 C4: referrer_id filtra por Partner; q casa também o número do Quote.
 	if ref := r.URL.Query().Get("referrer_id"); ref != "" {
 		if _, err := uuid.Parse(ref); err != nil {
 			models.WriteError(w, http.StatusBadRequest, "referrer_id inválido")
@@ -493,8 +460,6 @@ func (h *QuotesHandler) list(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, quotes)
 }
 
-// validateQuoteRequest valida o payload de criação (compartilhado por create e quick-sale).
-// Escreve a resposta de erro e devolve ok=false quando inválido.
 func (h *QuotesHandler) validateQuoteRequest(w http.ResponseWriter, ctx context.Context, req quoteCreateRequest) (time.Time, bool) {
 	if req.CustomerID == uuid.Nil {
 		models.WriteError(w, http.StatusBadRequest, "campo 'customer_id' é obrigatório")
@@ -553,7 +518,6 @@ func (h *QuotesHandler) validateQuoteRequest(w http.ResponseWriter, ctx context.
 	return quoteDate, true
 }
 
-// insertQuote grava o Quote e seus Items dentro da transação recebida.
 func insertQuote(tx *gorm.DB, req quoteCreateRequest, quoteDate time.Time, quickSale bool) (*models.Quote, []models.QuoteItem, error) {
 	quote := models.Quote{
 		CustomerID: req.CustomerID,
@@ -705,8 +669,6 @@ func (h *QuotesHandler) update(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// applyQuoteHeader aplica customer_id e quote_date do PUT (AYD-011 C2): ausente = não muda;
-// cliente inexistente ou excluído e data inválida → 400.
 func (h *QuotesHandler) applyQuoteHeader(ctx context.Context, quote *models.Quote, req quoteUpdateRequest) error {
 	if req.CustomerID != nil && *req.CustomerID != quote.CustomerID {
 		var n int64
@@ -745,7 +707,6 @@ func (h *QuotesHandler) delete(w http.ResponseWriter, r *http.Request) {
 		models.WriteError(w, http.StatusInternalServerError, "erro interno")
 		return
 	}
-	// RN-01: a Sale mantém referência ao Quote de origem — Quote convertido não se apaga.
 	if quote.Status == "WON" {
 		models.WriteError(w, http.StatusConflict, "quote convertido em Sale não pode ser excluído")
 		return
@@ -758,10 +719,6 @@ func (h *QuotesHandler) delete(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-
-// ============================================================
-// Quote Items CRUD (só enquanto OPEN)
-// ============================================================
 
 func (h *QuotesHandler) listItems(w http.ResponseWriter, r *http.Request) {
 	quoteID, err := uuid.Parse(r.PathValue("id"))
@@ -875,14 +832,12 @@ func (h *QuotesHandler) updateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Mudar o tipo de um Item existente é 409: remova e adicione outro (AYD-010).
 	if req.Kind != nil {
 		if k, _ := saleitem.Resolve(req.Kind); k != item.Kind {
 			models.WriteError(w, http.StatusConflict, "o tipo (kind) do item não muda: remova o item e adicione outro")
 			return
 		}
 	}
-	// A coerência do tipo vale para o tipo atual do Item.
 	req.Kind = &item.Kind
 	if errMsg := validateQuoteItemFields(req); errMsg != "" {
 		models.WriteError(w, http.StatusBadRequest, errMsg)
@@ -944,10 +899,6 @@ func (h *QuotesHandler) deleteItem(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ============================================================
-// Status transition (OPEN <-> LOST; WON só via /convert)
-// ============================================================
-
 func (h *QuotesHandler) updateStatus(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
@@ -1005,11 +956,6 @@ func (h *QuotesHandler) updateStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ============================================================
-// Convert: Quote OPEN -> Sale (transacional, RF-07 / RN-01)
-// ============================================================
-
-// convertError carrega o status HTTP de uma falha de regra de negócio na conversão.
 type convertError struct {
 	status int
 	msg    string
@@ -1017,7 +963,6 @@ type convertError struct {
 
 func (e *convertError) Error() string { return e.msg }
 
-// convertedItem liga o Item do Quote ao Item da Sale criado a partir dele.
 type convertedItem struct {
 	quote models.QuoteItem
 	sale  models.ItemVenda
@@ -1029,11 +974,7 @@ type convertResult struct {
 	items []convertedItem
 }
 
-// convertQuote converte o Quote em Sale dentro da transação recebida. O Quote é lido com
-// lock de linha (FOR UPDATE): conversões concorrentes do mesmo Quote são serializadas e as
-// seguintes recebem 409 em vez de falhar na constraint UNIQUE de vendas.quote_id.
-// run (opcional) traz o atendimento do fechamento da venda (AYD-011 C5): origem/fornecedor dos
-// Items, credor do custo LABOR e prazo de entrega; nil = conversão simples (como sempre).
+// O Quote é lido com lock de linha (FOR UPDATE): conversões concorrentes do mesmo Quote são serializadas e as seguintes recebem 409 em vez de falhar na constraint UNIQUE de vendas.quote_id.
 func convertQuote(tx *gorm.DB, id uuid.UUID, run *closingRun) (*convertResult, error) {
 	var quote models.Quote
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&quote, "id = ?", id).Error; err != nil {
@@ -1072,11 +1013,6 @@ func convertQuote(tx *gorm.DB, id uuid.UUID, run *closingRun) (*convertResult, e
 		return nil, err
 	}
 	res := &convertResult{quote: &quote, sale: &venda}
-	// Supplier e origem do Item são definidos na Sale (PDR-001 / AYD-002), não no Quote — salvo no
-	// fechamento da venda, que os informa na própria conversão (decisions).
-	// Item de serviço (AYD-010): sem origem; nasce com custo_unit 0 e o custo estimado do Quote vira
-	// um custo da venda LABOR (credor "a definir", ou o do fechamento) ligado ao Item — o Profit
-	// conta o custo uma vez.
 	for _, quoteItem := range items {
 		item, err := newSaleItem(tx, venda.ID, quoteItem, decisions[quoteItem.ID])
 		if err != nil {
@@ -1098,7 +1034,6 @@ func convertQuote(tx *gorm.DB, id uuid.UUID, run *closingRun) (*convertResult, e
 		res.items = append(res.items, convertedItem{quote: quoteItem, sale: *item})
 	}
 
-	// AYD-009: a conversão copia as cobranças ao cliente (frete cobrado…) para a Sale.
 	var qcharges []models.QuoteCharge
 	if err := tx.Where("quote_id = ?", id).Order("created_at, id").Find(&qcharges).Error; err != nil {
 		return nil, err
@@ -1117,9 +1052,7 @@ func convertQuote(tx *gorm.DB, id uuid.UUID, run *closingRun) (*convertResult, e
 	return res, nil
 }
 
-// newSaleItem monta o Item da Sale a partir do Item do Quote e do atendimento decidido. Sem
-// decisão explícita o Item é MADE_TO_ORDER sem Supplier. FROM_STOCK usa o custo da última entrada
-// (RN-16), mantendo o custo estimado do Quote se o Product nunca teve entrada.
+// FROM_STOCK usa o custo da última entrada (RN-16), mantendo o custo estimado do Quote se o Product nunca teve entrada.
 func newSaleItem(tx *gorm.DB, saleID uuid.UUID, qi models.QuoteItem, d closing.Decision) (*models.ItemVenda, error) {
 	origin := d.Origin
 	if origin == "" {
@@ -1172,7 +1105,6 @@ func writeConvertError(w http.ResponseWriter, op string, err error) {
 	models.WriteError(w, http.StatusInternalServerError, "erro interno")
 }
 
-// decodeOptionalBody lê um corpo JSON opcional: vazio é aceito (o /convert histórico não tem corpo).
 func decodeOptionalBody(r *http.Request, v any) error {
 	err := json.NewDecoder(r.Body).Decode(v)
 	if errors.Is(err, io.EOF) {
@@ -1212,7 +1144,6 @@ func (h *QuotesHandler) convert(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, resp)
 }
 
-// quickSale cria o Quote e o converte em Sale na mesma transação (venda rápida — AYD-001).
 func (h *QuotesHandler) quickSale(w http.ResponseWriter, r *http.Request) {
 	var req quoteCreateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1239,7 +1170,7 @@ func (h *QuotesHandler) quickSale(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		run.setCreatedOrder(createdItems) // item_index aponta a posição em items[]
+		run.setCreatedOrder(createdItems)
 		resp, err = closeSale(tx, func() (*convertResult, error) { return convertQuote(tx, created.ID, run) }, run)
 		return err
 	})

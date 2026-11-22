@@ -1,15 +1,10 @@
-// Package fulfillment concentra as regras puras do atendimento da Sale (AYD-002@context):
-// enums, transições de status da Purchase, pagamento ao Supplier, cancelamento da Sale e
-// travas de edição de Items que estão numa Purchase. Sem acesso a banco — os handlers
-// carregam o estado, aplicam estas regras e persistem.
+// Package fulfillment concentra as regras puras do atendimento da Sale.
 package fulfillment
 
 import (
 	"errors"
 	"time"
 )
-
-// --- Enums (AYD-002) ---
 
 const (
 	OriginMadeToOrder = "MADE_TO_ORDER"
@@ -37,7 +32,6 @@ const (
 	AdjustmentCount   = "COUNT"
 	AdjustmentOther   = "OTHER"
 
-	// WarningInsufficientStock é devolvido em warnings[] do Item FROM_STOCK sem saldo (RN-16).
 	WarningInsufficientStock = "INSUFFICIENT_STOCK"
 )
 
@@ -59,21 +53,16 @@ func set(values ...string) map[string]bool {
 	return m
 }
 
-// --- Purchase: status ---
-
 var (
 	ErrIllegalTransition = errors.New("transição ilegal")
 	ErrEmptyPurchase     = errors.New("purchase sem linhas não pode ser pedida")
 )
 
-// legalPurchaseTransitions: só OPEN→ORDERED, ORDERED→OPEN e ORDERED→RECEIVED (RECEIVED é terminal).
 var legalPurchaseTransitions = map[string]map[string]bool{
 	PurchaseOpen:    {PurchaseOrdered: true},
 	PurchaseOrdered: {PurchaseOpen: true, PurchaseReceived: true},
 }
 
-// CheckPurchaseTransition valida a mudança de status. lineCount = linhas da Purchase (Items
-// de Sale ou linhas de reposição). Devolve ErrIllegalTransition (409) ou ErrEmptyPurchase (422).
 func CheckPurchaseTransition(from, to string, lineCount int64) error {
 	if !legalPurchaseTransitions[from][to] {
 		return ErrIllegalTransition
@@ -84,8 +73,7 @@ func CheckPurchaseTransition(from, to string, lineCount int64) error {
 	return nil
 }
 
-// StampTransition devolve os novos ordered_at / received_at após a transição: ORDERED carimba
-// ordered_at; voltar a OPEN limpa ordered_at; RECEIVED carimba received_at.
+// StampTransition devolve os novos ordered_at / received_at após a transição: ORDERED carimba ordered_at; voltar a OPEN limpa ordered_at; RECEIVED carimba received_at.
 func StampTransition(to string, orderedAt, receivedAt *time.Time, today time.Time) (*time.Time, *time.Time) {
 	d := dateOnly(today)
 	switch to {
@@ -99,15 +87,11 @@ func StampTransition(to string, orderedAt, receivedAt *time.Time, today time.Tim
 	return orderedAt, receivedAt
 }
 
-// --- Sale ---
-
 var (
 	ErrSaleCanceled           = errors.New("sale cancelada")
 	ErrItemsInOrderedPurchase = errors.New("sale com item em purchase pedida ou recebida")
 )
 
-// CheckDeliveryChange valida PATCH /vendas/{id}/delivery-status. CANCELED é terminal (MVP);
-// cancelar exige que nenhum Item esteja numa Purchase ORDERED/RECEIVED.
 func CheckDeliveryChange(current, next string, itemsInOrderedPurchase bool) error {
 	if current == DeliveryCanceled {
 		return ErrSaleCanceled
@@ -118,8 +102,6 @@ func CheckDeliveryChange(current, next string, itemsInOrderedPurchase bool) erro
 	return nil
 }
 
-// SalePaymentStatus replica a regra da view vw_vendas_resumo (recebido = Σ quitações da conta
-// RECEIVABLE — AYD-007): PENDING se recebido = 0; PARTIAL se 0 < recebido < total; PAID se ≥ total.
 func SalePaymentStatus(total, received float64) string {
 	switch {
 	case received <= 0:
@@ -131,16 +113,14 @@ func SalePaymentStatus(total, received float64) string {
 	}
 }
 
-// ItemLockFields são os campos de um Item de Sale travados quando ele está numa Purchase.
 type ItemLockFields struct {
 	Origin     string
-	SupplierID string // "" = sem Supplier
+	SupplierID string
 	Quantity   float64
 	UnitCost   float64
 }
 
-// LockedFieldsChanged indica se um PUT altera origin, fornecedor_id, quantidade ou custo_unit
-// (o que é proibido — 409 — para Item com purchase_id).
+// LockedFieldsChanged indica se um PUT altera origin, fornecedor_id, quantidade ou custo_unit (o que é proibido — 409 — para Item com purchase_id).
 func LockedFieldsChanged(before, after ItemLockFields) bool {
 	return before.Origin != after.Origin ||
 		before.SupplierID != after.SupplierID ||

@@ -1,8 +1,5 @@
 package handlers
 
-// Contas a pagar/receber (AYD-007@context / SPEC-008): leitura, prazo, parcelas e quitação.
-// Handlers finos: decodificam, validam o formato e delegam a internal/obligations.
-
 import (
 	"encoding/json"
 	"net/http"
@@ -32,7 +29,6 @@ func (h *ObligationsHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /obligations/{id}/settle", h.settle)
 }
 
-// writeObligationsError responde 400/404/409 das regras de internal/obligations ou 500.
 func writeObligationsError(w http.ResponseWriter, op string, err error) {
 	if e := obligations.AsError(err); e != nil {
 		models.WriteError(w, e.Status, e.Msg)
@@ -41,7 +37,6 @@ func writeObligationsError(w http.ResponseWriter, op string, err error) {
 	writeTxError(w, op, err)
 }
 
-// parseDateField converte um "YYYY-MM-DD" opcional (nil/vazio → nil; inválido → 400).
 func parseDateField(field string, s *string) (*time.Time, error) {
 	return parseOptionalDate(field, s)
 }
@@ -166,7 +161,6 @@ func (h *ObligationsHandler) get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, d)
 }
 
-// patch: PATCH /obligations/{id} { due_date?: date|null, notes?: string|null }. Só esses campos.
 func (h *ObligationsHandler) patch(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseUUIDParam(w, "id", r.PathValue("id"))
 	if !ok {
@@ -219,7 +213,6 @@ type installmentRequest struct {
 	Notes         *string `json:"notes"`
 }
 
-// putInstallments: PUT /obligations/{id}/installments — substitui o plano inteiro.
 func (h *ObligationsHandler) putInstallments(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseUUIDParam(w, "id", r.PathValue("id"))
 	if !ok {
@@ -253,7 +246,6 @@ func (h *ObligationsHandler) putInstallments(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, d)
 }
 
-// generateInstallments: POST /obligations/{id}/installments/generate.
 func (h *ObligationsHandler) generateInstallments(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseUUIDParam(w, "id", r.PathValue("id"))
 	if !ok {
@@ -307,7 +299,6 @@ func (m movementInputRequest) toInput() (*obligations.MovementInput, error) {
 	return &obligations.MovementInput{OccurredOn: on, PaymentMethod: method, Category: category, Description: m.Description}, nil
 }
 
-// settle: POST /obligations/{id}/settle { amount?, movement } — atalho de 1 conta.
 func (h *ObligationsHandler) settle(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseUUIDParam(w, "id", r.PathValue("id"))
 	if !ok {

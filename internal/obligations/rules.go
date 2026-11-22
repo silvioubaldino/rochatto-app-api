@@ -1,10 +1,4 @@
-// Package obligations reúne o domínio de contas e movimentações (AYD-007 / SPEC-008):
-// regras puras (este arquivo) e o acesso a dados transacional (store*.go). Os handlers só
-// decodificam, delegam e respondem.
-//
-// Modelo: componente → conta (Obligation) → movimentação (Financial movement), ligadas pela
-// quitação (Settlement). Valor da conta, quitado, em aberto, status e cobertura das parcelas
-// são calculados (views) — nunca gravados.
+// Package obligations reúne o domínio de contas e movimentações: regras puras (este arquivo) e o acesso a dados transacional (store*.go).
 package obligations
 
 import (
@@ -15,27 +9,23 @@ import (
 	"time"
 )
 
-// Direção da conta.
 const (
 	Payable    = "PAYABLE"
 	Receivable = "RECEIVABLE"
 )
 
-// Status da conta (calculado).
 const (
 	StatusOpen    = "OPEN"
 	StatusPartial = "PARTIAL"
 	StatusSettled = "SETTLED"
 )
 
-// Status da parcela (calculado por cobertura).
 const (
 	InstallmentOpen    = "OPEN"
 	InstallmentPartial = "PARTIAL"
 	InstallmentCovered = "COVERED"
 )
 
-// Categorias de movimentação (enum movement_category).
 const (
 	CatSaleReceipt     = "SALE_RECEIPT"
 	CatOtherIncome     = "OTHER_INCOME"
@@ -51,17 +41,13 @@ const (
 	CatOtherExpense    = "OTHER_EXPENSE"
 )
 
-// Categories é o conjunto aceito; incomeCategories são as entradas (valor > 0).
 var (
 	Categories = set(CatSaleReceipt, CatOtherIncome, CatPurchasePayment, CatFreight, CatLabor, CatCommission,
 		CatVehicle, CatTaxes, CatFixedCosts, CatMarketing, CatBankFees, CatOtherExpense)
-	incomeCategories = set(CatSaleReceipt, CatOtherIncome)
-	// expenseCategories: saídas que, SEM quitação, são despesas operacionais (LABOR também serve
-	// como despesa avulsa). PURCHASE_PAYMENT, FREIGHT e COMMISSION são pagamentos de contas.
+	incomeCategories  = set(CatSaleReceipt, CatOtherIncome)
 	expenseCategories = set(CatVehicle, CatTaxes, CatFixedCosts, CatMarketing, CatBankFees, CatOtherExpense, CatLabor)
 )
 
-// Tipos de credor/devedor e de origem.
 const (
 	CounterpartySupplier = "SUPPLIER"
 	CounterpartyPartner  = "PARTNER"
@@ -70,8 +56,6 @@ const (
 	OriginPurchase       = "PURCHASE"
 )
 
-// Tipos de componente. SALE_COST_<kind> é o SALE_COST (AYD-009) já com o tipo do custo — só
-// existe aqui, para a categoria padrão; a view expõe SALE_COST.
 const (
 	ComponentSaleItems      = "SALE_ITEMS"
 	ComponentSaleCharge     = "SALE_CHARGE"
@@ -84,10 +68,8 @@ const (
 	WarningMixedCounterpart = "MIXED_COUNTERPARTIES"
 )
 
-// SupplierKinds é o enum supplier_kind.
 var SupplierKinds = set("STONE", "TRANSPORT", "LABOR", "TAX_AUTHORITY", "OTHER")
 
-// Directions, Statuses e CounterpartyTypes: conjuntos de validação de filtros.
 var (
 	Directions       = set(Payable, Receivable)
 	Statuses         = set(StatusOpen, StatusPartial, StatusSettled)
@@ -103,7 +85,6 @@ func set(vals ...string) map[string]bool {
 	return m
 }
 
-// Error é uma falha de regra de negócio com o status HTTP correspondente (400/404/409).
 type Error struct {
 	Status int
 	Msg    string
@@ -115,7 +96,6 @@ func newErr(status int, format string, a ...any) *Error {
 	return &Error{Status: status, Msg: fmt.Sprintf(format, a...)}
 }
 
-// AsError extrai um *Error de err (nil se não for).
 func AsError(err error) *Error {
 	var e *Error
 	if errors.As(err, &e) {
@@ -124,31 +104,20 @@ func AsError(err error) *Error {
 	return nil
 }
 
-// --- dinheiro em centavos (DECIMAL(12,2) — sem erro de ponto flutuante nas comparações) ---
-
-// Cents converte BRL em centavos (arredonda).
 func Cents(v float64) int64 { return int64(math.Round(v * 100)) }
 
-// FromCents converte centavos em BRL.
 func FromCents(c int64) float64 { return float64(c) / 100 }
 
-// Round2 arredonda para 2 casas.
 func Round2(v float64) float64 { return FromCents(Cents(v)) }
 
-// HasMoreThan2Decimals diz se o valor tem mais que 2 casas decimais.
 func HasMoreThan2Decimals(v float64) bool {
 	return math.Abs(v*100-math.Round(v*100)) > 1e-6
 }
 
-// --- categoria × sinal ---
-
-// IsIncome: a categoria é entrada (valor > 0).
 func IsIncome(category string) bool { return incomeCategories[category] }
 
-// IsExpenseCategory: saída que é despesa operacional quando não quita conta.
 func IsExpenseCategory(category string) bool { return expenseCategories[category] }
 
-// ExpenseCategories lista as categorias de despesa (para filtros SQL).
 func ExpenseCategories() []string {
 	out := make([]string, 0, len(expenseCategories))
 	for c := range expenseCategories {
@@ -158,8 +127,7 @@ func ExpenseCategories() []string {
 	return out
 }
 
-// CheckSign valida a categoria e o sinal: entradas (SALE_RECEIPT, OTHER_INCOME) > 0; as demais
-// < 0; amount = 0 nunca. Erros são 400.
+// CheckSign valida a categoria e o sinal: entradas (SALE_RECEIPT, OTHER_INCOME) > 0; as demais < 0; amount = 0 nunca.
 func CheckSign(category string, amount float64) error {
 	if !Categories[category] {
 		return newErr(400, "category inválida")
@@ -179,9 +147,6 @@ func CheckSign(category string, amount float64) error {
 	return nil
 }
 
-// componentCategory mapeia os tipos de componente de uma conta PAYABLE de Sale para a
-// categoria "do tipo do custo": só frete → FREIGHT; só mão de obra → LABOR; só comissão →
-// COMMISSION; qualquer mistura ou outro → OTHER_EXPENSE.
 func componentCategory(types []string) string {
 	cat := ""
 	for _, t := range types {
@@ -208,16 +173,13 @@ func componentCategory(types []string) string {
 	return cat
 }
 
-// AccountKind descreve a conta para o cálculo da categoria padrão da movimentação.
 type AccountKind struct {
 	Direction      string
 	OriginType     string
 	ComponentTypes []string
 }
 
-// DefaultCategory implementa a regra do AYD-007 §5: RECEIVABLE → SALE_RECEIPT; conta de compra
-// → PURCHASE_PAYMENT; conta de custo da venda → o tipo do custo (FREIGHT/LABOR/COMMISSION;
-// misto → OTHER_EXPENSE). Várias contas: se todas dão a mesma categoria, ela; senão OTHER_EXPENSE.
+// Várias contas: se todas dão a mesma categoria, ela; senão OTHER_EXPENSE.
 func DefaultCategory(accounts []AccountKind) string {
 	cat := ""
 	for _, a := range accounts {
@@ -242,9 +204,6 @@ func DefaultCategory(accounts []AccountKind) string {
 	return cat
 }
 
-// --- parcelas (plano) ---
-
-// InstallmentInput é uma parcela do plano.
 type InstallmentInput struct {
 	DueDate       time.Time
 	Amount        float64
@@ -252,7 +211,6 @@ type InstallmentInput struct {
 	Notes         *string
 }
 
-// ValidatePlan confere o plano: parcelas com valor > 0 e até 2 casas, e Σ ≤ amount da conta.
 func ValidatePlan(plan []InstallmentInput, accountAmount float64) error {
 	var sum int64
 	for i, in := range plan {
@@ -273,8 +231,6 @@ func ValidatePlan(plan []InstallmentInput, accountAmount float64) error {
 	return nil
 }
 
-// addMonthsClamped soma n meses a d mantendo o dia, limitado ao último dia do mês de destino
-// (31/01 + 1 mês = 28/02 ou 29/02).
 func addMonthsClamped(d time.Time, n int) time.Time {
 	y, m, day := d.Date()
 	first := time.Date(y, m, 1, 0, 0, 0, 0, time.UTC).AddDate(0, n, 0)
@@ -285,8 +241,6 @@ func addMonthsClamped(d time.Time, n int) time.Time {
 	return time.Date(first.Year(), first.Month(), day, 0, 0, 0, 0, time.UTC)
 }
 
-// GenerateInstallments gera count (2..24) parcelas iguais de `amount`, a primeira em first e as
-// demais a cada intervalMonths meses; os centavos que sobram vão na ÚLTIMA parcela.
 func GenerateInstallments(count int, first time.Time, intervalMonths int, amount float64) ([]InstallmentInput, error) {
 	if count < 2 || count > 24 {
 		return nil, newErr(400, "count deve estar entre 2 e 24")
@@ -318,15 +272,13 @@ func GenerateInstallments(count int, first time.Time, intervalMonths int, amount
 	return out, nil
 }
 
-// Coverage é a cobertura de uma parcela.
 type Coverage struct {
 	Covered float64
 	Status  string
 	Overdue bool
 }
 
-// CoverPlan cobre as parcelas, na ordem dos vencimentos, com o quitado da conta (espelha a view
-// vw_installment_coverage — usada para testar a paridade). today é o dia no fuso do negócio.
+// CoverPlan cobre as parcelas, na ordem dos vencimentos, com o quitado da conta (espelha a view vw_installment_coverage — usada para testar a paridade).
 func CoverPlan(plan []InstallmentInput, settled float64, today time.Time) []Coverage {
 	idx := make([]int, len(plan))
 	for i := range idx {
@@ -351,32 +303,25 @@ func CoverPlan(plan []InstallmentInput, settled float64, today time.Time) []Cove
 	return out
 }
 
-// --- quitação (alocação) ---
-
 // AllocationInput é uma alocação pedida; Amount nil = o aberto da conta.
 type AllocationInput struct {
 	ObligationID string
 	Amount       *float64
 }
 
-// AccountState é o estado de uma conta no momento da alocação.
 type AccountState struct {
 	ID           string
 	Direction    string
 	Open         float64
 	SaleCanceled bool
-	Counterparty string // "TIPO:id" ou "" (a definir) — só para detectar credores diferentes
+	Counterparty string
 }
 
-// Allocated é uma alocação resolvida (valor definitivo).
 type Allocated struct {
 	ObligationID string
 	Amount       float64
 }
 
-// Allocate valida as alocações contra o estado das contas e resolve os valores (default = aberto).
-// 400: lista vazia, valor ≤ 0, conta repetida, direções diferentes. 409: Sale cancelada,
-// valor acima do aberto. warnings: MIXED_COUNTERPARTIES (credores diferentes).
 func Allocate(req []AllocationInput, states map[string]AccountState) (allocs []Allocated, direction string, warnings []string, err error) {
 	warnings = []string{}
 	if len(req) == 0 {
@@ -426,7 +371,6 @@ func Allocate(req []AllocationInput, states map[string]AccountState) (allocs []A
 	return allocs, direction, warnings, nil
 }
 
-// Sum devolve Σ dos valores alocados (em BRL, exato em centavos).
 func Sum(allocs []Allocated) float64 {
 	var c int64
 	for _, a := range allocs {
@@ -435,7 +379,6 @@ func Sum(allocs []Allocated) float64 {
 	return FromCents(c)
 }
 
-// SignFor devolve o sinal do dinheiro da direção: RECEIVABLE entra (+), PAYABLE sai (−).
 func SignFor(direction string) float64 {
 	if direction == Receivable {
 		return 1

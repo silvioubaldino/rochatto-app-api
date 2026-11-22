@@ -1,9 +1,5 @@
 package handlers
 
-// Atendimento em lote dos Items da Sale (AYD-011 C6 / SPEC-012): PATCH /vendas/{id}/itens/fulfillment.
-// As mesmas regras do PUT /vendas/{id}/itens/{itemId} (origem e fornecedor; custo do FROM_STOCK
-// pela regra RN-16; trava de Item em Purchase) aplicadas a vários Items numa transação — tudo ou nada.
-
 import (
 	"errors"
 	"net/http"
@@ -36,7 +32,6 @@ type batchFulfillmentResponse struct {
 	Warnings []batchWarning `json:"warnings"`
 }
 
-// itemError é um erro de regra que aponta o Item (400/409 → { error, item_id }).
 type itemError struct {
 	httpError
 	itemID uuid.UUID
@@ -99,7 +94,6 @@ func applyBatchFulfillment(tx *gorm.DB, saleID uuid.UUID, batch []fulfillment.Ba
 		saved = append(saved, *item)
 	}
 
-	// Avisos e resposta com o estado final (o Balance considera o lote inteiro).
 	warnings := []batchWarning{}
 	for _, item := range saved {
 		ws, err := stockWarnings(tx, item)
@@ -129,7 +123,6 @@ func applyBatchFulfillment(tx *gorm.DB, saleID uuid.UUID, batch []fulfillment.Ba
 	return batchFulfillmentResponse{Itens: itens, Warnings: warnings}, nil
 }
 
-// applyFulfillment aplica origem e fornecedor a um Item (regras do PUT por Item).
 func applyFulfillment(tx *gorm.DB, saleID uuid.UUID, b fulfillment.BatchItem) (*models.ItemVenda, error) {
 	var item models.ItemVenda
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -174,7 +167,6 @@ func applyFulfillment(tx *gorm.DB, saleID uuid.UUID, b fulfillment.BatchItem) (*
 	return &item, nil
 }
 
-// asItemError aponta o Item num httpError de regra (outros erros passam como estão).
 func asItemError(err error, itemID uuid.UUID) error {
 	if he := asHTTPError(err); he != nil {
 		return errItem(he.status, itemID, he.msg)

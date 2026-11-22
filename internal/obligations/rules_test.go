@@ -18,18 +18,18 @@ func TestCheckSign(t *testing.T) {
 	cases := []struct {
 		cat    string
 		amount float64
-		want   int // 0 = ok
+		want   int
 	}{
 		{CatSaleReceipt, 100, 0},
 		{CatOtherIncome, 2100, 0},
 		{CatVehicle, -317.87, 0},
 		{CatPurchasePayment, -1, 0},
 		{CatLabor, -50, 0},
-		{CatSaleReceipt, -100, 400}, // entrada com valor negativo
-		{CatVehicle, 10, 400},       // saída com valor positivo
-		{CatVehicle, 0, 400},        // amount = 0
-		{"NOPE", -1, 400},           // categoria fora do enum
-		{CatVehicle, -1.234, 400},   // mais de 2 casas
+		{CatSaleReceipt, -100, 400},
+		{CatVehicle, 10, 400},
+		{CatVehicle, 0, 400},
+		{"NOPE", -1, 400},
+		{CatVehicle, -1.234, 400},
 	}
 	for _, c := range cases {
 		if got := status(CheckSign(c.cat, c.amount)); got != c.want {
@@ -70,7 +70,6 @@ func TestDefaultCategory(t *testing.T) {
 }
 
 func TestGenerateInstallments(t *testing.T) {
-	// 100 em 3: centavos na ÚLTIMA (33,33 + 33,33 + 33,34).
 	plan, err := GenerateInstallments(3, d(2026, 1, 15), 1, 100)
 	if err != nil || len(plan) != 3 {
 		t.Fatalf("plano = %v %v", plan, err)
@@ -85,12 +84,10 @@ func TestGenerateInstallments(t *testing.T) {
 		t.Errorf("datas = %v %v", plan[1].DueDate, plan[2].DueDate)
 	}
 
-	// Fim de mês: 31/01 + 1 mês = 28/02; depois volta a 31/03 (dia calculado sempre a partir do primeiro).
 	plan, _ = GenerateInstallments(3, d(2026, 1, 31), 1, 30)
 	if plan[1].DueDate != d(2026, 2, 28) || plan[2].DueDate != d(2026, 3, 31) {
 		t.Errorf("fim de mês = %v %v", plan[1].DueDate, plan[2].DueDate)
 	}
-	// Ano bissexto e intervalo de 2 meses.
 	plan, _ = GenerateInstallments(2, d(2028, 1, 31), 1, 10)
 	if plan[1].DueDate != d(2028, 2, 29) {
 		t.Errorf("bissexto = %v", plan[1].DueDate)
@@ -113,7 +110,6 @@ func TestGenerateInstallments(t *testing.T) {
 	}
 }
 
-// Sum2 é um helper de teste: Σ dos valores do plano em centavos.
 func Sum2(plan []InstallmentInput) float64 {
 	var c int64
 	for _, p := range plan {
@@ -156,7 +152,6 @@ func TestCoverPlan(t *testing.T) {
 		{DueDate: d(2026, 10, 1), Amount: 100},
 	}
 	cov := CoverPlan(plan, 150, today)
-	// 10/10 coberta, 11/01 metade, 12/01 aberta.
 	if cov[2].Status != InstallmentCovered || cov[2].Covered != 100 {
 		t.Errorf("1ª = %+v", cov[2])
 	}
@@ -166,7 +161,6 @@ func TestCoverPlan(t *testing.T) {
 	if cov[0].Status != InstallmentOpen || cov[0].Covered != 0 || cov[0].Overdue {
 		t.Errorf("3ª = %+v (aberta, não vencida)", cov[0])
 	}
-	// Parcela vencida com settled zero está OPEN e vencida.
 	cov = CoverPlan(plan, 0, today)
 	if !cov[2].Overdue || !cov[1].Overdue || cov[0].Overdue {
 		t.Errorf("vencidas com quitado 0 = %+v", cov)

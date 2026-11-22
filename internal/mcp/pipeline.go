@@ -18,46 +18,33 @@ import (
 	"github.com/silvioubaldino/sales-backend/internal/oauth"
 )
 
-// Limites do contrato (AYD-006 §1).
 const (
 	RateLimitPerMinute = 120
 	MaxOutputChars     = 100_000
 	ToolTimeout        = 30 * time.Second
 )
 
-// Deduper é o ponto de extensão do estágio de deduplicação de criações (§3.7), usado só
-// por ferramentas com Meta.Dedupe. Na SPEC-006 não há ferramentas dedupe; a SPEC-007
-// fornece a implementação (consulta em mcp_tool_calls, janela de 120 s) e a passa em
-// Options.Deduper. Registrar uma ferramenta dedupe sem Deduper é erro de montagem.
+// Deduper é o ponto de extensão do estágio de deduplicação de criações (§3.7), usado só por ferramentas com Meta.Dedupe.
 type Deduper interface {
-	// Lookup devolve o resultado (JSON) da chamada bem-sucedida idêntica mais recente da
-	// mesma Connection e ferramenta dentro da janela, se houver. argsHash é o hash do JSON
-	// canônico dos argumentos.
+	// Lookup devolve o resultado (JSON) da chamada bem-sucedida idêntica mais recente da mesma Connection e ferramenta dentro da janela, se houver.
 	Lookup(ctx context.Context, connectionID uuid.UUID, tool, argsHash string) (result []byte, found bool, err error)
 }
 
-// PipelineOptions configura o pipeline.
 type PipelineOptions struct {
-	Gateway toolkit.Gateway
-	Audit   Auditor // nil = sem auditoria (só testes)
-	Deduper Deduper // obrigatório se houver ferramentas dedupe
-	Now     func() time.Time
-	// ValidateOutput confere cada saída contra o outputSchema (ligado nos testes).
+	Gateway        toolkit.Gateway
+	Audit          Auditor
+	Deduper        Deduper // obrigatório se houver ferramentas dedupe
+	Now            func() time.Time
 	ValidateOutput bool
 	Timeout        time.Duration
 }
 
-// Pipeline é o ponto único por onde passa TODA chamada de ferramenta (regra 2 do AYD):
-//
-//	scope → rate limit → validação de entrada → dedupe → handler → mapeamento de erro → auditoria
-//
-// Nenhuma ferramenta reimplementa nada disto.
+// Pipeline é o ponto único por onde passa TODA chamada de ferramenta (regra 2 do AYD):  scope → rate limit → validação de entrada → dedupe → handler → mapeamento de erro → auditoria  Nenhuma ferramenta reimplementa nada disto.
 type Pipeline struct {
 	o       PipelineOptions
 	limiter *rateLimiter
 }
 
-// NewPipeline valida as opções contra o catálogo.
 func NewPipeline(o PipelineOptions, catalog []toolkit.Tool) (*Pipeline, error) {
 	if o.Gateway == nil {
 		return nil, errors.New("mcp: Gateway é obrigatório")
@@ -76,8 +63,7 @@ func NewPipeline(o PipelineOptions, catalog []toolkit.Tool) (*Pipeline, error) {
 	return &Pipeline{o: o, limiter: newRateLimiter(RateLimitPerMinute, time.Minute)}, nil
 }
 
-// Call executa a ferramenta para a Connection pr e devolve o resultado MCP (sucesso ou
-// isError). Nunca devolve erro de protocolo: falhas viram resultado de ferramenta (§3.5).
+// Nunca devolve erro de protocolo: falhas viram resultado de ferramenta (§3.5).
 func (p *Pipeline) Call(ctx context.Context, tool toolkit.Tool, pr *oauth.Principal, args json.RawMessage) *sdk.CallToolResult {
 	start := p.o.Now()
 	callID := uuid.New()
@@ -88,7 +74,6 @@ func (p *Pipeline) Call(ctx context.Context, tool toolkit.Tool, pr *oauth.Princi
 	var terr *toolkit.ToolError
 	deduplicated := false
 	func() {
-		// 1. scope (§3.8): ferramenta de escrita exige "write"; leitura exige "read".
 		if !pr.HasScope(tool.Meta.Scope()) {
 			msg := "esta conexão não tem permissão de leitura"
 			if !tool.Meta.ReadOnly {
@@ -97,17 +82,14 @@ func (p *Pipeline) Call(ctx context.Context, tool toolkit.Tool, pr *oauth.Princi
 			terr = toolkit.NewToolError(toolkit.CodeForbidden, msg)
 			return
 		}
-		// 2. rate limit
 		if !p.limiter.Allow(pr.ConnectionID, start) {
 			terr = toolkit.NewToolError(toolkit.CodeRateLimited, "muitas chamadas; aguarde um minuto")
 			return
 		}
-		// 3. validação de entrada contra o schema
 		if err := tool.ValidateInput(args); err != nil {
 			terr = toolkit.NewToolError(toolkit.CodeInvalidInput, "argumentos inválidos: "+err.Error())
 			return
 		}
-		// 4. dedupe (só ferramentas dedupe; allow_duplicate:true força a criação)
 		if tool.Meta.Dedupe && !allowDuplicate(args) {
 			prev, found, err := p.o.Deduper.Lookup(ctx, pr.ConnectionID, tool.Meta.Name, hash)
 			if err != nil {
@@ -121,7 +103,6 @@ func (p *Pipeline) Call(ctx context.Context, tool toolkit.Tool, pr *oauth.Princi
 				}
 			}
 		}
-		// 5. handler (timeout, recover) + 6. mapeamento de erro
 		out, terr = p.run(ctx, tool, args, callID)
 	}()
 
@@ -134,7 +115,6 @@ func (p *Pipeline) Call(ctx context.Context, tool toolkit.Tool, pr *oauth.Princi
 		entry.Outcome, entry.ErrorCode = "ERROR", terr.Code
 	} else {
 		entry.Outcome = "OK"
-		// §7: result só para ferramentas dedupe, e só quando a criação de fato ocorreu.
 		if tool.Meta.Dedupe && !deduplicated {
 			if b, err := json.Marshal(out); err == nil {
 				entry.Result = b
@@ -184,8 +164,6 @@ func internalError(callID uuid.UUID) *toolkit.ToolError {
 	return toolkit.NewToolError(toolkit.CodeInternal, fmt.Sprintf("erro interno; tente novamente (ref %s)", callID))
 }
 
-// success serializa a saída (structuredContent + o mesmo JSON como texto — §3.3) e aplica o
-// teto de 100.000 caracteres.
 func (p *Pipeline) success(tool toolkit.Tool, out any, callID uuid.UUID) (*sdk.CallToolResult, *toolkit.ToolError) {
 	b, err := json.Marshal(out)
 	if err != nil {
@@ -218,7 +196,6 @@ func errorResult(te *toolkit.ToolError) *sdk.CallToolResult {
 	}
 }
 
-// allowDuplicate lê o argumento opcional allow_duplicate (presente em toda ferramenta dedupe).
 func allowDuplicate(args json.RawMessage) bool {
 	var a struct {
 		AllowDuplicate bool `json:"allow_duplicate"`
@@ -227,9 +204,6 @@ func allowDuplicate(args json.RawMessage) bool {
 	return a.AllowDuplicate
 }
 
-// canonicalArgs devolve o JSON compacto dos argumentos (auditoria) e o hash do JSON canônico
-// (chaves ordenadas, SEM allow_duplicate) — base da deduplicação (§3.7): forçar a criação
-// com allow_duplicate não muda a identidade da chamada.
 func canonicalArgs(args json.RawMessage) (canonical []byte, hash string) {
 	if len(bytes.TrimSpace(args)) == 0 {
 		args = json.RawMessage("{}")
@@ -240,7 +214,7 @@ func canonicalArgs(args json.RawMessage) (canonical []byte, hash string) {
 	if err := dec.Decode(&v); err != nil {
 		return []byte("{}"), hashOf([]byte(args))
 	}
-	b, err := json.Marshal(v) // maps saem com chaves ordenadas
+	b, err := json.Marshal(v)
 	if err != nil {
 		return []byte("{}"), hashOf(args)
 	}

@@ -1,8 +1,5 @@
 package handlers
 
-// Testes de integração do AYD-007 / SPEC-008 — contas (Obligation): manutenção automática a partir
-// dos componentes (§2, §7a), leitura, prazo e cancelamento. Só rodam com TEST_DATABASE_URL (banco
-// descartável com as migrations aplicadas; os dados não são limpos — os testes filtram por origem).
 import (
 	"testing"
 )
@@ -25,7 +22,6 @@ func componentTypes(o map[string]any) map[string]float64 {
 	return out
 }
 
-// Sale com Items 1000, frete 150 e comissão 80 (Partner) → 3 contas; Purchase de 17995 → 1 conta.
 func TestIntegration_ObligationsMaintainedFromComponents(t *testing.T) {
 	e := newFinanceEnv(t)
 	partner := e.partner()
@@ -58,8 +54,6 @@ func TestIntegration_ObligationsMaintainedFromComponents(t *testing.T) {
 		t.Errorf("conta da comissão = %v", comm)
 	}
 
-	// Editar frete/itens recalcula sem ação manual; sem Partner a comissão cai na conta "a definir"
-	// junto com o frete (única por origem + credor).
 	e.api.do("PUT", "/vendas/"+sale, map[string]any{})
 	e.api.do("PUT", "/vendas/"+sale+"/costs/"+freightCost["id"].(string), map[string]any{"kind": "FREIGHT", "amount": 200})
 	merged := e.api.obligation(e.api.payableOf("SALE", sale, ""))
@@ -75,19 +69,16 @@ func TestIntegration_ObligationsMaintainedFromComponents(t *testing.T) {
 	if got := e.api.obligation(e.api.receivable(sale)); num(got, "amount") != 1500 {
 		t.Errorf("conta a receber após editar o Item = %v, want 1500", got["amount"])
 	}
-	// Item novo e remoção também recalculam.
 	e.api.do("POST", "/vendas/"+sale+"/itens", map[string]any{"produto_nome": "Extra", "quantidade": 1, "preco_venda_unit": 100, "custo_unit": 50})
 	if got := e.api.obligation(e.api.receivable(sale)); num(got, "amount") != 1600 {
 		t.Errorf("conta a receber após novo Item = %v, want 1600", got["amount"])
 	}
-	// Frete e comissão a 0: a conta sem componentes e sem quitações some.
 	e.api.do("PUT", "/vendas/"+sale+"/costs/"+freightCost["id"].(string), map[string]any{"kind": "FREIGHT", "amount": 0})
 	e.api.do("PUT", "/vendas/"+sale+"/costs/"+commCost["id"].(string), map[string]any{"kind": "COMMISSION", "amount": 0})
 	if n := len(e.api.obligationsOf("SALE", sale, "direction=PAYABLE")); n != 0 {
 		t.Errorf("contas a pagar sem componentes deveriam sumir: %d", n)
 	}
 
-	// Purchase de 17995 (reposição de Stock) → 1 conta a pagar do Supplier.
 	sup, pid := e.supplier(), e.product()
 	code, p := e.api.do("POST", "/purchases", map[string]any{"kind": "STOCK_REPLENISHMENT", "supplier_id": sup,
 		"items": []map[string]any{{"product_id": pid, "quantity": 5, "unit_cost": 3000}, {"product_id": pid, "quantity": 1, "unit_cost": 2995}}})
@@ -105,7 +96,6 @@ func TestIntegration_ObligationsMaintainedFromComponents(t *testing.T) {
 	if lbl := po["origin"].(map[string]any)["label"].(string); len(lbl) < 8 || lbl[:6] != "Compra" {
 		t.Errorf("label da compra = %q", lbl)
 	}
-	// Editar as linhas recalcula; a compra reflete pago/a pagar das contas.
 	lines := p["items"].([]any)
 	e.api.do("DELETE", "/purchases/"+purchase+"/items/"+lines[1].(map[string]any)["id"].(string), nil)
 	if got := e.api.obligation(po["id"].(string)); num(got, "amount") != 15000 {
@@ -117,8 +107,6 @@ func TestIntegration_ObligationsMaintainedFromComponents(t *testing.T) {
 	}
 }
 
-// Troca de Partner: o valor muda de conta; se a antiga já tinha quitação maior que o novo valor,
-// OVERSETTLED. Cancelar a Sale zera as contas, mas as quitações continuam visíveis.
 func TestIntegration_ObligationPartnerSwapAndCancel(t *testing.T) {
 	e := newFinanceEnv(t)
 	oldPartner, newPartner := e.partner(), e.partner()
@@ -147,7 +135,6 @@ func TestIntegration_ObligationPartnerSwapAndCancel(t *testing.T) {
 		t.Errorf("conta nova = %v", fresh)
 	}
 
-	// Cancelar: amount 0 em todas as contas; quitações seguem visíveis; sai dos saldos.
 	e.api.receive(sale, 300, "2026-11-02", "PIX")
 	before := e.balances()
 	if code, _ := e.api.do("PATCH", "/vendas/"+sale+"/delivery-status", map[string]any{"delivery_status": "CANCELED"}); code != 200 {
@@ -239,7 +226,6 @@ func TestIntegration_ObligationsListFiltersTotalsAndPaging(t *testing.T) {
 		t.Errorf("due_to = %v", got)
 	}
 
-	// limit/offset/has_more: a conta mais próxima do vencimento vem primeiro.
 	page := get("limit=2")
 	if len(page["items"].([]any)) != 2 || page["has_more"] != true || num(page, "total") != 3 {
 		t.Errorf("limit=2 = %v", page)
@@ -269,7 +255,6 @@ func TestIntegration_ObligationPatchAndNotFound(t *testing.T) {
 	if code != 200 || d["due_date"] != "2027-04-09" || d["notes"] != "combinado no WhatsApp" || num(d, "amount") != 1000 {
 		t.Fatalf("PATCH = %d %v", code, d)
 	}
-	// Só os campos enviados mudam; null limpa.
 	code, d = e.api.do("PATCH", "/obligations/"+acc, map[string]any{"notes": nil})
 	if code != 200 || d["notes"] != nil || d["due_date"] != "2027-04-09" {
 		t.Errorf("limpar notes = %d %v", code, d)
@@ -278,7 +263,6 @@ func TestIntegration_ObligationPatchAndNotFound(t *testing.T) {
 	if code != 200 || d["due_date"] != nil {
 		t.Errorf("limpar due_date = %d %v", code, d)
 	}
-	// Valor, direção e quitado não são editáveis por aqui.
 	code, d = e.api.do("PATCH", "/obligations/"+acc, map[string]any{"amount": 1, "settled": 999, "direction": "PAYABLE"})
 	if code != 200 || num(d, "amount") != 1000 || d["direction"] != "RECEIVABLE" || num(d, "settled") != 0 {
 		t.Errorf("campos calculados mudaram: %d %v", code, d)
@@ -310,7 +294,6 @@ func TestIntegration_ObligationPatchAndNotFound(t *testing.T) {
 	}
 }
 
-// AYD-007 §1: Supplier ganha kind (STONE por padrão), validado e filtrável.
 func TestIntegration_SupplierKind(t *testing.T) {
 	e := newFinanceEnv(t)
 	NewFornecedoresHandler(e.db).Register(e.api.mux)
@@ -353,7 +336,6 @@ func TestIntegration_SupplierKind(t *testing.T) {
 	if code, _ := e.api.list("/fornecedores?kind=X"); code != 400 {
 		t.Errorf("filtro inválido = %d, want 400", code)
 	}
-	// Fornecedor existente antes da migração (sem kind informado em SQL) fica STONE.
 	var kind string
 	e.db.Raw(`INSERT INTO fornecedores (nome) VALUES (?) RETURNING kind::text`, uniq("Legado")).Scan(&kind)
 	if kind != "STONE" {

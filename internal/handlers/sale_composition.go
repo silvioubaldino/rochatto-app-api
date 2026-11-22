@@ -16,8 +16,6 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// Composição da venda (AYD-009 / SPEC-010): cobranças ao cliente (preço) e custos da venda (com credor).
-
 type saleChargeRequest struct {
 	Kind        string  `json:"kind"`
 	Amount      float64 `json:"amount"`
@@ -30,7 +28,7 @@ type saleChargeResponse struct {
 	Kind         string     `json:"kind"`
 	Amount       float64    `json:"amount"`
 	Description  *string    `json:"description"`
-	ObligationID *uuid.UUID `json:"obligation_id"` // conta a receber do Customer (AYD-007)
+	ObligationID *uuid.UUID `json:"obligation_id"`
 	CreatedAt    time.Time  `json:"created_at"`
 }
 
@@ -62,7 +60,7 @@ type saleCostResponse struct {
 	Description  *string    `json:"description"`
 	Payee        *salePayee `json:"payee"`
 	SaleItemID   *uuid.UUID `json:"sale_item_id"`
-	ObligationID *uuid.UUID `json:"obligation_id"` // conta a pagar onde o custo caiu (AYD-007)
+	ObligationID *uuid.UUID `json:"obligation_id"`
 	CreatedAt    time.Time  `json:"created_at"`
 }
 
@@ -193,8 +191,6 @@ func validateChargeFields(kind string, amount float64, description *string) (*st
 	return desc, nil
 }
 
-// resolveCostPayee aplica as regras do credor (AYD-009 §2): COMMISSION → Partner (padrão: o
-// indicador da Sale); FREIGHT/LABOR/OTHER → Supplier; ausente = padrão, null explícito = "a definir".
 func resolveCostPayee(tx *gorm.DB, req saleCostRequest, sale *models.Venda) (supplier, partner *uuid.UUID, err error) {
 	wantPartner := salecomp.PayeeType(req.Kind) == salecomp.PayeePartner
 	matching, other := bytes.TrimSpace(req.PayeeSupplierID), bytes.TrimSpace(req.PayeePartnerID)
@@ -207,11 +203,11 @@ func resolveCostPayee(tx *gorm.DB, req saleCostRequest, sale *models.Venda) (sup
 	}
 	var id *uuid.UUID
 	switch {
-	case len(matching) == 0: // ausente → padrão
+	case len(matching) == 0:
 		if wantPartner {
 			id = sale.VendedorExternoID
 		}
-	case string(matching) == "null": // explícito → "a definir"
+	case string(matching) == "null":
 		id = nil
 	default:
 		var s string
@@ -280,8 +276,6 @@ func (req saleCostRequest) validated(tx *gorm.DB, sale *models.Venda) (*validate
 	}
 	return &validatedCost{desc: desc, supplier: supplier, partner: partner}, nil
 }
-
-// ---- cobranças ----
 
 func (h *VendasHandler) listCharges(w http.ResponseWriter, r *http.Request) {
 	ids, ok := parsePathIDs(w, r, "id")
@@ -417,8 +411,6 @@ func (h *VendasHandler) deleteCharge(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-
-// ---- custos da venda ----
 
 func (h *VendasHandler) listCosts(w http.ResponseWriter, r *http.Request) {
 	ids, ok := parsePathIDs(w, r, "id")
@@ -560,8 +552,6 @@ func (h *VendasHandler) deleteCost(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-
-// ---- composição no detalhe da Sale ----
 
 type saleComposition struct {
 	ItemsTotal   float64              `json:"items_total"`

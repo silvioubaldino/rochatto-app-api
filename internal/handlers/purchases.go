@@ -1,10 +1,5 @@
 package handlers
 
-// Purchase (AYD-002@context): compra consolidada por Supplier — Items de Sale made-to-order
-// (kind MADE_TO_ORDER) ou linhas de reposição de Stock (kind STOCK_REPLENISHMENT). Custo, pago e
-// a pagar vêm das contas da compra (AYD-007; o PATCH .../payment foi removido — pagar é quitar a
-// conta: POST /settlements). Totais vêm de vw_purchases_resumo (nunca persistidos).
-
 import (
 	"context"
 	"encoding/json"
@@ -55,8 +50,6 @@ func (h *PurchasesHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /purchases/{id}/charges/{chargeId}", h.deleteCharge)
 }
 
-// --- Request types ---
-
 type purchaseLineRequest struct {
 	ProductID *uuid.UUID `json:"product_id"`
 	Quantity  float64    `json:"quantity"`
@@ -68,7 +61,7 @@ type purchaseCreateRequest struct {
 	SupplierID       *uuid.UUID            `json:"supplier_id"`
 	ExpectedDate     *string               `json:"expected_date"`
 	Notes            *string               `json:"notes"`
-	AllocationMethod *string               `json:"allocation_method"` // AYD-008; padrão BY_QUANTITY
+	AllocationMethod *string               `json:"allocation_method"`
 	SaleItemIDs      []uuid.UUID           `json:"sale_item_ids"`
 	Items            []purchaseLineRequest `json:"items"`
 }
@@ -88,11 +81,9 @@ type purchaseStatusRequest struct {
 	Status string `json:"status"`
 }
 
-// --- Response types ---
-
 type purchaseSummaryResponse struct {
 	ID               uuid.UUID `json:"id"`
-	Number           int       `json:"number"` // número humano (AYD-011 C1)
+	Number           int       `json:"number"`
 	Kind             string    `json:"kind"`
 	Status           string    `json:"status"`
 	SupplierID       uuid.UUID `json:"supplier_id"`
@@ -101,11 +92,11 @@ type purchaseSummaryResponse struct {
 	Notes            *string   `json:"notes"`
 	OrderedAt        *string   `json:"ordered_at"`
 	ReceivedAt       *string   `json:"received_at"`
-	PaymentStatus    string    `json:"payment_status"` // derivado das contas: PENDING | PAID (AYD-007)
-	TotalCost        float64   `json:"total_cost"`     // Σ das pedras (goods_total); com custos adicionais: composition.total
-	Paid             float64   `json:"paid"`           // Σ quitado das contas da compra
-	Payable          float64   `json:"payable"`        // Σ em aberto das contas da compra (AYD-007)
-	Open             float64   `json:"open"`           // Σ em aberto das contas da compra (= payable)
+	PaymentStatus    string    `json:"payment_status"`
+	TotalCost        float64   `json:"total_cost"`
+	Paid             float64   `json:"paid"`
+	Payable          float64   `json:"payable"`
+	Open             float64   `json:"open"`
 	LineCount        int64     `json:"line_count"`
 	AllocationMethod string    `json:"allocation_method"`
 	CreatedAt        time.Time `json:"created_at"`
@@ -130,14 +121,14 @@ type purchaseLineResponse struct {
 }
 
 type purchaseCompositionResponse struct {
-	GoodsTotal   float64                  `json:"goods_total"` // Σ linhas (pedras)
+	GoodsTotal   float64                  `json:"goods_total"`
 	Charges      []purchaseChargeResponse `json:"charges"`
 	ChargesTotal float64                  `json:"charges_total"`
-	Total        float64                  `json:"total"` // goods_total + charges_total ("custo da compra")
+	Total        float64                  `json:"total"`
 }
 
 type purchaseCostLineResponse struct {
-	LineType         string     `json:"line_type"` // STOCK_ITEM | SALE_ITEM
+	LineType         string     `json:"line_type"`
 	LineID           uuid.UUID  `json:"line_id"`
 	ProductID        *uuid.UUID `json:"product_id"`
 	ProductName      string     `json:"product_name"`
@@ -184,8 +175,6 @@ type pendingSupplierGroup struct {
 	Items        []pendingSaleItemResponse `json:"items"`
 }
 
-// --- Rows ---
-
 type purchaseResumoRow struct {
 	ID            uuid.UUID  `gorm:"column:id"`
 	Number        int        `gorm:"column:number"`
@@ -231,8 +220,6 @@ func (row purchaseResumoRow) toSummary() purchaseSummaryResponse {
 		AllocationMethod: row.AllocationMethod,
 	}
 }
-
-// --- Helpers ---
 
 func purchaseResumoQuery(db *gorm.DB) *gorm.DB {
 	return db.Table("vw_purchases_resumo pr").
@@ -352,7 +339,6 @@ func ensureUnitsCompatible(tx *gorm.DB, purchaseID uuid.UUID, strict bool) error
 	return nil
 }
 
-// lockPurchase carrega a Purchase (não excluída) com FOR UPDATE.
 func lockPurchase(tx *gorm.DB, id uuid.UUID) (*models.Purchase, error) {
 	var p models.Purchase
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&p, "id = ?", id).Error; err != nil {
@@ -364,7 +350,6 @@ func lockPurchase(tx *gorm.DB, id uuid.UUID) (*models.Purchase, error) {
 	return &p, nil
 }
 
-// requireOpen: Purchase ≠ OPEN → 409 (linhas e Items só mudam com a Purchase aberta).
 func requireOpen(p *models.Purchase, kind string) error {
 	if p.Status != fulfillment.PurchaseOpen {
 		return errStatus(http.StatusConflict, "compra não está aberta (OPEN)")
@@ -375,8 +360,6 @@ func requireOpen(p *models.Purchase, kind string) error {
 	return nil
 }
 
-// attachToPurchase anexa Items de Sale à Purchase (já travada, OPEN e MADE_TO_ORDER).
-// 409: Item de outro Supplier, em outra Purchase, FROM_STOCK ou de Sale cancelada/excluída.
 func attachToPurchase(tx *gorm.DB, p *models.Purchase, ids []uuid.UUID) error {
 	type row struct {
 		ID             uuid.UUID  `gorm:"column:id"`
@@ -466,10 +449,6 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 
-// ============================================================
-// Purchase CRUD
-// ============================================================
-
 func (h *PurchasesHandler) list(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	query := purchaseResumoQuery(h.db.WithContext(r.Context()))
@@ -506,7 +485,6 @@ func (h *PurchasesHandler) list(w http.ResponseWriter, r *http.Request) {
 		query = query.Where(`EXISTS (SELECT 1 FROM vw_obligations o
 			WHERE o.purchase_id = pr.id AND o.direction = 'PAYABLE' AND o.overdue)`)
 	}
-	// from/to filtram a data de criação da Purchase (fuso do negócio).
 	for _, f := range []struct{ param, op string }{{"from", ">="}, {"to", "<="}} {
 		if v := q.Get(f.param); v != "" {
 			d, err := parseDate(v)
@@ -713,7 +691,6 @@ func (h *PurchasesHandler) respondDetail(w http.ResponseWriter, ctx context.Cont
 	writeJSON(w, status, resp)
 }
 
-// delete: soft-delete, só OPEN; libera os Items de Sale (voltam à fila).
 func (h *PurchasesHandler) delete(w http.ResponseWriter, r *http.Request) {
 	ids, ok := parsePathIDs(w, r, "id")
 	if !ok {
@@ -739,11 +716,6 @@ func (h *PurchasesHandler) delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ============================================================
-// Fila de Items a comprar (RF-31)
-// ============================================================
-
-// pendingRow é um Item sob encomenda ainda sem Purchase (a fila "a comprar").
 type pendingRow struct {
 	ID           uuid.UUID  `gorm:"column:id"`
 	SaleID       uuid.UUID  `gorm:"column:sale_id"`
@@ -753,13 +725,11 @@ type pendingRow struct {
 	Quantidade   float64    `gorm:"column:quantidade"`
 	CustoUnit    float64    `gorm:"column:custo_unit"`
 	SaleDate     time.Time  `gorm:"column:sale_date"`
-	DueDate      *time.Time `gorm:"column:due_date"` // prazo de entrega da Sale
+	DueDate      *time.Time `gorm:"column:due_date"`
 	SupplierID   *uuid.UUID `gorm:"column:supplier_id"`
 	SupplierName *string    `gorm:"column:supplier_name"`
 }
 
-// pendingSaleItemRows lê a fila "a comprar": Items MADE_TO_ORDER de Sales ativas ainda sem
-// Purchase. É a base de GET /purchases/pending-sale-items e das pendências (AYD-011 C10).
 func pendingSaleItemRows(db *gorm.DB) ([]pendingRow, error) {
 	var rows []pendingRow
 	err := db.Raw(`
@@ -805,7 +775,6 @@ func (h *PurchasesHandler) pendingSaleItems(w http.ResponseWriter, r *http.Reque
 			SaleDate: r.SaleDate.Format("2006-01-02"),
 		})
 	}
-	// Por nome do Supplier; o grupo sem Supplier (supplier_id null) por último.
 	sort.SliceStable(groups, func(i, j int) bool {
 		a, b := groups[i], groups[j]
 		if (a.SupplierID == nil) != (b.SupplierID == nil) {
@@ -818,10 +787,6 @@ func (h *PurchasesHandler) pendingSaleItems(w http.ResponseWriter, r *http.Reque
 	})
 	writeJSON(w, http.StatusOK, groups)
 }
-
-// ============================================================
-// Items de Sale na Purchase (MADE_TO_ORDER)
-// ============================================================
 
 func (h *PurchasesHandler) attachSaleItems(w http.ResponseWriter, r *http.Request) {
 	ids, ok := parsePathIDs(w, r, "id")
@@ -889,10 +854,6 @@ func (h *PurchasesHandler) detachSaleItem(w http.ResponseWriter, r *http.Request
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-
-// ============================================================
-// Linhas de reposição (STOCK_REPLENISHMENT)
-// ============================================================
 
 func lineResponse(tx *gorm.DB, id uuid.UUID) (*purchaseLineResponse, error) {
 	var line purchaseLineResponse
@@ -1019,10 +980,6 @@ func (h *PurchasesHandler) deleteLine(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-
-// ============================================================
-// Status e pagamento
-// ============================================================
 
 func (h *PurchasesHandler) updateStatus(w http.ResponseWriter, r *http.Request) {
 	ids, ok := parsePathIDs(w, r, "id")

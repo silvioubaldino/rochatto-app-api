@@ -8,7 +8,6 @@ import (
 	"github.com/silvioubaldino/sales-backend/internal/mcp/toolkit"
 )
 
-// StockTools: Stock, leitura e escrita (AYD-006 §4.1 — módulo Stock).
 func StockTools() []toolkit.Tool { return []toolkit.Tool{getStockBalance, createStockAdjustment} }
 
 type GetStockBalanceIn struct {
@@ -18,7 +17,6 @@ type GetStockBalanceIn struct {
 	toolkit.Page
 }
 
-// GetStockBalanceOut: lista paginada (sem product_id) OU um saldo com extrato (com product_id).
 type GetStockBalanceOut struct {
 	Items           *[]StockBalanceRow  `json:"items,omitempty"`
 	Total           *int                `json:"total,omitempty"`
@@ -67,8 +65,6 @@ var getStockBalance = toolkit.Define(toolkit.Meta{
 	p := toolkit.Paginate(rows, in.Page)
 	return GetStockBalanceOut{Items: &p.Items, Total: &p.Total, Offset: &p.Offset, HasMore: &p.HasMore, TotalStockValue: &totalValue}, nil
 })
-
-// --- create_stock_adjustment (W · dd) ---
 
 type CreateStockAdjustmentIn struct {
 	ProductID  UUID                          `json:"product_id" jsonschema:"id do produto (obtenha com search_products)"`

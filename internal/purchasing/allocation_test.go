@@ -26,7 +26,7 @@ func TestAllocate_ByQuantity(t *testing.T) {
 }
 
 func TestAllocate_ByValue(t *testing.T) {
-	lines := []Line{{"m2", 10, 100}, {"saco", 5, 20}} // base 1000 e 100
+	lines := []Line{{"m2", 10, 100}, {"saco", 5, 20}}
 	got, err := Allocate(ByValue, 110, lines)
 	if err != nil {
 		t.Fatal(err)

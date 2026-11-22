@@ -1,7 +1,5 @@
 package handlers
 
-// C6 (AYD-011): atendimento em lote dos Items da Sale.
-
 import (
 	"testing"
 )
@@ -17,8 +15,8 @@ func TestJourney_BatchFulfillment(t *testing.T) {
 	path := "/vendas/" + saleID + "/itens/fulfillment"
 
 	res := e.must("PATCH", path, batchBody(
-		map[string]any{"id": ids[0], "origin": "FROM_STOCK", "fornecedor_id": nil}, // sem saldo → aviso
-		map[string]any{"id": ids[1], "origin": "FROM_STOCK"},                       // com saldo
+		map[string]any{"id": ids[0], "origin": "FROM_STOCK", "fornecedor_id": nil},
+		map[string]any{"id": ids[1], "origin": "FROM_STOCK"},
 		map[string]any{"id": ids[2], "origin": "MADE_TO_ORDER", "fornecedor_id": sup},
 	), 200)
 	itens := res["itens"].([]any)
@@ -76,7 +74,6 @@ func TestJourney_BatchFulfillmentErrorsAreAtomic(t *testing.T) {
 			t.Errorf("%s: o 1º Item mudou para %v (não é tudo ou nada)", c.name, got)
 		}
 	}
-	// Forma do corpo → 400.
 	e.must("PATCH", path, map[string]any{"items": []any{}}, 400)
 	e.must("PATCH", path, batchBody(map[string]any{"id": ids[0], "origin": "NOPE"}), 400)
 	e.must("PATCH", path, batchBody(map[string]any{"id": ids[0], "origin": "FROM_STOCK"}, map[string]any{"id": ids[0], "origin": "FROM_STOCK"}), 400)
@@ -99,7 +96,6 @@ func TestJourney_BatchFulfillmentErrorsAreAtomic(t *testing.T) {
 	}
 	e.must("PATCH", path, batchBody(map[string]any{"id": ids[1], "origin": "MADE_TO_ORDER", "fornecedor_id": sup}), 200)
 
-	// Sale cancelada → 409.
 	e.must("PATCH", "/vendas/"+other+"/delivery-status", map[string]any{"delivery_status": "CANCELED"}, 200)
 	e.must("PATCH", "/vendas/"+other+"/itens/fulfillment", batchBody(map[string]any{"id": otherIDs[0], "origin": "MADE_TO_ORDER"}), 409)
 }

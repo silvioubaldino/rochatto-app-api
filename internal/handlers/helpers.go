@@ -32,9 +32,6 @@ func validateNome(w http.ResponseWriter, nome string) (string, bool) {
 	return nome, true
 }
 
-// normalizeName aplica trim e valida um nome obrigatório (até 200 caracteres) cujo campo
-// no payload é `field` (contratos em inglês — AYD-003). Devolve o nome normalizado e a
-// mensagem de erro ("" quando válido).
 func normalizeName(field, name string) (string, string) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -46,7 +43,6 @@ func normalizeName(field, name string) (string, string) {
 	return name, ""
 }
 
-// nullIfBlank aplica trim e converte texto vazio em null.
 func nullIfBlank(s *string) *string {
 	if s == nil {
 		return nil
@@ -58,14 +54,11 @@ func nullIfBlank(s *string) *string {
 	return &t
 }
 
-// isUniqueViolation indica violação de unicidade no Postgres (SQLSTATE 23505).
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
-// httpError carrega o status HTTP de uma falha de regra de negócio dentro de uma transação
-// (409/422/404/400); qualquer outro erro vira 500 em writeTxError.
 type httpError struct {
 	status int
 	msg    string
@@ -75,7 +68,6 @@ func (e *httpError) Error() string { return e.msg }
 
 func errStatus(status int, msg string) error { return &httpError{status, msg} }
 
-// writeTxError responde com o status de um httpError ou loga e devolve 500.
 func writeTxError(w http.ResponseWriter, op string, err error) {
 	var he *httpError
 	if errors.As(err, &he) {
@@ -86,7 +78,6 @@ func writeTxError(w http.ResponseWriter, op string, err error) {
 	models.WriteError(w, http.StatusInternalServerError, "erro interno")
 }
 
-// parseOptionalDate converte "YYYY-MM-DD" (nil/vazio → nil). field nomeia o campo no erro.
 func parseOptionalDate(field string, s *string) (*time.Time, error) {
 	if s == nil || strings.TrimSpace(*s) == "" {
 		return nil, nil
@@ -98,7 +89,6 @@ func parseOptionalDate(field string, s *string) (*time.Time, error) {
 	return &t, nil
 }
 
-// formatDate formata uma data opcional como "YYYY-MM-DD".
 func formatDate(t *time.Time) *string {
 	if t == nil {
 		return nil
@@ -107,14 +97,11 @@ func formatDate(t *time.Time) *string {
 	return &s
 }
 
-// todayDate devolve a data de hoje (fuso do negócio) como meia-noite UTC — para colunas DATE.
 func todayDate() time.Time {
 	t := today()
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 }
 
-// optionalUUID distingue campo ausente (Set=false: mantém o valor) de null explícito (Set=true,
-// Value=nil: limpa) num corpo JSON — usado em PUTs aditivos (AYD-011 C8).
 type optionalUUID struct {
 	Set   bool
 	Value *uuid.UUID

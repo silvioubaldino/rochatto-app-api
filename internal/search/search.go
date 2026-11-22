@@ -1,5 +1,4 @@
-// Package search concentra as regras puras da busca (AYD-011 C4 e C9): normalização do termo
-// (sem acento e sem caixa), número exato, tipos pedidos e limite por tipo. Sem banco.
+// Package search concentra as regras puras da busca global.
 package search
 
 import (
@@ -9,7 +8,6 @@ import (
 	"unicode/utf8"
 )
 
-// Tipos de C9, na ordem padrão dos grupos.
 const (
 	Customer = "CUSTOMER"
 	Quote    = "QUOTE"
@@ -21,7 +19,6 @@ const (
 	Partner  = "PARTNER"
 )
 
-// AllTypes é a ordem padrão (e o conjunto válido) de `types`.
 var AllTypes = []string{Customer, Quote, Sale, Purchase, Product, Service, Supplier, Partner}
 
 const (
@@ -38,13 +35,11 @@ var accents = strings.NewReplacer(
 	"ú", "u", "ù", "u", "û", "u", "ü", "u", "ç", "c",
 )
 
-// Normalize devolve o termo sem acento, em minúsculas e sem espaços nas pontas — a mesma dobra
-// que o SQL aplica às colunas (translate(lower(col), ...)).
+// Normalize devolve o termo sem acento, em minúsculas e sem espaços nas pontas — a mesma dobra que o SQL aplica às colunas (translate(lower(col), ...)).
 func Normalize(s string) string {
 	return accents.Replace(strings.ToLower(strings.TrimSpace(s)))
 }
 
-// AsNumber interpreta q como número de Quote/Sale/Purchase ("98" ou "#98").
 func AsNumber(q string) (int, bool) {
 	q = strings.TrimPrefix(strings.TrimSpace(q), "#")
 	if q == "" || len(q) > 9 {
@@ -62,19 +57,16 @@ func AsNumber(q string) (int, bool) {
 	return n, true
 }
 
-// EscapeLike escapa %, _ e \ para uso em LIKE ... ESCAPE '\'.
 func EscapeLike(s string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
 
-// Query é o termo já validado de GET /search.
 type Query struct {
-	Text   string // normalizado
-	Number *int   // quando o termo é numérico
-	Digits string // só dígitos do termo (telefone); vazio se o termo não tem dígitos
+	Text   string
+	Number *int
+	Digits string
 }
 
-// ParseQuery valida q (≥ 2 caracteres, sem contar espaços das pontas).
 func ParseQuery(raw string) (Query, error) {
 	trimmed := strings.TrimSpace(raw)
 	if utf8.RuneCountInString(trimmed) < MinQueryLen {
@@ -90,14 +82,13 @@ func ParseQuery(raw string) (Query, error) {
 			digits.WriteRune(r)
 		}
 	}
-	// Só vale como telefone se o termo é composto de dígitos e separadores comuns.
 	if strings.Trim(trimmed, "0123456789 ()+-.") == "" {
 		q.Digits = digits.String()
 	}
 	return q, nil
 }
 
-// ParseTypes interpreta `types` (CSV; vazio = todos). Duplicados somem; ordem do pedido.
+// Duplicados somem; ordem do pedido.
 func ParseTypes(raw string) ([]string, error) {
 	if strings.TrimSpace(raw) == "" {
 		return append([]string(nil), AllTypes...), nil

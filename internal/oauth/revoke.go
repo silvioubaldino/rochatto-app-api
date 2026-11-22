@@ -8,8 +8,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// revokeConnection revoga a Connection e todos os tokens dela. Devolve false se já estava
-// revogada (ou não existe). db pode ser uma transação.
 func (s *Server) revokeConnection(ctx context.Context, db *gorm.DB, id uuid.UUID, reason string) (bool, error) {
 	db = db.WithContext(ctx)
 	now := s.now()
@@ -27,8 +25,7 @@ func (s *Server) revokeConnection(ctx context.Context, db *gorm.DB, id uuid.UUID
 	return true, nil
 }
 
-// revoke: POST /oauth/revoke (RFC 7009; AYD-006 §2.6). Sempre 200 {}. Refresh token revoga
-// a Connection inteira; access token revoga só ele. O client_id precisa ser o dono do token.
+// O client_id precisa ser o dono do token.
 func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
 	if err := r.ParseForm(); err == nil {
@@ -55,7 +52,7 @@ func (s *Server) doRevoke(ctx context.Context, token, hint, clientID string) {
 	if res.Error != nil || res.RowsAffected == 0 || row.ClientID != clientID {
 		return
 	}
-	_ = hint // o tipo real vem do banco; a dica não muda o resultado
+	_ = hint
 	if row.Kind == "REFRESH" {
 		_, _ = s.revokeConnection(ctx, s.db, row.ConnectionID, "CLIENT_REVOKE")
 		return

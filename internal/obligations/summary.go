@@ -6,20 +6,16 @@ import (
 	"gorm.io/gorm"
 )
 
-// CategoryAmount é um total por categoria de movimentação.
 type CategoryAmount struct {
 	Category string  `json:"category" gorm:"column:category"`
 	Amount   float64 `json:"amount" gorm:"column:amount"`
 }
 
-// MethodAmount é um total por forma de pagamento (null = "não informado").
 type MethodAmount struct {
 	PaymentMethod *string `json:"payment_method" gorm:"column:payment_method"`
 	Amount        float64 `json:"amount" gorm:"column:amount"`
 }
 
-// Cash é o dinheiro executado no período (AYD-007 §6). by_category traz o valor com sinal
-// (entradas +, saídas −); outflow é positivo.
 type Cash struct {
 	Inflow           float64          `json:"inflow"`
 	Outflow          float64          `json:"outflow"`
@@ -28,27 +24,22 @@ type Cash struct {
 	ReceivedByMethod []MethodAmount   `json:"received_by_method"`
 }
 
-// Expenses são as despesas do período: saídas de categoria de despesa SEM quitação.
 type Expenses struct {
 	Total      float64          `json:"total"`
 	ByCategory []CategoryAmount `json:"by_category"`
 }
 
-// KindOpen é o a pagar em aberto por tipo de credor: o kind do Supplier; PARTNER (comissões) ou
-// UNASSIGNED (conta sem credor, "a definir").
 type KindOpen struct {
 	Kind string  `json:"kind" gorm:"column:kind"`
 	Open float64 `json:"open" gorm:"column:open"`
 }
 
-// Balances são os saldos em aberto de hoje (Σ open das contas; Sales canceladas já têm amount 0).
 type Balances struct {
 	Receivable                float64    `json:"receivable"`
 	Payable                   float64    `json:"payable"`
 	PayableByCounterpartyKind []KindOpen `json:"payable_by_counterparty_kind"`
 }
 
-// CashSummary agrega as movimentações do período.
 func CashSummary(db *gorm.DB, from, to time.Time) (Cash, error) {
 	out := Cash{ByCategory: []CategoryAmount{}, ReceivedByMethod: []MethodAmount{}}
 	var tot struct {
@@ -76,7 +67,6 @@ func CashSummary(db *gorm.DB, from, to time.Time) (Cash, error) {
 	return out, nil
 }
 
-// ExpensesSummary agrega as despesas do período (movimentação sem quitação, categoria de despesa).
 func ExpensesSummary(db *gorm.DB, from, to time.Time) (Expenses, error) {
 	out := Expenses{ByCategory: []CategoryAmount{}}
 	if err := db.Raw(`SELECT m.category::text AS category, ROUND(-SUM(m.amount), 2) AS amount
@@ -95,7 +85,6 @@ func ExpensesSummary(db *gorm.DB, from, to time.Time) (Expenses, error) {
 	return out, nil
 }
 
-// BalancesSummary devolve os saldos em aberto de hoje.
 func BalancesSummary(db *gorm.DB) (Balances, error) {
 	out := Balances{PayableByCounterpartyKind: []KindOpen{}}
 	var tot struct {

@@ -1,5 +1,3 @@
--- AYD-005@context: Dashboard — marca de venda rápida no Quote (exclui a venda rápida da
--- conversão Quote → Sale). Coluna nova em inglês (ADR-001).
 ALTER TABLE quotes ADD COLUMN quick_sale BOOLEAN NOT NULL DEFAULT false;
 
 -- Backfill heurístico (sem marca histórica): venda rápida cria Quote e Sale na mesma
@@ -15,7 +13,6 @@ WHERE q.status = 'WON'
       AND v.created_at BETWEEN q.created_at AND q.created_at + INTERVAL '10 seconds'
   );
 
--- vw_quotes_resumo usa q.* (colunas fixadas na criação): recriada para expor quick_sale.
 DROP VIEW IF EXISTS vw_quotes_resumo;
 
 CREATE VIEW vw_quotes_resumo AS
